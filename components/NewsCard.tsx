@@ -1,9 +1,7 @@
 import React from 'react';
-import { StyleSheet, TouchableOpacity, View } from 'react-native';
+import { StyleSheet, View } from 'react-native';
 import { Image } from 'expo-image';
 import { Text } from './Themed';
-import Colors from '@/constants/Colors';
-import { useColorScheme } from './useColorScheme';
 
 interface NewsCardProps {
     category: string;
@@ -14,20 +12,12 @@ interface NewsCardProps {
 }
 
 export default function NewsCard({ category, title, summary, date, imageUrl }: NewsCardProps) {
-    const colorScheme = useColorScheme();
-    const colors = Colors[colorScheme ?? 'light'];
-
     return (
-        <View style={[styles.card, { backgroundColor: 'rgba(255,255,255,0.05)' }]}>
-            <Image
-                source={{ uri: imageUrl }}
-                style={styles.image}
-                contentFit="cover"
-                transition={200}
-            />
+        <View style={styles.card}>
+            <Image source={{ uri: imageUrl }} style={styles.image} contentFit="cover" transition={200} />
             <View style={styles.content}>
                 <View style={styles.header}>
-                    <Text style={[styles.category, { color: colors.tint }]}>{category}</Text>
+                    <Text style={styles.category}>{category}</Text>
                     <Text style={styles.date}>{date}</Text>
                 </View>
                 <Text style={styles.title} numberOfLines={2}>{title}</Text>
@@ -39,41 +29,56 @@ export default function NewsCard({ category, title, summary, date, imageUrl }: N
 
 const styles = StyleSheet.create({
     card: {
-        marginBottom: 16,
-        borderRadius: 16,
+        backgroundColor: '#1E1E2C',
+        borderRadius: 20,
+        marginBottom: 20,
         overflow: 'hidden',
         borderWidth: 1,
-        borderColor: 'rgba(255,255,255,0.1)',
+        borderColor: 'rgba(255,255,255,0.08)',
+        shadowColor: "#000",
+        shadowOffset: { width: 0, height: 4 },
+        shadowOpacity: 0.3,
+        shadowRadius: 8,
+        elevation: 5,
     },
     image: {
         width: '100%',
-        height: 160,
+        height: 180,
     },
     content: {
-        padding: 16,
+        padding: 20,
     },
     header: {
         flexDirection: 'row',
         justifyContent: 'space-between',
-        marginBottom: 8,
+        marginBottom: 10,
+        alignItems: 'center',
     },
     category: {
-        fontSize: 12,
+        color: '#fff',
+        fontSize: 11,
         fontWeight: 'bold',
+        backgroundColor: '#3B82F6',
+        paddingHorizontal: 8,
+        paddingVertical: 3,
+        borderRadius: 6,
+        overflow: 'hidden',
     },
     date: {
-        fontSize: 12,
         color: '#888',
+        fontSize: 12,
     },
     title: {
         fontSize: 18,
         fontWeight: 'bold',
         marginBottom: 8,
         color: '#fff',
+        lineHeight: 26,
     },
     summary: {
         fontSize: 14,
         color: '#ccc',
         lineHeight: 20,
+        marginBottom: 10,
     },
 });
