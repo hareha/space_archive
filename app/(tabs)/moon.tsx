@@ -8,6 +8,7 @@ import { BlurView } from 'expo-blur';
 import { useLocalSearchParams } from 'expo-router';
 import { CESIUM_HTML } from '@/constants/CesiumHtml';
 import { loadMineralData } from '@/utils/mineralDataLoader';
+import ARMoonViewer from '@/components/ARMoonViewer';
 
 export default function MoonScreen() {
   const webviewRef = useRef<WebView>(null);
@@ -18,6 +19,7 @@ export default function MoonScreen() {
   const [searchQuery, setSearchQuery] = useState('');
   const [activeLocation, setActiveLocation] = useState<string | null>(null);
   const [selectedCell, setSelectedCell] = useState<any>(null);
+  const [showARViewer, setShowARViewer] = useState(false);
 
   // 필터 상태
   const [filters, setFilters] = useState({
@@ -342,6 +344,15 @@ export default function MoonScreen() {
 
         {/* 우측 컨트롤 버튼 (캔버스 영역 내부) */}
         <SafeAreaView style={styles.rightControls} edges={['right']} pointerEvents="box-none">
+          {/* AR 탐사선 추적 버튼 */}
+          <TouchableOpacity
+            style={[styles.controlBtn, styles.arButton]}
+            onPress={() => setShowARViewer(true)}
+            activeOpacity={0.7}
+          >
+            <MaterialCommunityIcons name="augmented-reality" size={24} color="#fff" />
+          </TouchableOpacity>
+
           {/* 필터 토글 버튼 */}
           <TouchableOpacity
             style={[styles.controlBtn, showFilterModal && styles.controlBtnActive]}
@@ -792,6 +803,11 @@ export default function MoonScreen() {
           <Text style={styles.loadingText}>달 지도 로딩 중...</Text>
         </View>
       )}
+
+      {/* AR 탐사선 뷰어 */}
+      {showARViewer && (
+        <ARMoonViewer onClose={() => setShowARViewer(false)} />
+      )}
     </View>
   );
 }
@@ -896,6 +912,10 @@ const styles = StyleSheet.create({
   controlBtnActive: {
     backgroundColor: 'rgba(59, 130, 246, 0.3)',
     borderColor: '#3B82F6',
+  },
+  arButton: {
+    backgroundColor: 'rgba(156, 39, 176, 0.8)',
+    borderColor: '#9C27B0',
   },
 
   // 필터 모달

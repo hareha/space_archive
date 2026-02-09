@@ -140,46 +140,51 @@ export const CESIUM_HTML = `
       let lastHoveredId = null;
 
       // --- Mineral Data ---
-      let mineralDataArray = []; // 전체 광물 데이터 배열
-      let mineralDataMap = new Map(); // cellId -> MineralData
-      let activeMineralFilter = null; // 현재 활성화된 필터 (하나만)
-      let mineralOpacity = 0.5; // 광물 레이어 투명도 (고정)
-      let geologicPrimitive = null; // 광물 텍스처 primitive
-      let mineralStats = { min: 0, max: 1 }; // 현재 광물의 min/max
+      let mineralDataArray = [];
+      let mineralDataMap = new Map();
+      let activeMineralFilter = null;
+      let mineralOpacity = 0.5;
+      let geologicPrimitive = null;
+      let mineralStats = { min: 0, max: 1 };
 
       // =====================================================
-      // 좌표 변환 헬퍼 함수 (S2 ↔ Cesium 일관된 변환)
+      // 좌표 변환 헬퍼 함수 (직접 스케일링 기반 통일)
       // =====================================================
       
       // S2 Point/Vertex (단위 구 좌표) → Cesium Cartesian3
+      // [핵심 수정] lat/lon 경유 없이 직접 스케일링
       function s2PointToCesium(s2Point, altitude) {
         const mag = Math.sqrt(s2Point.x * s2Point.x + s2Point.y * s2Point.y + s2Point.z * s2Point.z);
         const nx = s2Point.x / mag;
         const ny = s2Point.y / mag;
         const nz = s2Point.z / mag;
         
-        // S2 좌표에서 lat/lon 계산
-        // z = sin(lat), x = cos(lat)*cos(lon), y = cos(lat)*sin(lon)
-        const lat = Math.asin(Math.max(-1, Math.min(1, nz)));  // clamp for safety
-        const lon = Math.atan2(ny, nx);
+        // Moon 반경 + altitude로 스케일링
+        const radius = Cesium.Ellipsoid.MOON.maximumRadius + (altitude || 0);
         
-        return Cesium.Cartesian3.fromRadians(lon, lat, altitude, Cesium.Ellipsoid.MOON);
+        return new Cesium.Cartesian3(
+          nx * radius,
+          ny * radius,
+          nz * radius
+        );
       }
       
-      // Cesium Cartesian3 → S2 Point (lat/lon 경유)
+      // Cesium Cartesian3 → S2 Point (단순 정규화)
+      // [핵심 수정] 타원체 변환 없이 직접 정규화
       function cesiumToS2Point(cartesian) {
-        // Cesium의 Cartographic으로 변환하여 정확한 lat/lon 추출
-        const cartographic = Cesium.Cartographic.fromCartesian(cartesian, Cesium.Ellipsoid.MOON);
-        if (!cartographic) return null;
+        if (!cartesian) return null;
         
-        const lat = cartographic.latitude;  // radians
-        const lon = cartographic.longitude; // radians
+        const magnitude = Math.sqrt(
+          cartesian.x * cartesian.x + 
+          cartesian.y * cartesian.y + 
+          cartesian.z * cartesian.z
+        );
         
-        // S2 Point: 단위 구의 (x, y, z)
-        const cosLat = Math.cos(lat);
-        const x = cosLat * Math.cos(lon);
-        const y = cosLat * Math.sin(lon);
-        const z = Math.sin(lat);
+        if (magnitude === 0) return null;
+        
+        const x = cartesian.x / magnitude;
+        const y = cartesian.y / magnitude;
+        const z = cartesian.z / magnitude;
         
         return new s2.Point(x, y, z);
       }
@@ -217,170 +222,24 @@ export const CESIUM_HTML = `
                 updateS2Grid();
             }
             if(message.type === 'ZOOM_IN') {
-                const camera = viewer.camera;
-                const currentPos = Cesium.Cartesian3.clone(camera.position);
-                const currentHeading = camera.heading;
-                const currentPitch = camera.pitch;
-                
-                // Calculate current height
-                const cartographic = Cesium.Cartographic.fromCartesian(currentPos, moonEllipsoid);
-                const currentHeight = cartographic.height;
-                
-                // Target: 50% closer
-                const targetHeight = currentHeight * 0.5;
-                
-                // Calculate target position maintaining direction
-                const normal = Cesium.Cartesian3.normalize(currentPos, new Cesium.Cartesian3());
-                const surfacePoint = Cesium.Cartesian3.multiplyByScalar(
-                    normal, 
-                    moonEllipsoid.maximumRadius, 
-                    new Cesium.Cartesian3()
-                );
-                const targetPos = Cesium.Cartesian3.add(
-                    surfacePoint,
-                    Cesium.Cartesian3.multiplyByScalar(normal, targetHeight, new Cesium.Cartesian3()),
-                    new Cesium.Cartesian3()
-                );
-                
-                // Smooth animation
-                const duration = 800; // 0.8 seconds
-                const startPosition = currentPos;
-                let startTime = null;
-                
-                function animate(timestamp) {
-                    if (!startTime) startTime = timestamp;
-                    const progress = (timestamp - startTime) / duration;
-                    
-                    if (progress >= 1.0) {
-                        camera.setView({
-                            destination: targetPos,
-                            orientation: {
-                                heading: currentHeading,
-                                pitch: currentPitch,
-                                roll: 0.0
-                            }
-                        });
-                        return;
-                    }
-                    
-                    // Ease-out cubic
-                    const t = 1 - Math.pow(1 - progress, 3);
-                    const pos = Cesium.Cartesian3.lerp(startPosition, targetPos, t, new Cesium.Cartesian3());
-                    
-                    camera.setView({
-                        destination: pos,
-                        orientation: {
-                            heading: currentHeading,
-                            pitch: currentPitch,
-                            roll: 0.0
-                        }
-                    });
-                    
-                    requestAnimationFrame(animate);
-                }
-                
-                requestAnimationFrame(animate);
+                viewer.camera.zoomIn(viewer.camera.positionCartographic.height * 0.3);
             }
             if(message.type === 'ZOOM_OUT') {
-                const camera = viewer.camera;
-                const currentPos = Cesium.Cartesian3.clone(camera.position);
-                const currentHeading = camera.heading;
-                const currentPitch = camera.pitch;
-                
-                // Calculate current height
-                const cartographic = Cesium.Cartographic.fromCartesian(currentPos, moonEllipsoid);
-                const currentHeight = cartographic.height;
-                
-                // Target: 2x farther
-                const targetHeight = currentHeight * 2.0;
-                
-                // Calculate target position maintaining direction
-                const normal = Cesium.Cartesian3.normalize(currentPos, new Cesium.Cartesian3());
-                const surfacePoint = Cesium.Cartesian3.multiplyByScalar(
-                    normal, 
-                    moonEllipsoid.maximumRadius, 
-                    new Cesium.Cartesian3()
-                );
-                const targetPos = Cesium.Cartesian3.add(
-                    surfacePoint,
-                    Cesium.Cartesian3.multiplyByScalar(normal, targetHeight, new Cesium.Cartesian3()),
-                    new Cesium.Cartesian3()
-                );
-                
-                // Smooth animation
-                const duration = 800; // 0.8 seconds
-                const startPosition = currentPos;
-                let startTime = null;
-                
-                function animate(timestamp) {
-                    if (!startTime) startTime = timestamp;
-                    const progress = (timestamp - startTime) / duration;
-                    
-                    if (progress >= 1.0) {
-                        camera.setView({
-                            destination: targetPos,
-                            orientation: {
-                                heading: currentHeading,
-                                pitch: currentPitch,
-                                roll: 0.0
-                            }
-                        });
-                        return;
-                    }
-                    
-                    // Ease-out cubic
-                    const t = 1 - Math.pow(1 - progress, 3);
-                    const pos = Cesium.Cartesian3.lerp(startPosition, targetPos, t, new Cesium.Cartesian3());
-                    
-                    camera.setView({
-                        destination: pos,
-                        orientation: {
-                            heading: currentHeading,
-                            pitch: currentPitch,
-                            roll: 0.0
-                        }
-                    });
-                    
-                    requestAnimationFrame(animate);
-                }
-                
-                requestAnimationFrame(animate);
+                viewer.camera.zoomOut(viewer.camera.positionCartographic.height * 0.5);
+            }
+            if(message.type === 'RESET_VIEW') {
+                if(moonTileset) viewer.camera.flyToBoundingSphere(moonTileset.boundingSphere, { duration: 1.0 });
             }
             if(message.type === 'GO_TO_LOCATION') {
                 const { lat, lng } = message.payload;
                 const latRad = Cesium.Math.toRadians(lat);
                 const lngRad = Cesium.Math.toRadians(lng);
                 
-                // Calculate position on moon surface
-                const altitude = getGridAltitude();
-                const r = moonEllipsoid.radii;
-                const Rx = r.x + altitude;
-                const Ry = r.y + altitude;
-                const Rz = r.z + altitude;
-                
-                const x = Math.cos(latRad) * Math.cos(lngRad);
-                const y = Math.cos(latRad) * Math.sin(lngRad);
-                const z = Math.sin(latRad);
-                
-                const s = 1.0 / Math.sqrt(
-                  (x * x) / (Rx * Rx) +
-                  (y * y) / (Ry * Ry) +
-                  (z * z) / (Rz * Rz)
-                );
-                
-                const surfacePoint = new Cesium.Cartesian3(x * s, y * s, z * s);
-                
-                // Camera position: 500km above the location
-                const normal = Cesium.Cartesian3.normalize(surfacePoint, new Cesium.Cartesian3());
-                const cameraHeight = 500000; // 500km
-                const cameraPosition = Cesium.Cartesian3.add(
-                  surfacePoint,
-                  Cesium.Cartesian3.multiplyByScalar(normal, cameraHeight, new Cesium.Cartesian3()),
-                  new Cesium.Cartesian3()
-                );
+                const altitude = 500000;
+                const position = Cesium.Cartesian3.fromRadians(lngRad, latRad, altitude, Cesium.Ellipsoid.MOON);
                 
                 viewer.camera.flyTo({
-                    destination: cameraPosition,
+                    destination: position,
                     orientation: {
                         heading: 0,
                         pitch: Cesium.Math.toRadians(-90),
@@ -395,9 +254,6 @@ export const CESIUM_HTML = `
             if(message.type === 'UPDATE_MINERAL_FILTER') {
                 updateMineralFilter(message.filter, message.enabled);
             }
-            if(message.type === 'UPDATE_MINERAL_OPACITY') {
-                updateMineralOpacity(message.opacity);
-            }
 
          } catch(e) { console.error("Msg Error", e); }
       }
@@ -408,6 +264,7 @@ export const CESIUM_HTML = `
             historyLength: state.history.length,
             selectedCellId: state.selectedCellId ? s2.cellid.toToken(state.selectedCellId) : null
         });
+        sendToRN('DEPTH_CHANGED', { canGoBack: state.history.length > 0 });
       }
 
       function resetExplorer() {
@@ -460,24 +317,21 @@ export const CESIUM_HTML = `
       
       function getGridAltitude() { return 2000; }
 
-      // Custom Camera Animation: Linear Interpolation for "Zoom-in" feel without arc
+      // Custom Camera Animation (직접 선형 보간 - arc 없이 직선 줌인)
       function smoothZoomToCell(cellId, duration = 1000) {
         const cell = s2.Cell.fromCellID(cellId);
         const center = cell.center();
 
-        // 헬퍼 함수 사용하여 S2 중심점을 Cesium Cartesian3로 변환
         const gridAltitude = getGridAltitude();
         const centerCar3 = s2PointToCesium(center, gridAltitude);
         const level = s2.cellid.level(cellId);
 
-        // Target Height Tuning (그리드 표면 위에서의 추가 높이)
         let additionalHeight;
-        if (level <= 4) additionalHeight = 1500000;      // 1500km
-        else if (level <= 8) additionalHeight = 200000;  // 200km
-        else if (level <= 12) additionalHeight = 15000;  // 15km
-        else additionalHeight = 4000;                    // 4km
+        if (level <= 4) additionalHeight = 1500000;
+        else if (level <= 8) additionalHeight = 200000;
+        else if (level <= 12) additionalHeight = 15000;
+        else additionalHeight = 4000;
 
-        // Calculate Target Camera Position (Grid Surface + Normal * Additional Height)
         const normal = Cesium.Cartesian3.normalize(centerCar3, new Cesium.Cartesian3());
         const targetPosition = Cesium.Cartesian3.add(
           centerCar3,
@@ -485,12 +339,11 @@ export const CESIUM_HTML = `
           new Cesium.Cartesian3()
         );
 
-        // Animation Setup
+        // 직접 애니메이션 (arc 없이 직선 이동)
         const startPosition = Cesium.Cartesian3.clone(viewer.camera.position);
         const startHeading = viewer.camera.heading;
         const startPitch = viewer.camera.pitch;
         const targetPitch = Cesium.Math.toRadians(-90);
-
         let startTime = null;
 
         function animate(timestamp) {
@@ -498,7 +351,6 @@ export const CESIUM_HTML = `
           const progress = (timestamp - startTime) / duration;
 
           if (progress >= 1.0) {
-            // Finish
             viewer.camera.setView({
               destination: targetPosition,
               orientation: {
@@ -510,14 +362,14 @@ export const CESIUM_HTML = `
             return;
           }
 
-          // Ease-out Cubic for smoother stop
+          // Ease-out cubic
           const t = 1 - Math.pow(1 - progress, 3);
 
-          // Interpolate Position
+          // 위치 선형 보간
           const currentPos = new Cesium.Cartesian3();
           Cesium.Cartesian3.lerp(startPosition, targetPosition, t, currentPos);
 
-          // Interpolate Pitch
+          // 피치 보간
           const currentPitch = Cesium.Math.lerp(startPitch, targetPitch, t);
 
           viewer.camera.setView({
@@ -535,6 +387,13 @@ export const CESIUM_HTML = `
         requestAnimationFrame(animate);
       }
 
+      function getSegmentCount(level) {
+        if (level <= 4) return 16;
+        if (level <= 8) return 8;
+        return 4;
+      }
+
+      // 동기 버전 (비동기 clampToHeight 제거)
       function getCellsToDraw(rootCellId, targetLevel, instances, color, renderRadius) {
         if (!rootCellId) {
           for (let f = 0; f < 6; f++) {
@@ -544,12 +403,6 @@ export const CESIUM_HTML = `
         } else {
           appendCellsRecursively(rootCellId, targetLevel, instances, color, renderRadius);
         }
-      }
-
-      function getSegmentCount(level) {
-        if (level <= 4) return 16;
-        if (level <= 8) return 8;
-        return 4;
       }
 
       function appendCellsRecursively(currentId, targetLevel, instances, color, radius) {
@@ -581,12 +434,9 @@ export const CESIUM_HTML = `
 
         for (let i = 0; i <= segments; i++) {
           const t = i / segments;
-          // S2 좌표에서 선형 보간
           const x = v0.x * (1 - t) + v1.x * t;
           const y = v0.y * (1 - t) + v1.y * t;
           const z = v0.z * (1 - t) + v1.z * t;
-          
-          // 헬퍼 함수 사용하여 일관된 변환
           const cartesian = s2PointToCesium({ x, y, z }, altitude);
           points.push(cartesian);
         }
@@ -604,91 +454,44 @@ export const CESIUM_HTML = `
         return positions;
       }
 
-      // Cesium의 CullingVolume을 사용한 가시성 체크
-      function isCellVisibleFromCamera(cellId, cullingVolume) {
-        const cell = s2.Cell.fromCellID(cellId);
-        const centerPoint = cell.center();
-
-        // 헬퍼 함수 사용하여 S2 중심점을 Cesium Cartesian3로 변환
-        const center = s2PointToCesium(centerPoint, 0);
-
-        const level = s2.cellid.level(cellId);
-        const cellRadius = (moonRadius * 2) / (1 << level);
-
-        const boundingSphere = new Cesium.BoundingSphere(center, cellRadius);
-
-        const visibility = cullingVolume.computeVisibility(boundingSphere);
-        return visibility !== Cesium.Intersect.OUTSIDE;
-      }
-
       // --- Mineral Data Functions ---
       
-      // 광물 데이터 로딩
       function loadMineralData(dataArray, isFirst, isLast) {
-        console.log('Loading mineral data chunk:', dataArray.length, 'entries');
-        
-        // 첫 번째 청크면 배열 초기화
         if (isFirst) {
           mineralDataArray = [];
         }
-        
-        // 배열에 추가
         mineralDataArray.push(...dataArray);
         
-        console.log('Mineral data progress:', mineralDataArray.length, 'entries loaded');
-        
-        // 마지막 청크면 시각화 준비
         if (isLast) {
           console.log('All mineral data loaded:', mineralDataArray.length, 'total entries');
-          // 광물 구체 생성 (처음 한 번만)
           if (!geologicPrimitive) {
             createMineralSphere();
           }
         }
       }
 
-      // 광물 필터 업데이트
       function updateMineralFilter(filter, enabled) {
         if (enabled) {
-          // 새 필터 활성화
           activeMineralFilter = filter;
-          console.log('Activating filter:', filter);
-          
-          // 통계 계산 및 텍스처 업데이트
           calculateMineralStats(filter);
           updateMineralTexture();
-          
-          // 광물 구체 표시
           if (geologicPrimitive) {
             geologicPrimitive.show = true;
           }
-          
-          // 기본 그리드 숨기기 로직 제거 (독립 제어)
-          // gridPrimitives.show = false; 
         } else {
-          // 필터 비활성화
           activeMineralFilter = null;
-          console.log('Deactivating filter');
-          
-          // 광물 구체 숨기기
           if (geologicPrimitive) {
             geologicPrimitive.show = false;
           }
-          
-          // 기본 그리드 표시 로직 제거 (독립 제어)
-          // gridPrimitives.show = true;
         }
       }
 
-      // 그리드 가시성 업데이트
       function updateGridVisibility(visible) {
-        console.log('Updating grid visibility:', visible);
         if (gridPrimitives) {
           gridPrimitives.show = visible;
         }
       }
 
-      // 광물 통계 계산
       function calculateMineralStats(filter) {
         const values = mineralDataArray
           .map(item => getMineralValue(item, filter))
@@ -697,11 +500,9 @@ export const CESIUM_HTML = `
         if (values.length > 0) {
           mineralStats.min = Math.min(...values);
           mineralStats.max = Math.max(...values);
-          console.log(\`Stats for \${filter}: min=\${mineralStats.min.toFixed(4)}, max=\${mineralStats.max.toFixed(4)}\`);
         }
       }
 
-      // 광물 값 추출
       function getMineralValue(data, filter) {
         switch (filter) {
           case 'feo': return data.feo;
@@ -719,16 +520,11 @@ export const CESIUM_HTML = `
         }
       }
 
-      // 광물 텍스처 업데이트
       function updateMineralTexture() {
         if (!activeMineralFilter || mineralDataArray.length === 0) {
-          console.log('No active filter or no data');
           return;
         }
-
-        console.log('Updating mineral texture for:', activeMineralFilter);
         
-        // 캔버스 생성
         const canvas = document.createElement('canvas');
         canvas.width = 2048;
         canvas.height = 1024;
@@ -737,11 +533,9 @@ export const CESIUM_HTML = `
 
         const range = mineralStats.max - mineralStats.min;
         if (range === 0) {
-          console.warn('Range is zero, cannot normalize');
           return;
         }
 
-        // 각 데이터 포인트를 캔버스에 그리기
         mineralDataArray.forEach(item => {
           const val = getMineralValue(item, activeMineralFilter);
           if (isNaN(val) || val === null || val === undefined) return;
@@ -751,35 +545,25 @@ export const CESIUM_HTML = `
           const lonMin = item.lonMin;
           const lonMax = item.lonMax;
 
-          // 정규화 (0~1)
           let normalized = (val - mineralStats.min) / range;
           normalized = Math.max(0, Math.min(1, normalized));
 
-          // 캔버스 좌표 계산
           const x = (lonMin + 180) * (canvas.width / 360);
           const y = (90 - latMax) * (canvas.height / 180);
           const w = (lonMax - lonMin) * (canvas.width / 360);
           const h = (latMax - latMin) * (canvas.height / 180);
 
-          // 색상 계산: 파란색(240) -> 빨간색(0)
           const hue = 240 - (normalized * 240);
           ctx.fillStyle = \`hsl(\${hue}, 100%, 50%)\`;
           ctx.fillRect(x, y, w + 0.5, h + 0.5);
         });
 
-        console.log('Texture canvas created');
-
-        // Primitive의 material에 텍스처 적용
         if (geologicPrimitive && geologicPrimitive.appearance && geologicPrimitive.appearance.material) {
           geologicPrimitive.appearance.material.uniforms.image = canvas;
-          console.log('Texture applied to primitive');
         }
       }
 
-      // 광물 구체 생성 (point.html의 createDataSphere 참고)
       function createMineralSphere() {
-        console.log('Creating mineral sphere...');
-        
         const moonEllipsoid = Cesium.Ellipsoid.MOON;
         const geometry = new Cesium.EllipsoidGeometry({
           radii: new Cesium.Cartesian3(
@@ -814,15 +598,13 @@ export const CESIUM_HTML = `
               }
             })
           }),
-          show: false // 처음에는 숨김
+          show: false
         });
         
         viewer.scene.primitives.add(geologicPrimitive);
-        console.log('Mineral sphere created and added to scene');
       }
 
-
-
+      // 동기 버전 updateS2Grid
       function updateS2Grid() {
         gridPrimitives.removeAll();
         if (!state.showGrid) return;
@@ -831,9 +613,9 @@ export const CESIUM_HTML = `
         const altitude = getGridAltitude();
         const renderRadius = moonRadius + altitude;
         
-        const startTime = performance.now();
         getCellsToDraw(state.selectedCellId, state.level, instances, color, renderRadius);
-        console.log(\`Grid Updated: Level \${state.level}, Alt \${altitude}m, Cells: \${instances.length}, Time: \${(performance.now() - startTime).toFixed(0)}ms\`);
+        
+        console.log(\`Grid Updated: Level \${state.level}, Cells: \${instances.length}\`);
 
         if (instances.length > 0) {
           gridPrimitives.add(new Cesium.Primitive({
@@ -896,9 +678,8 @@ export const CESIUM_HTML = `
           asynchronous: false
         }));
         
-        // Notify App
         sendToRN('CELL_SELECTED', {
-            cellId: token,  // BigInt 대신 token 문자열 사용
+            cellId: token,
             token: token,
             face: face,
             lat: latDeg,
@@ -907,109 +688,50 @@ export const CESIUM_HTML = `
         });
       }
 
-      function cartesianToS2Point(cartesian) {
-        // [수정] lat/lon을 경유하여 일관된 변환 수행
-        return cesiumToS2Point(cartesian);
-      }
-
-      // [시차 해결] 그리드 고도(2000m)와 동일한 Ellipsoid에서 피킹
       function pickGridPoint(position) {
         if (!position) return null;
         
-        // 그리드 렌더링과 동일한 확장된 Ellipsoid 생성
         const altitude = getGridAltitude();
         const r = Cesium.Ellipsoid.MOON.radii;
         const inflatedEllipsoid = new Cesium.Ellipsoid(
           r.x + altitude, r.y + altitude, r.z + altitude
         );
         
-        // 확장된 Ellipsoid에서 피킹 - 그리드와 동일한 고도
         const pickedPosition = viewer.camera.pickEllipsoid(position, inflatedEllipsoid);
         
         if (Cesium.defined(pickedPosition)) {
-          console.log('[pickEllipsoid @ Grid Altitude] Hit:', {
-            x: pickedPosition.x.toFixed(2),
-            y: pickedPosition.y.toFixed(2),
-            z: pickedPosition.z.toFixed(2),
-            altitude: altitude
-          });
-          return pickedPosition;
+          return { position: pickedPosition, ellipsoid: inflatedEllipsoid };
         }
         
-        console.log('[pickGridPoint] No hit on inflated ellipsoid');
         return null;
       }
 
-      function pickCellFromPosition(position) {
-        if (!position) return null;
-        const s2Point = cartesianToS2Point(position);
+      function pickCellFromPosition(pickResult) {
+        if (!pickResult || !pickResult.position) return null;
+        // [수정] 단순 정규화 기반 변환 사용
+        const s2Point = cesiumToS2Point(pickResult.position);
+        if (!s2Point) return null;
         const leafCellId = s2.cellid.fromPoint(s2Point);
         return s2.cellid.parent(leafCellId, state.level);
       }
 
       // 클릭 핸들러
-      let debugClickMarker = null;
-      let debugCellCenterMarker = null;
-      
       const handler = new Cesium.ScreenSpaceEventHandler(viewer.scene.canvas);
       handler.setInputAction((movement) => {
-        const position = pickGridPoint(movement.position);
-        if (!position) return;
+        const pickResult = pickGridPoint(movement.position);
+        if (!pickResult) return;
         
-        // [DEBUG] 클릭 위치에 빨간 마커 표시
-        if (debugClickMarker) viewer.entities.remove(debugClickMarker);
-        debugClickMarker = viewer.entities.add({
-          position: position,
-          point: {
-            pixelSize: 15,
-            color: Cesium.Color.RED,
-            outlineColor: Cesium.Color.WHITE,
-            outlineWidth: 2
-          }
-        });
-        
-        const cellAtStateLevel = pickCellFromPosition(position);
+        const position = pickResult.position;
+        const cellAtStateLevel = pickCellFromPosition(pickResult);
         if (!cellAtStateLevel) return;
-        
-        // [DEBUG] 선택된 셀의 중심에 초록 마커 표시
-        const selectedCell = s2.Cell.fromCellID(cellAtStateLevel);
-        const cellCenter = selectedCell.center();
-        const altitude = getGridAltitude();
-        
-        // 헬퍼 함수 사용하여 S2 중심점을 Cesium Cartesian3로 변환
-        const cellCenterCartesian = s2PointToCesium(cellCenter, altitude);
-        
-        if (debugCellCenterMarker) viewer.entities.remove(debugCellCenterMarker);
-        debugCellCenterMarker = viewer.entities.add({
-          position: cellCenterCartesian,
-          point: {
-            pixelSize: 15,
-            color: Cesium.Color.LIME,
-            outlineColor: Cesium.Color.WHITE,
-            outlineWidth: 2
-          }
-        });
-        
-        console.log('[DEBUG] Click pos:', {
-          x: position.x.toFixed(2),
-          y: position.y.toFixed(2),
-          z: position.z.toFixed(2)
-        });
-        console.log('[DEBUG] Cell center:', {
-          x: cellCenterCartesian.x.toFixed(2),
-          y: cellCenterCartesian.y.toFixed(2),
-          z: cellCenterCartesian.z.toFixed(2)
-        });
 
-        // [수정] Drill-down 상태에서 현재 부모(SelectedCellId) 영역 밖을 클릭했는지 체크
+        // Drill-down 상태에서 현재 부모 영역 밖을 클릭했는지 체크
         if (state.selectedCellId) {
           const parentLevel = state.level - 4;
           const clickedCellParent = s2.cellid.parent(cellAtStateLevel, parentLevel);
 
           if (clickedCellParent !== state.selectedCellId) {
-            console.log("Clicked outside current drill-down context. Lateral Switch.");
-
-            // Lateral Switch: 즉시 옆 셀의 같은 레벨로 이동
+            // Lateral Switch
             state.selectedCellId = clickedCellParent;
             state.focusedCellId = null;
             lastHoveredId = null;
@@ -1024,7 +746,6 @@ export const CESIUM_HTML = `
 
         // Single Click Drill Down
         if (state.level < 16) {
-          console.log("Drilling Down...");
           state.history.push({
             parentId: state.selectedCellId,
             level: state.level
@@ -1046,8 +767,7 @@ export const CESIUM_HTML = `
             selectedCellPrimitive = null;
           }
         } else {
-          console.log("Max level reached");
-          // 마지막 레벨에서는 선택 표시만 남김
+          // 최대 레벨
           state.focusedCellId = cellAtStateLevel;
 
           const cartographic = Cesium.Cartographic.fromCartesian(position, moonEllipsoid);
@@ -1063,9 +783,9 @@ export const CESIUM_HTML = `
       let lastMousePosition = null;
       function checkHoverAt(endPosition) {
          if(!endPosition) { highlightHoveredCell(null); return; }
-         const position = pickGridPoint(endPosition);
-         if(!position) { highlightHoveredCell(null); return; }
-         const cell = pickCellFromPosition(position);
+         const pickResult = pickGridPoint(endPosition);
+         if(!pickResult) { highlightHoveredCell(null); return; }
+         const cell = pickCellFromPosition(pickResult);
          if(cell && cell !== state.focusedCellId) highlightHoveredCell(cell);
          else highlightHoveredCell(null);
       }
@@ -1075,7 +795,6 @@ export const CESIUM_HTML = `
         checkHoverAt(lastMousePosition);
       }, Cesium.ScreenSpaceEventType.MOUSE_MOVE);
 
-      // 카메라가 움직이거나 줌이 될 때도 호버 상태를 갱신
       viewer.scene.postRender.addEventListener(() => {
         if (lastMousePosition) checkHoverAt(lastMousePosition);
       });
