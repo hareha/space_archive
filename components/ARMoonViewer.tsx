@@ -144,7 +144,7 @@ interface SpacecraftWithPosition extends Spacecraft {
     orbitEccentricity?: number; // 타원 비율 (단반경/장반경)
     orbitTilt?: number; // 궤도 기울기 (도)
     trajectory?: TrajectoryPoint[];
-    screenTrajectory?: { x: number; y: number }[]; // 미리 계산된 화면 궤적
+    screenTrajectory?: { x: number; y: number; behindMoon?: boolean }[]; // 미리 계산된 화면 궤적
 }
 
 export default function ARMoonViewer({ onClose }: Props) {
@@ -410,7 +410,7 @@ export default function ARMoonViewer({ onClose }: Props) {
                         return convertToScreenCoordinates(rPt, center, GUIDE_CIRCLE_RADIUS);
                     })
                         .filter((pt) => pt !== null)
-                        .map(pt => ({ x: pt!.x, y: pt!.y }));
+                        .map(pt => ({ x: pt!.x, y: pt!.y, behindMoon: pt!.behindMoon }));
                 }
 
                 if (screenPos) {

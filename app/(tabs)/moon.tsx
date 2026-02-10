@@ -9,6 +9,8 @@ import { useLocalSearchParams } from 'expo-router';
 import { CESIUM_HTML } from '@/constants/CesiumHtml';
 import { loadMineralData } from '@/utils/mineralDataLoader';
 import ARMoonViewer from '@/components/ARMoonViewer';
+import { Asset } from 'expo-asset';
+import * as FileSystem from 'expo-file-system/legacy';
 
 export default function MoonScreen() {
   const webviewRef = useRef<WebView>(null);
@@ -20,6 +22,10 @@ export default function MoonScreen() {
   const [activeLocation, setActiveLocation] = useState<string | null>(null);
   const [selectedCell, setSelectedCell] = useState<any>(null);
   const [showARViewer, setShowARViewer] = useState(false);
+  const [showTempMap, setShowTempMap] = useState(false);
+  const [showThermalGrid, setShowThermalGrid] = useState(false);
+  const [isDayTemp, setIsDayTemp] = useState(true);
+  const [showOptions, setShowOptions] = useState(false); // New Options Menu State
 
   // 필터 상태
   const [filters, setFilters] = useState({
@@ -102,6 +108,58 @@ export default function MoonScreen() {
     return () => clearTimeout(timer);
   }, []);
 
+  // 온도 맵 이미지 base64 변환 및 WebView 전달
+  useEffect(() => {
+    const loadTempMapImage = async () => {
+      try {
+        const asset = Asset.fromModule(require('@/assets/images/moon_avg_temp.webp'));
+        await asset.downloadAsync();
+        if (asset.localUri) {
+          const base64 = await FileSystem.readAsStringAsync(asset.localUri, {
+            encoding: 'base64',
+          });
+          const dataUri = `data:image/webp;base64,${base64}`;
+          webviewRef.current?.postMessage(JSON.stringify({
+            type: 'LOAD_TEMP_MAP_IMAGE',
+            data: dataUri,
+          }));
+        }
+      } catch (error) {
+        console.error('Error loading temp map image:', error);
+      }
+    };
+
+    // 격자 온도 데이터 CSV 로드 및 전달
+    const loadThermalGridData = async () => {
+      try {
+        // Use relative path matching mineralDataLoader pattern
+        const asset = Asset.fromModule(require('../../assets/moon_thermal_1deg_grid.csv'));
+        await asset.downloadAsync();
+
+        if (asset.localUri) {
+          // Use fetch like mineralDataLoader for consistency
+          const response = await fetch(asset.localUri);
+          const csvContent = await response.text();
+
+          webviewRef.current?.postMessage(JSON.stringify({
+            type: 'LOAD_THERMAL_GRID_DATA',
+            data: csvContent,
+          }));
+        }
+      } catch (error) {
+        console.error('Error loading thermal grid csv:', error);
+      }
+    };
+
+    if (!loading) {
+      const timer = setTimeout(() => {
+        loadTempMapImage();
+        loadThermalGridData();
+      }, 3000);
+      return () => clearTimeout(timer);
+    }
+  }, [loading]);
+
   // URL 파라미터 처리 (좌표 이동)
   const params = useLocalSearchParams();
   useEffect(() => {
@@ -159,7 +217,13 @@ export default function MoonScreen() {
     webviewRef.current?.postMessage(JSON.stringify({ type: 'GO_BACK' }));
   };
 
+  const toggleOptions = () => {
+    setShowOptions(!showOptions);
+  };
+
   const toggleFilterModal = () => {
+    // 옵션 메뉴 닫기 (겹치지 않게)
+    setShowOptions(false);
     setShowFilterModal(!showFilterModal);
   };
 
@@ -219,6 +283,34 @@ export default function MoonScreen() {
 
       return newFilters;
     });
+  };
+
+  // 온도 맵 토글 핸들러
+  const toggleTempMap = () => {
+    const newValue = !showTempMap;
+    setShowTempMap(newValue);
+    webviewRef.current?.postMessage(JSON.stringify({
+      type: 'TOGGLE_TEMP_MAP',
+      enabled: newValue
+    }));
+  };
+
+  const toggleThermalGrid = () => {
+    const newValue = !showThermalGrid;
+    setShowThermalGrid(newValue);
+    webviewRef.current?.postMessage(JSON.stringify({
+      type: 'TOGGLE_THERMAL_GRID',
+      enabled: newValue
+    }));
+  };
+
+  const toggleThermalMode = () => {
+    const newMode = !isDayTemp;
+    setIsDayTemp(newMode);
+    webviewRef.current?.postMessage(JSON.stringify({
+      type: 'UPDATE_THERMAL_MODE',
+      isDay: newMode
+    }));
   };
 
   // 그리드 토글 핸들러
@@ -344,31 +436,13 @@ export default function MoonScreen() {
 
         {/* 우측 컨트롤 버튼 (캔버스 영역 내부) */}
         <SafeAreaView style={styles.rightControls} edges={['right']} pointerEvents="box-none">
-          {/* AR 탐사선 추적 버튼 */}
+          {/* 옵션(설정) 버튼 */}
           <TouchableOpacity
-            style={[styles.controlBtn, styles.arButton]}
-            onPress={() => setShowARViewer(true)}
+            style={[styles.controlBtn, (showOptions || showFilterModal || showTempMap || showThermalGrid) && styles.controlBtnActive]}
+            onPress={toggleOptions}
             activeOpacity={0.7}
           >
-            <MaterialCommunityIcons name="augmented-reality" size={24} color="#fff" />
-          </TouchableOpacity>
-
-          {/* 필터 토글 버튼 */}
-          <TouchableOpacity
-            style={[styles.controlBtn, showFilterModal && styles.controlBtnActive]}
-            onPress={toggleFilterModal}
-            activeOpacity={0.7}
-          >
-            <MaterialCommunityIcons name="layers" size={24} color="#fff" />
-          </TouchableOpacity>
-
-          {/* 그리드 토글 버튼 */}
-          <TouchableOpacity
-            style={[styles.controlBtn, showGrid && styles.controlBtnActive]}
-            onPress={toggleGrid}
-            activeOpacity={0.7}
-          >
-            <MaterialCommunityIcons name={showGrid ? "grid" : "grid-off"} size={24} color="#fff" />
+            <Ionicons name="options" size={24} color="#fff" />
           </TouchableOpacity>
 
           {/* 확대 버튼 */}
@@ -409,6 +483,70 @@ export default function MoonScreen() {
           )}
         </SafeAreaView>
 
+        {/* 옵션 메뉴 오버레이 (Control Bar 옆에 표시) */}
+        {showOptions && (
+          <SafeAreaView style={[styles.rightControls, { right: 70, backgroundColor: 'rgba(0,0,0,0.9)', borderRadius: 12, padding: 10, alignItems: 'flex-start', width: 220, zIndex: 100 }]} edges={['right']} pointerEvents="auto">
+
+            {/* 메뉴 타이틀 */}
+            <Text style={{ color: '#fff', fontSize: 16, fontWeight: 'bold', marginBottom: 15, marginLeft: 5 }}>설정 및 보기</Text>
+
+            {/* 1. AR 모드 */}
+            <TouchableOpacity style={styles.optionMenuItem} onPress={() => { setShowARViewer(true); setShowOptions(false); }}>
+              <MaterialCommunityIcons name="augmented-reality" size={20} color="#fff" />
+              <Text style={styles.optionMenuText}>AR 모드 실행</Text>
+            </TouchableOpacity>
+
+            {/* 2. 필터 (광물/지역) */}
+            <TouchableOpacity style={styles.optionMenuItem} onPress={toggleFilterModal}>
+              <MaterialCommunityIcons name="layers" size={20} color="#fff" />
+              <Text style={styles.optionMenuText}>데이터 필터</Text>
+              <Ionicons name="chevron-forward" size={16} color="#888" style={{ marginLeft: 'auto' }} />
+            </TouchableOpacity>
+
+            <View style={styles.divider} />
+
+            {/* 3. 그리드 토글 */}
+            <View style={styles.optionMenuItem}>
+              <MaterialCommunityIcons name={showGrid ? "grid" : "grid-off"} size={20} color="#fff" />
+              <Text style={styles.optionMenuText}>S2 그리드</Text>
+              <Switch
+                value={showGrid}
+                onValueChange={toggleGrid}
+                trackColor={{ false: '#333', true: '#3B82F6' }}
+                thumbColor="#fff"
+                style={{ transform: [{ scale: 0.8 }], marginLeft: 'auto' }}
+              />
+            </View>
+
+            {/* 4. 격자 온도 토글 */}
+            <View style={styles.optionMenuItem}>
+              <MaterialCommunityIcons name="grid" size={20} color={showThermalGrid ? '#3B82F6' : '#bbb'} />
+              <Text style={styles.optionMenuText}>격자 온도</Text>
+              <Switch
+                value={showThermalGrid}
+                onValueChange={toggleThermalGrid}
+                trackColor={{ false: '#333', true: '#3B82F6' }}
+                thumbColor="#fff"
+                style={{ transform: [{ scale: 0.8 }], marginLeft: 'auto' }}
+              />
+            </View>
+
+            {/* 5. 평균 온도 맵 토글 */}
+            <View style={styles.optionMenuItem}>
+              <MaterialCommunityIcons name="thermometer" size={20} color={showTempMap ? "#FF6B6B" : "#bbb"} />
+              <Text style={styles.optionMenuText}>평균 온도 맵</Text>
+              <Switch
+                value={showTempMap}
+                onValueChange={toggleTempMap}
+                trackColor={{ false: '#333', true: '#FF6B6B' }}
+                thumbColor="#fff"
+                style={{ transform: [{ scale: 0.8 }], marginLeft: 'auto' }}
+              />
+            </View>
+
+          </SafeAreaView>
+        )}
+
         {/* 광물 범례 (활성 필터가 있을 때만 표시) */}
         {activeMineralFilter && mineralRanges[activeMineralFilter] && (
           <SafeAreaView style={styles.mapLegendContainer} edges={['right', 'bottom']} pointerEvents="none">
@@ -448,6 +586,112 @@ export default function MoonScreen() {
               <Text style={styles.mapLegendUnit}>
                 {mineralRanges[activeMineralFilter].unit}
               </Text>
+            </View>
+          </SafeAreaView>
+        )}
+
+        {/* 온도 맵 범례 */}
+        {showTempMap && (
+          <SafeAreaView style={styles.mapLegendContainer} edges={['right', 'bottom']} pointerEvents="none">
+            <View style={styles.mapLegend}>
+              <Text style={styles.mapLegendTitle}>
+                달 평균 온도
+              </Text>
+
+              {/* 그라데이션 바 */}
+              <View style={styles.mapGradientBar}>
+                {[...Array(20)].map((_, i) => {
+                  const hue = 240 - (i / 19) * 240;
+                  return (
+                    <View
+                      key={i}
+                      style={{
+                        flex: 1,
+                        backgroundColor: `hsl(${hue}, 100%, 50%)`,
+                      }}
+                    />
+                  );
+                })}
+              </View>
+
+              {/* 최소/최대 값 레이블 */}
+              <View style={styles.mapLegendLabels}>
+                <Text style={styles.mapLegendValue}>-40</Text>
+                <Text style={styles.mapLegendValue}>+40</Text>
+              </View>
+
+              {/* 단위 */}
+              <Text style={styles.mapLegendUnit}>K (켈빈)</Text>
+            </View>
+          </SafeAreaView>
+        )}
+
+        {/* 격자 온도 범례 */}
+        {showThermalGrid && (
+          <SafeAreaView style={[styles.mapLegendContainer, { bottom: 180 }]} edges={['right']} pointerEvents="box-none">
+            <View style={styles.mapLegend} pointerEvents="auto">
+              <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 5 }}>
+                <Text style={styles.mapLegendTitle}>
+                  {isDayTemp ? '주간 최고 (Day Max)' : '야간 최저 (Night Min)'}
+                </Text>
+              </View>
+
+              {/* Day/Night Toggle (Pointer events enabled for this container) */}
+              <View style={{ marginBottom: 8, alignItems: 'center' }} pointerEvents="box-none">
+                <TouchableOpacity
+                  onPress={toggleThermalMode}
+                  style={{
+                    flexDirection: 'row',
+                    backgroundColor: 'rgba(0,0,0,0.5)',
+                    borderRadius: 15,
+                    padding: 2,
+                    borderWidth: 1,
+                    borderColor: '#555'
+                  }}
+                >
+                  <View style={{
+                    paddingHorizontal: 10,
+                    paddingVertical: 4,
+                    borderRadius: 12,
+                    backgroundColor: isDayTemp ? '#FDB813' : 'transparent'
+                  }}>
+                    <Text style={{ color: isDayTemp ? '#000' : '#888', fontSize: 10, fontWeight: 'bold' }}>Day</Text>
+                  </View>
+                  <View style={{
+                    paddingHorizontal: 10,
+                    paddingVertical: 4,
+                    borderRadius: 12,
+                    backgroundColor: !isDayTemp ? '#3B82F6' : 'transparent'
+                  }}>
+                    <Text style={{ color: !isDayTemp ? '#fff' : '#888', fontSize: 10, fontWeight: 'bold' }}>Night</Text>
+                  </View>
+                </TouchableOpacity>
+              </View>
+
+              {/* 그라데이션 바 */}
+              <View style={styles.mapGradientBar}>
+                {[...Array(20)].map((_, i) => {
+                  const hue = 240 - (i / 19) * 240;
+                  return (
+                    <View
+                      key={i}
+                      style={{
+                        flex: 1,
+                        backgroundColor: `hsl(${hue}, 100%, 50%)`,
+                      }}
+                    />
+                  );
+                })}
+              </View>
+
+              {/* 최소/최대 값 레이블 */}
+              <View style={styles.mapLegendLabels}>
+                <Text style={styles.mapLegendValue}>{isDayTemp ? '200K' : '40K'}</Text>
+                <Text style={styles.mapLegendValue}>{isDayTemp ? '390K' : '100K'}</Text>
+              </View>
+
+              {/* 단위 */}
+              <Text style={styles.mapLegendUnit}>K (켈빈)</Text>
             </View>
           </SafeAreaView>
         )}
@@ -798,17 +1042,21 @@ export default function MoonScreen() {
       </View>
 
       {/* 로딩 */}
-      {loading && (
-        <View style={styles.loadingContainer}>
-          <Text style={styles.loadingText}>달 지도 로딩 중...</Text>
-        </View>
-      )}
+      {
+        loading && (
+          <View style={styles.loadingContainer}>
+            <Text style={styles.loadingText}>달 지도 로딩 중...</Text>
+          </View>
+        )
+      }
 
       {/* AR 탐사선 뷰어 */}
-      {showARViewer && (
-        <ARMoonViewer onClose={() => setShowARViewer(false)} />
-      )}
-    </View>
+      {
+        showARViewer && (
+          <ARMoonViewer onClose={() => setShowARViewer(false)} />
+        )
+      }
+    </View >
   );
 }
 
@@ -1149,6 +1397,25 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     marginBottom: 4,
+  },
+  // 옵션 메뉴 스타일
+  optionMenuItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(255,255,255,0.1)',
+  },
+  optionMenuText: {
+    color: '#fff',
+    fontSize: 14,
+    marginLeft: 10,
+    flex: 1,
+  },
+  divider: {
+    height: 1,
+    backgroundColor: 'rgba(255,255,255,0.2)',
+    marginVertical: 5,
   },
   mapLegendValue: {
     color: '#00f0ff',

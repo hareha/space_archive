@@ -18,7 +18,7 @@ interface TrajectorySpacecraft {
     color: string;
     nameKo: string;
     screenPos?: { x: number; y: number; behindMoon: boolean };
-    screenTrajectory?: { x: number; y: number }[];
+    screenTrajectory?: { x: number; y: number; behindMoon?: boolean }[];
     orbitRadius?: number;
     orbitEccentricity?: number;
     orbitTilt?: number;
@@ -81,7 +81,7 @@ export default function ThreeOrbitVisualizer({
                 const isSelected = sc.id === selectedId;
                 const baseOpacity = isSelected ? 1.0 : (hasSelection ? 0.2 : 0.6);
 
-                // 1. 실제 궤적 데이터가 있는 경우 - Line (그라데이션)
+                // 1. 실제 궤적 데이터가 있는 경우 - LineSegments (관통 방지 필터링)
                 if (sc.screenTrajectory && sc.screenTrajectory.length >= 2) {
                     const trajectory = sc.screenTrajectory;
                     const baseColor = new THREE.Color(sc.color);
@@ -89,38 +89,47 @@ export default function ThreeOrbitVisualizer({
                     const positions: number[] = [];
                     const colors: number[] = [];
 
-                    for (let i = 0; i < trajectory.length; i++) {
-                        const pt = trajectory[i];
-                        positions.push(pt.x, SCREEN_HEIGHT - pt.y, 0);
+                    for (let i = 0; i < trajectory.length - 1; i++) {
+                        const pt1 = trajectory[i];
+                        const pt2 = trajectory[i + 1];
+
+                        // 둘 중 하나라도 달 뒤쪽에 있으면 해당 세그먼트는 그리지 않음 (관통 방지)
+                        if (pt1.behindMoon || pt2.behindMoon) continue;
 
                         // progress: 0(과거) → 1(최근)
-                        const progress = i / Math.max(1, trajectory.length - 1);
+                        const prog1 = i / Math.max(1, trajectory.length - 1);
+                        const prog2 = (i + 1) / Math.max(1, trajectory.length - 1);
 
-                        // 페이드인: 과거 끝(0~0.2)에서 점점 나타남, 이후 90% 유지
-                        const fadeIn = progress < 0.2 ? (progress / 0.2) * 0.9 : 0.9;
+                        // 페이드인 및 밝기 계산
+                        const fadeIn1 = prog1 < 0.2 ? (prog1 / 0.2) * 0.9 : 0.9;
+                        const fadeIn2 = prog2 < 0.2 ? (prog2 / 0.2) * 0.9 : 0.9;
 
-                        // 밝기 그라데이션: 과거 0.3 → 최근 1.0 (+ 페이드인)
-                        const brightness = (0.3 + 0.7 * Math.pow(progress, 1.2)) * (fadeIn / 0.9);
+                        const bright1 = (0.3 + 0.7 * Math.pow(prog1, 1.2)) * (fadeIn1 / 0.9);
+                        const bright2 = (0.3 + 0.7 * Math.pow(prog2, 1.2)) * (fadeIn2 / 0.9);
 
-                        colors.push(
-                            baseColor.r * brightness,
-                            baseColor.g * brightness,
-                            baseColor.b * brightness
-                        );
+                        // 점 1
+                        positions.push(pt1.x, SCREEN_HEIGHT - pt1.y, 0);
+                        colors.push(baseColor.r * bright1, baseColor.g * bright1, baseColor.b * bright1);
+
+                        // 점 2
+                        positions.push(pt2.x, SCREEN_HEIGHT - pt2.y, 0);
+                        colors.push(baseColor.r * bright2, baseColor.g * bright2, baseColor.b * bright2);
                     }
 
-                    const geometry = new THREE.BufferGeometry();
-                    geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
-                    geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
+                    if (positions.length > 0) {
+                        const geometry = new THREE.BufferGeometry();
+                        geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+                        geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
 
-                    const material = new THREE.LineBasicMaterial({
-                        vertexColors: true,
-                        transparent: true,
-                        opacity: baseOpacity
-                    });
+                        const material = new THREE.LineBasicMaterial({
+                            vertexColors: true,
+                            transparent: true,
+                            opacity: baseOpacity
+                        });
 
-                    const line = new THREE.Line(geometry, material);
-                    scene.add(line);
+                        const line = new THREE.LineSegments(geometry, material);
+                        scene.add(line);
+                    }
                 }
                 // 2. 궤적 데이터가 없으면 추정 타원 궤도
                 else if (sc.orbitRadius) {
