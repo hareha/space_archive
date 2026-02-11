@@ -94,6 +94,20 @@ export const CESIUM_HTML = `
       let thermalGridCsvContent = null;
       let isDayTempMode = true;
 
+      // --- Gravity Anomaly Map ---
+      let gravityPrimitive = null;
+      let showGravityMap = false;
+      let gravityDataLoaded = false;
+      let gravityCsvContent = null;
+      let gravityGridMode = false;
+
+      // --- Neutron (Hydrogen) Map ---
+      let neutronPrimitive = null;
+      let showNeutronMap = false;
+      let neutronDataLoaded = false;
+      let neutronCsvContent = null;
+      let neutronGridMode = false;
+
       const viewer = new Cesium.Viewer('cesiumContainer', {
         globe: new Cesium.Globe(moonEllipsoid),
         baseLayer: false,
@@ -148,7 +162,7 @@ export const CESIUM_HTML = `
         color: '#00FF00',
         selectedCellId: null,   // 현재 렌더링 기준 부모 (Drill-down 된 상태)
         focusedCellId: null,    // 현재 클릭(포커스)된 셀
-        history: []             // 뒤로가기를 위한 {parentId, level} 스택
+        history: []             // 뒤로가기를 위한 {parentId, level, zoomLevel} 스택
       };
 
       let gridPrimitives = viewer.scene.primitives.add(new Cesium.PrimitiveCollection());
@@ -164,13 +178,16 @@ export const CESIUM_HTML = `
       let geologicPrimitive = null;
       let mineralStats = { min: 0, max: 1 };
       
-      // Zoom Levels (Heights in meters)
-      // Level 0: Global (Starting view)
-      // Level 1: Regional
-      // Level 2: Local
-      // Level 3: Surface Detail
-      const ZOOM_HEIGHTS = [4000000, 1500000, 400000, 50000];
-      let currentZoomIndex = 0;
+      // 5단계 고정 줌 레벨
+      // 0=기본뷰(달 전체), 1=S2 Lv4, 2=S2 Lv8, 3=S2 Lv12, 4=S2 Lv16
+      const ZOOM_LEVELS = [
+        { height: 4000000, s2Level: null, label: 'Global' },
+        { height: 1500000, s2Level: 4,    label: 'S2 Level 4' },
+        { height: 100000,  s2Level: 8,    label: 'S2 Level 8' },
+        { height: 6000,    s2Level: 12,   label: 'S2 Level 12' },
+        { height: 400,     s2Level: 16,   label: 'S2 Level 16' },
+      ];
+      let currentZoomLevel = 0;
 
       // --- Temperature Map (Moved to top) ---
 
@@ -249,15 +266,13 @@ export const CESIUM_HTML = `
                 updateS2Grid();
             }
             if(message.type === 'ZOOM_IN') {
-                // viewer.camera.zoomIn(viewer.camera.positionCartographic.height * 0.3);
                 changeZoomLevel(1);
             }
             if(message.type === 'ZOOM_OUT') {
-                // viewer.camera.zoomOut(viewer.camera.positionCartographic.height * 0.5);
                 changeZoomLevel(-1);
             }
             if(message.type === 'RESET_VIEW') {
-                if(moonTileset) viewer.camera.flyToBoundingSphere(moonTileset.boundingSphere, { duration: 1.0 });
+                resetExplorer();
             }
             if(message.type === 'GO_TO_LOCATION') {
                 const { lat, lng } = message.payload;
@@ -301,6 +316,24 @@ export const CESIUM_HTML = `
                    renderThermalGridFromData();
                 }
             }
+            if(message.type === 'TOGGLE_GRAVITY_MAP') {
+                toggleGravityMap(message.enabled);
+            }
+            if(message.type === 'LOAD_GRAVITY_DATA') {
+                processGravityData(message.data);
+            }
+            if(message.type === 'TOGGLE_GRAVITY_GRID_MODE') {
+                toggleGravityGridMode(message.enabled);
+            }
+            if(message.type === 'TOGGLE_NEUTRON_MAP') {
+                toggleNeutronMap(message.enabled);
+            }
+            if(message.type === 'LOAD_NEUTRON_DATA') {
+                processNeutronData(message.data);
+            }
+            if(message.type === 'TOGGLE_NEUTRON_GRID_MODE') {
+                toggleNeutronGridMode(message.enabled);
+            }
 
          } catch(e) { console.error("Msg Error", e); }
       }
@@ -312,6 +345,11 @@ export const CESIUM_HTML = `
             selectedCellId: state.selectedCellId ? s2.cellid.toToken(state.selectedCellId) : null
         });
         sendToRN('DEPTH_CHANGED', { canGoBack: state.history.length > 0 });
+        sendToRN('ZOOM_LEVEL_CHANGED', {
+            currentLevel: currentZoomLevel,
+            maxLevel: ZOOM_LEVELS.length - 1,
+            minLevel: 0
+        });
       }
 
       function resetExplorer() {
@@ -319,9 +357,10 @@ export const CESIUM_HTML = `
         state.selectedCellId = null;
         state.focusedCellId = null;
         state.history = [];
+        currentZoomLevel = 0;
         updateUI();
         updateS2Grid();
-        if(moonTileset) viewer.camera.flyToBoundingSphere(moonTileset.boundingSphere);
+        if(moonTileset) viewer.camera.flyToBoundingSphere(moonTileset.boundingSphere, { duration: 1.0 });
         
         if (selectedCellPrimitive) {
           viewer.scene.primitives.remove(selectedCellPrimitive);
@@ -341,6 +380,7 @@ export const CESIUM_HTML = `
         state.level = last.level;
         state.selectedCellId = last.parentId;
         state.focusedCellId = null;
+        currentZoomLevel = last.zoomLevel !== undefined ? last.zoomLevel : Math.max(0, currentZoomLevel - 1);
 
         updateUI();
         updateS2Grid();
@@ -348,7 +388,7 @@ export const CESIUM_HTML = `
         if (state.selectedCellId) {
            smoothZoomToCell(state.selectedCellId, 1000);
         } else {
-           if(moonTileset) viewer.camera.flyToBoundingSphere(moonTileset.boundingSphere);
+           if(moonTileset) viewer.camera.flyToBoundingSphere(moonTileset.boundingSphere, { duration: 1.0 });
         }
         
         if(selectedCellPrimitive) {
@@ -371,13 +411,9 @@ export const CESIUM_HTML = `
 
         const gridAltitude = getGridAltitude();
         const centerCar3 = s2PointToCesium(center, gridAltitude);
-        const level = s2.cellid.level(cellId);
 
-        let additionalHeight;
-        if (level <= 4) additionalHeight = 1500000;
-        else if (level <= 8) additionalHeight = 200000;
-        else if (level <= 12) additionalHeight = 15000;
-        else additionalHeight = 4000;
+        // 현재 줌 레벨에 맞는 높이 사용
+        const additionalHeight = ZOOM_LEVELS[currentZoomLevel].height;
 
         const normal = Cesium.Cartesian3.normalize(centerCar3, new Cesium.Cartesian3());
         const targetPosition = Cesium.Cartesian3.add(
@@ -943,6 +979,321 @@ export const CESIUM_HTML = `
           thermalGridPrimitive.show = enabled;
         }
       }
+
+      // --- Gravity Anomaly Map Functions ---
+
+      function processGravityData(csvContent) {
+        gravityCsvContent = csvContent;
+        renderGravityMap();
+        gravityDataLoaded = true;
+      }
+
+      function renderGravityMap() {
+        if (!gravityCsvContent) return;
+
+        // 기존 primitive 제거
+        if (gravityPrimitive) {
+          viewer.scene.primitives.remove(gravityPrimitive);
+          gravityPrimitive = null;
+        }
+
+        console.log('Rendering gravity anomaly map...');
+        const lines = gravityCsvContent.split('\\n');
+
+        // 1차 패스: min/max 계산
+        let minGrav = Infinity, maxGrav = -Infinity;
+        const parsed = [];
+        for (let i = 1; i < lines.length; i++) {
+          const line = lines[i].trim();
+          if (!line) continue;
+          const parts = line.split(',');
+          if (parts.length < 3) continue;
+          const lat = parseFloat(parts[0]);
+          const lon = parseFloat(parts[1]);
+          const grav = parseFloat(parts[2]);
+          if (isNaN(lat) || isNaN(lon) || isNaN(grav)) continue;
+          parsed.push({ lat, lon, grav });
+          if (grav < minGrav) minGrav = grav;
+          if (grav > maxGrav) maxGrav = grav;
+        }
+
+        console.log('Gravity range:', minGrav, 'to', maxGrav, 'mGal,', parsed.length, 'points');
+
+        // Canvas (360 x 180)
+        const width = 360;
+        const height = 180;
+        const canvas = document.createElement('canvas');
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext('2d');
+        ctx.clearRect(0, 0, width, height);
+
+        const imgData = ctx.createImageData(width, height);
+        const data = imgData.data;
+
+        // 2차 패스: 색상 매핑 (Blue-White-Red diverging)
+        for (const { lat, lon, grav } of parsed) {
+          let y = Math.floor(90 - lat);
+          let x = Math.floor(lon + 180);
+          if (y >= height) y = height - 1;
+          if (x >= width) x = width - 1;
+          if (y < 0) y = 0;
+          if (x < 0) x = 0;
+
+          const index = (y * width + x) * 4;
+          let r, g, b;
+
+          if (grav < 0) {
+            // 음수: Blue → White  (minGrav → 0)
+            const t = Math.min(1, Math.abs(grav) / Math.abs(minGrav));
+            r = Math.round(255 * (1 - t));
+            g = Math.round(255 * (1 - t));
+            b = 255;
+          } else {
+            // 양수: White → Red  (0 → maxGrav)
+            const t = Math.min(1, grav / maxGrav);
+            r = 255;
+            g = Math.round(255 * (1 - t));
+            b = Math.round(255 * (1 - t));
+          }
+
+          data[index] = r;
+          data[index + 1] = g;
+          data[index + 2] = b;
+          data[index + 3] = 180; // alpha
+        }
+
+        ctx.putImageData(imgData, 0, 0);
+        createGravitySphere(canvas);
+
+        // min/max를 RN으로 전달 (범례용)
+        sendToRN('GRAVITY_RANGE', { min: Math.round(minGrav), max: Math.round(maxGrav) });
+      }
+
+      function createGravitySphere(canvas) {
+        const radius = moonEllipsoid.maximumRadius + 15000;
+
+        const geometry = new Cesium.EllipsoidGeometry({
+          radii: new Cesium.Cartesian3(radius, radius, radius)
+        });
+
+        gravityPrimitive = new Cesium.Primitive({
+          geometryInstances: new Cesium.GeometryInstance({ geometry: geometry }),
+          appearance: new Cesium.MaterialAppearance({
+            material: new Cesium.Material({
+              fabric: {
+                type: 'LunarGravityMaterial_' + Date.now(),
+                uniforms: {
+                  image: canvas,
+                  u_showGrid: gravityGridMode ? 1.0 : 0.0
+                },
+                source: \`
+                  czm_material czm_getMaterial(czm_materialInput materialInput) {
+                    czm_material material = czm_getDefaultMaterial(materialInput);
+                    vec2 st = materialInput.st;
+                    float width = 360.0;
+                    float height = 180.0;
+
+                    if (u_showGrid > 0.5) {
+                      // Grid mode: nearest neighbor (셀별 단색)
+                      float dx = 1.0 / width;
+                      float dy = 1.0 / height;
+                      vec2 st_nearest = vec2(
+                        (floor(st.x * width) + 0.5) * dx,
+                        (floor(st.y * height) + 0.5) * dy
+                      );
+                      vec4 color = texture(image, st_nearest);
+                      material.diffuse = color.rgb;
+                      material.alpha = color.a;
+                    } else {
+                      // Gradient mode: smooth bilinear
+                      vec4 color = texture(image, st);
+                      material.diffuse = color.rgb;
+                      material.alpha = color.a;
+                    }
+                    return material;
+                  }
+                \`
+              }
+            }),
+            translucent: true,
+            renderState: {
+              depthTest: { enabled: true },
+              cull: { enabled: true, face: Cesium.CullFace.BACK }
+            }
+          }),
+          show: showGravityMap
+        });
+
+        viewer.scene.primitives.add(gravityPrimitive);
+      }
+
+      function toggleGravityMap(enabled) {
+        showGravityMap = enabled;
+        if (gravityPrimitive) {
+          gravityPrimitive.show = enabled;
+        }
+      }
+
+      function toggleGravityGridMode(enabled) {
+        gravityGridMode = enabled;
+        if (gravityPrimitive && gravityPrimitive.appearance && gravityPrimitive.appearance.material) {
+          gravityPrimitive.appearance.material.uniforms.u_showGrid = enabled ? 1.0 : 0.0;
+        }
+      }
+
+      // --- Neutron (Hydrogen) Map Functions ---
+
+      function processNeutronData(csvContent) {
+        neutronCsvContent = csvContent;
+        renderNeutronMap();
+        neutronDataLoaded = true;
+      }
+
+      function renderNeutronMap() {
+        if (!neutronCsvContent) return;
+
+        if (neutronPrimitive) {
+          viewer.scene.primitives.remove(neutronPrimitive);
+          neutronPrimitive = null;
+        }
+
+        let minVal = Infinity, maxVal = -Infinity;
+        const parsed = [];
+        const lines = neutronCsvContent.split(String.fromCharCode(10));
+
+        // 1. 파싱 및 범위 확인
+        for (let i = 1; i < lines.length; i++) {
+          const line = lines[i].trim();
+          if (!line) continue;
+          const parts = line.split(',');
+          if (parts.length < 3) continue;
+          const lat = parseFloat(parts[0]);
+          const lon = parseFloat(parts[1]);
+          const val = parseFloat(parts[2]);
+          
+          if (isNaN(lat) || isNaN(lon) || isNaN(val)) continue;
+          
+          parsed.push({ lat, lon, val });
+          
+          if (val < minVal) minVal = val;
+          if (val > maxVal) maxVal = val;
+        }
+
+        console.log('Neutron range:', minVal, 'to', maxVal, ', Total points:', parsed.length);
+
+        const width = 360;
+        const height = 180;
+        const canvas = document.createElement('canvas');
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext('2d');
+        ctx.clearRect(0, 0, width, height);
+
+        const imgData = ctx.createImageData(width, height);
+        const data = imgData.data;
+        const range = maxVal - minVal;
+
+        // ColorRamp: low(blue) → high(gray)
+        // 낮을수록 수소 농도 높음 → 파랑 강조
+        for (const { lat, lon, val } of parsed) {
+          let y = Math.floor(90 - lat);
+          let x = Math.floor(lon + 180);
+          if (y >= height) y = height - 1;
+          if (x >= width) x = width - 1;
+          if (y < 0) y = 0;
+          if (x < 0) x = 0;
+
+          // t: 0(min/low neutron/high hydrogen) → 1(max/high neutron/low hydrogen)
+          const t = range > 0 ? (val - minVal) / range : 0.5;
+
+          // low(t=0): Blue(30,100,255) → high(t=1): Gray(180,180,180)
+          const r = Math.round(30 + (180 - 30) * t);
+          const g = Math.round(100 + (180 - 100) * t);
+          const b = Math.round(255 + (180 - 255) * t);
+
+          const index = (y * width + x) * 4;
+          data[index] = r;
+          data[index + 1] = g;
+          data[index + 2] = b;
+          data[index + 3] = 180;
+        }
+
+        ctx.putImageData(imgData, 0, 0);
+        createNeutronSphere(canvas);
+
+        sendToRN('NEUTRON_RANGE', { min: Math.round(minVal), max: Math.round(maxVal) });
+      }
+
+      function createNeutronSphere(canvas) {
+        const radius = moonEllipsoid.maximumRadius + 16000;
+
+        const geometry = new Cesium.EllipsoidGeometry({
+          radii: new Cesium.Cartesian3(radius, radius, radius)
+        });
+
+        neutronPrimitive = new Cesium.Primitive({
+          geometryInstances: new Cesium.GeometryInstance({ geometry: geometry }),
+          appearance: new Cesium.MaterialAppearance({
+            material: new Cesium.Material({
+              fabric: {
+                type: 'LunarNeutronMaterial_' + Date.now(),
+                uniforms: {
+                  image: canvas,
+                  u_showGrid: neutronGridMode ? 1.0 : 0.0
+                },
+                source: \`
+                  czm_material czm_getMaterial(czm_materialInput materialInput) {
+                    czm_material material = czm_getDefaultMaterial(materialInput);
+                    vec2 st = materialInput.st;
+                    float width = 360.0;
+                    float height = 180.0;
+
+                    if (u_showGrid > 0.5) {
+                      float dx = 1.0 / width;
+                      float dy = 1.0 / height;
+                      vec2 st_nearest = vec2(
+                        (floor(st.x * width) + 0.5) * dx,
+                        (floor(st.y * height) + 0.5) * dy
+                      );
+                      vec4 color = texture(image, st_nearest);
+                      material.diffuse = color.rgb;
+                      material.alpha = color.a;
+                    } else {
+                      vec4 color = texture(image, st);
+                      material.diffuse = color.rgb;
+                      material.alpha = color.a;
+                    }
+                    return material;
+                  }
+                \`
+              }
+            }),
+            translucent: true,
+            renderState: {
+              depthTest: { enabled: true },
+              cull: { enabled: true, face: Cesium.CullFace.BACK }
+            }
+          }),
+          show: showNeutronMap
+        });
+
+        viewer.scene.primitives.add(neutronPrimitive);
+      }
+
+      function toggleNeutronMap(enabled) {
+        showNeutronMap = enabled;
+        if (neutronPrimitive) {
+          neutronPrimitive.show = enabled;
+        }
+      }
+
+      function toggleNeutronGridMode(enabled) {
+        neutronGridMode = enabled;
+        if (neutronPrimitive && neutronPrimitive.appearance && neutronPrimitive.appearance.material) {
+          neutronPrimitive.appearance.material.uniforms.u_showGrid = enabled ? 1.0 : 0.0;
+        }
+      }
       function updateS2Grid() {
         gridPrimitives.removeAll();
         if (!state.showGrid) return;
@@ -1086,13 +1437,19 @@ export const CESIUM_HTML = `
         if (state.level < 16) {
           state.history.push({
             parentId: state.selectedCellId,
-            level: state.level
+            level: state.level,
+            zoomLevel: currentZoomLevel
           });
 
           const nextLevel = state.level + 4;
           state.level = nextLevel;
           state.selectedCellId = cellAtStateLevel;
           state.focusedCellId = null;
+          
+          // 줌 레벨도 함께 증가 (S2 레벨에 맞는 줌 레벨로)
+          const matchingZoom = ZOOM_LEVELS.findIndex(z => z.s2Level === nextLevel);
+          if (matchingZoom >= 0) currentZoomLevel = matchingZoom;
+          else currentZoomLevel = Math.min(currentZoomLevel + 1, ZOOM_LEVELS.length - 1);
 
           lastHoveredId = null;
 
@@ -1110,48 +1467,91 @@ export const CESIUM_HTML = `
         } 
       }, Cesium.ScreenSpaceEventType.LEFT_CLICK);
 
-      // --- Zoom Level Function ---
+      // --- 5단계 고정 줌 레벨 함수 ---
       function changeZoomLevel(direction) {
-        // Find nearest level first (in case of manual zoom)
-        const currentHeight = viewer.camera.positionCartographic.height;
-        let closestIndex = 0;
-        let minDiff = Math.abs(currentHeight - ZOOM_HEIGHTS[0]);
+        const newLevel = currentZoomLevel + direction;
         
-        for (let i = 1; i < ZOOM_HEIGHTS.length; i++) {
-            const diff = Math.abs(currentHeight - ZOOM_HEIGHTS[i]);
-            if (diff < minDiff) {
-                minDiff = diff;
-                closestIndex = i;
-            }
+        // 범위 클램프: 0 ~ 4
+        if (newLevel < 0 || newLevel >= ZOOM_LEVELS.length) {
+          updateUI();
+          return;
         }
         
-        let newIndex = closestIndex + direction;
+        currentZoomLevel = newLevel;
+        const targetHeight = ZOOM_LEVELS[currentZoomLevel].height;
         
-        if (newIndex < 0) newIndex = 0;
-        if (newIndex >= ZOOM_HEIGHTS.length) newIndex = ZOOM_HEIGHTS.length - 1;
+        // 화면 중심점을 달 표면에서 pick (moonEllipsoid 명시!)
+        const center = viewer.camera.pickEllipsoid(
+          new Cesium.Cartesian2(viewer.canvas.width / 2, viewer.canvas.height / 2),
+          moonEllipsoid
+        );
         
-        if (newIndex !== currentZoomIndex || Math.abs(currentHeight - ZOOM_HEIGHTS[newIndex]) > 1000) {
-          currentZoomIndex = newIndex;
-          const targetHeight = ZOOM_HEIGHTS[currentZoomIndex];
-          
-          const center = viewer.camera.pickEllipsoid(new Cesium.Cartesian2(viewer.canvas.width / 2, viewer.canvas.height / 2));
-          
-          if (center) {
-             const cartographic = Cesium.Cartographic.fromCartesian(center);
-             cartographic.height = targetHeight;
-             viewer.camera.flyTo({
-                destination: Cesium.Cartesian3.fromRadians(cartographic.longitude, cartographic.latitude, targetHeight),
-                duration: 1.0,
-                easingFunction: Cesium.EasingFunction.QUADRATIC_IN_OUT
-             });
-          } else {
-             const currentCart = viewer.camera.positionCartographic;
-             viewer.camera.flyTo({
-                destination: Cesium.Cartesian3.fromRadians(currentCart.longitude, currentCart.latitude, targetHeight),
-                duration: 1.0
-             });
+        let targetPosition;
+        
+        if (center) {
+          const normal = Cesium.Cartesian3.normalize(center, new Cesium.Cartesian3());
+          targetPosition = Cesium.Cartesian3.add(
+            center,
+            Cesium.Cartesian3.multiplyByScalar(normal, targetHeight, new Cesium.Cartesian3()),
+            new Cesium.Cartesian3()
+          );
+        } else {
+          const camPos = viewer.camera.position;
+          const normal = Cesium.Cartesian3.normalize(camPos, new Cesium.Cartesian3());
+          const surfacePoint = Cesium.Cartesian3.multiplyByScalar(normal, moonRadius, new Cesium.Cartesian3());
+          targetPosition = Cesium.Cartesian3.add(
+            surfacePoint,
+            Cesium.Cartesian3.multiplyByScalar(normal, targetHeight, new Cesium.Cartesian3()),
+            new Cesium.Cartesian3()
+          );
+        }
+        
+        // smoothZoomToCell과 동일한 애니메이션 (직접 선형 보간 + ease-out cubic)
+        const startPosition = Cesium.Cartesian3.clone(viewer.camera.position);
+        const startHeading = viewer.camera.heading;
+        const startPitch = viewer.camera.pitch;
+        const targetPitch = Cesium.Math.toRadians(-90);
+        const duration = 1000;
+        let startTime = null;
+
+        function animate(timestamp) {
+          if (!startTime) startTime = timestamp;
+          const progress = (timestamp - startTime) / duration;
+
+          if (progress >= 1.0) {
+            viewer.camera.setView({
+              destination: targetPosition,
+              orientation: {
+                heading: startHeading,
+                pitch: targetPitch,
+                roll: 0.0
+              }
+            });
+            return;
           }
+
+          // Ease-out cubic
+          const t = 1 - Math.pow(1 - progress, 3);
+
+          const currentPos = new Cesium.Cartesian3();
+          Cesium.Cartesian3.lerp(startPosition, targetPosition, t, currentPos);
+
+          const currentPitch = Cesium.Math.lerp(startPitch, targetPitch, t);
+
+          viewer.camera.setView({
+            destination: currentPos,
+            orientation: {
+              heading: startHeading,
+              pitch: currentPitch,
+              roll: 0.0
+            }
+          });
+
+          requestAnimationFrame(animate);
         }
+
+        requestAnimationFrame(animate);
+        updateUI();
       }
 
       // 마우스 호버 핸들러

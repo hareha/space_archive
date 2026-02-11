@@ -24,8 +24,16 @@ export default function MoonScreen() {
   const [showARViewer, setShowARViewer] = useState(false);
   const [showTempMap, setShowTempMap] = useState(false);
   const [showThermalGrid, setShowThermalGrid] = useState(false);
+  const [showGravityMap, setShowGravityMap] = useState(false);
+  const [gravityRange, setGravityRange] = useState({ min: -600, max: 600 });
+  const [gravityGridMode, setGravityGridMode] = useState(false);
+  const [showNeutronMap, setShowNeutronMap] = useState(false);
+  const [neutronRange, setNeutronRange] = useState({ min: 100, max: 200 });
+  const [neutronGridMode, setNeutronGridMode] = useState(false);
   const [isDayTemp, setIsDayTemp] = useState(true);
   const [showOptions, setShowOptions] = useState(false); // New Options Menu State
+  const [currentZoomLevel, setCurrentZoomLevel] = useState(0);
+  const MAX_ZOOM_LEVEL = 4;
 
   // 필터 상태
   const [filters, setFilters] = useState({
@@ -151,10 +159,52 @@ export default function MoonScreen() {
       }
     };
 
+    // 중력 이상 데이터 CSV 로드 및 전달
+    const loadGravityData = async () => {
+      try {
+        const asset = Asset.fromModule(require('../../assets/moon_underground_gravity_1deg.csv'));
+        await asset.downloadAsync();
+
+        if (asset.localUri) {
+          const response = await fetch(asset.localUri);
+          const csvContent = await response.text();
+
+          webviewRef.current?.postMessage(JSON.stringify({
+            type: 'LOAD_GRAVITY_DATA',
+            data: csvContent,
+          }));
+          console.log('Gravity data sent to WebView');
+        }
+      } catch (error) {
+        console.error('Error loading gravity csv:', error);
+      }
+    };
+
+    // 중성자 데이터 CSV 로드 및 전달
+    const loadNeutronData = async () => {
+      try {
+        const asset = Asset.fromModule(require('../../assets/moon_hydrogen_heatmap_final.csv'));
+        await asset.downloadAsync();
+        if (asset.localUri) {
+          const response = await fetch(asset.localUri);
+          const csvContent = await response.text();
+          webviewRef.current?.postMessage(JSON.stringify({
+            type: 'LOAD_NEUTRON_DATA',
+            data: csvContent,
+          }));
+          console.log('Neutron data sent to WebView');
+        }
+      } catch (error) {
+        console.error('Error loading neutron csv:', error);
+      }
+    };
+
     if (!loading) {
       const timer = setTimeout(() => {
         loadTempMapImage();
         loadThermalGridData();
+        loadGravityData();
+        loadNeutronData();
       }, 3000);
       return () => clearTimeout(timer);
     }
@@ -192,6 +242,15 @@ export default function MoonScreen() {
         case 'DEPTH_CHANGED':
           setCanGoBack(message.payload.canGoBack);
           break;
+        case 'ZOOM_LEVEL_CHANGED':
+          setCurrentZoomLevel(message.payload.currentLevel);
+          break;
+        case 'GRAVITY_RANGE':
+          setGravityRange(message.payload);
+          break;
+        case 'NEUTRON_RANGE':
+          setNeutronRange(message.payload);
+          break;
         default:
           console.log('Unknown message type:', message.type);
       }
@@ -202,10 +261,12 @@ export default function MoonScreen() {
 
   // 컨트롤 핸들러
   const handleZoomIn = () => {
+    if (currentZoomLevel >= MAX_ZOOM_LEVEL) return;
     webviewRef.current?.postMessage(JSON.stringify({ type: 'ZOOM_IN' }));
   };
 
   const handleZoomOut = () => {
+    if (currentZoomLevel <= 0) return;
     webviewRef.current?.postMessage(JSON.stringify({ type: 'ZOOM_OUT' }));
   };
 
@@ -304,12 +365,52 @@ export default function MoonScreen() {
     }));
   };
 
+  // 중력 그리드 모드 토글 핸들러
+  const toggleGravityGridMode = () => {
+    const newValue = !gravityGridMode;
+    setGravityGridMode(newValue);
+    webviewRef.current?.postMessage(JSON.stringify({
+      type: 'TOGGLE_GRAVITY_GRID_MODE',
+      enabled: newValue
+    }));
+  };
+
+  // 중성자 맵 토글
+  const toggleNeutronMap = () => {
+    const newValue = !showNeutronMap;
+    setShowNeutronMap(newValue);
+    webviewRef.current?.postMessage(JSON.stringify({
+      type: 'TOGGLE_NEUTRON_MAP',
+      enabled: newValue
+    }));
+  };
+
+  // 중성자 그리드 모드 토글
+  const toggleNeutronGridMode = () => {
+    const newValue = !neutronGridMode;
+    setNeutronGridMode(newValue);
+    webviewRef.current?.postMessage(JSON.stringify({
+      type: 'TOGGLE_NEUTRON_GRID_MODE',
+      enabled: newValue
+    }));
+  };
+
   const toggleThermalMode = () => {
     const newMode = !isDayTemp;
     setIsDayTemp(newMode);
     webviewRef.current?.postMessage(JSON.stringify({
       type: 'UPDATE_THERMAL_MODE',
       isDay: newMode
+    }));
+  };
+
+  // 중력 이상 맵 토글 핸들러
+  const toggleGravityMap = () => {
+    const newValue = !showGravityMap;
+    setShowGravityMap(newValue);
+    webviewRef.current?.postMessage(JSON.stringify({
+      type: 'TOGGLE_GRAVITY_MAP',
+      enabled: newValue
     }));
   };
 
@@ -447,20 +548,22 @@ export default function MoonScreen() {
 
           {/* 확대 버튼 */}
           <TouchableOpacity
-            style={styles.controlBtn}
+            style={[styles.controlBtn, currentZoomLevel >= MAX_ZOOM_LEVEL && styles.controlBtnDisabled]}
             onPress={handleZoomIn}
             activeOpacity={0.7}
+            disabled={currentZoomLevel >= MAX_ZOOM_LEVEL}
           >
-            <Ionicons name="add" size={28} color="#fff" />
+            <Ionicons name="add" size={28} color={currentZoomLevel >= MAX_ZOOM_LEVEL ? '#555' : '#fff'} />
           </TouchableOpacity>
 
           {/* 축소 버튼 */}
           <TouchableOpacity
-            style={styles.controlBtn}
+            style={[styles.controlBtn, currentZoomLevel <= 0 && styles.controlBtnDisabled]}
             onPress={handleZoomOut}
             activeOpacity={0.7}
+            disabled={currentZoomLevel <= 0}
           >
-            <Ionicons name="remove" size={28} color="#fff" />
+            <Ionicons name="remove" size={28} color={currentZoomLevel <= 0 ? '#555' : '#fff'} />
           </TouchableOpacity>
 
           {/* 리셋 버튼 */}
@@ -544,6 +647,62 @@ export default function MoonScreen() {
               />
             </View>
 
+            {/* 6. 중력 이상 맵 토글 */}
+            <View style={styles.optionMenuItem}>
+              <MaterialCommunityIcons name="magnet" size={20} color={showGravityMap ? '#8B5CF6' : '#bbb'} />
+              <Text style={styles.optionMenuText}>중력 이상</Text>
+              <Switch
+                value={showGravityMap}
+                onValueChange={toggleGravityMap}
+                trackColor={{ false: '#333', true: '#8B5CF6' }}
+                thumbColor="#fff"
+                style={{ transform: [{ scale: 0.8 }], marginLeft: 'auto' }}
+              />
+            </View>
+
+            {/* 6-1. 중력 그리드 모드 토글 (중력 이상이 켜져있을 때만) */}
+            {showGravityMap && (
+              <View style={[styles.optionMenuItem, { paddingLeft: 36 }]}>
+                <MaterialCommunityIcons name="grid" size={18} color={gravityGridMode ? '#A78BFA' : '#888'} />
+                <Text style={[styles.optionMenuText, { fontSize: 13 }]}>그리드 표시</Text>
+                <Switch
+                  value={gravityGridMode}
+                  onValueChange={toggleGravityGridMode}
+                  trackColor={{ false: '#333', true: '#A78BFA' }}
+                  thumbColor="#fff"
+                  style={{ transform: [{ scale: 0.7 }], marginLeft: 'auto' }}
+                />
+              </View>
+            )}
+
+            {/* 7. 수소(중성자) 맵 토글 */}
+            <View style={styles.optionMenuItem}>
+              <MaterialCommunityIcons name="water" size={20} color={showNeutronMap ? '#3B82F6' : '#bbb'} />
+              <Text style={styles.optionMenuText}>수소 히트맵</Text>
+              <Switch
+                value={showNeutronMap}
+                onValueChange={toggleNeutronMap}
+                trackColor={{ false: '#333', true: '#3B82F6' }}
+                thumbColor="#fff"
+                style={{ transform: [{ scale: 0.8 }], marginLeft: 'auto' }}
+              />
+            </View>
+
+            {/* 7-1. 수소 그리드 모드 토글 */}
+            {showNeutronMap && (
+              <View style={[styles.optionMenuItem, { paddingLeft: 36 }]}>
+                <MaterialCommunityIcons name="grid" size={18} color={neutronGridMode ? '#60A5FA' : '#888'} />
+                <Text style={[styles.optionMenuText, { fontSize: 13 }]}>그리드 표시</Text>
+                <Switch
+                  value={neutronGridMode}
+                  onValueChange={toggleNeutronGridMode}
+                  trackColor={{ false: '#333', true: '#60A5FA' }}
+                  thumbColor="#fff"
+                  style={{ transform: [{ scale: 0.7 }], marginLeft: 'auto' }}
+                />
+              </View>
+            )}
+
           </SafeAreaView>
         )}
 
@@ -586,6 +745,95 @@ export default function MoonScreen() {
               <Text style={styles.mapLegendUnit}>
                 {mineralRanges[activeMineralFilter].unit}
               </Text>
+            </View>
+          </SafeAreaView>
+        )}
+
+        {/* 중력 이상 범례 (showGravityMap이 활성일 때만 표시) */}
+        {showGravityMap && (
+          <SafeAreaView style={styles.mapLegendContainer} edges={['right', 'bottom']} pointerEvents="none">
+            <View style={styles.mapLegend}>
+              <Text style={styles.mapLegendTitle}>
+                중력 이상 (Gravity Anomaly)
+              </Text>
+
+              {/* Blue → White → Red 그라데이션 바 */}
+              <View style={styles.mapGradientBar}>
+                {[...Array(20)].map((_, i) => {
+                  const t = i / 19; // 0 ~ 1
+                  let r, g, b;
+                  if (t < 0.5) {
+                    // Blue → White (0 ~ 0.5)
+                    const s = t / 0.5;
+                    r = Math.round(255 * s);
+                    g = Math.round(255 * s);
+                    b = 255;
+                  } else {
+                    // White → Red (0.5 ~ 1)
+                    const s = (t - 0.5) / 0.5;
+                    r = 255;
+                    g = Math.round(255 * (1 - s));
+                    b = Math.round(255 * (1 - s));
+                  }
+                  return (
+                    <View
+                      key={i}
+                      style={{
+                        flex: 1,
+                        backgroundColor: `rgb(${r},${g},${b})`,
+                      }}
+                    />
+                  );
+                })}
+              </View>
+
+              {/* min / 0 / max 레이블 */}
+              <View style={[styles.mapLegendLabels, { justifyContent: 'space-between' }]}>
+                <Text style={styles.mapLegendValue}>{gravityRange.min}</Text>
+                <Text style={styles.mapLegendValue}>0</Text>
+                <Text style={styles.mapLegendValue}>{gravityRange.max}</Text>
+              </View>
+
+              {/* 단위 */}
+              <Text style={styles.mapLegendUnit}>mGal</Text>
+            </View>
+          </SafeAreaView>
+        )}
+
+        {/* 수소(중성자) 범례 */}
+        {showNeutronMap && (
+          <SafeAreaView style={styles.mapLegendContainer} edges={['right', 'bottom']} pointerEvents="none">
+            <View style={styles.mapLegend}>
+              <Text style={styles.mapLegendTitle}>
+                수소 농도 (Neutron Count)
+              </Text>
+
+              {/* Blue → Gray 그라데이션 바 */}
+              <View style={styles.mapGradientBar}>
+                {[...Array(20)].map((_, i) => {
+                  const t = i / 19;
+                  const r = Math.round(30 + (180 - 30) * t);
+                  const g = Math.round(100 + (180 - 100) * t);
+                  const b = Math.round(255 + (180 - 255) * t);
+                  return (
+                    <View
+                      key={i}
+                      style={{
+                        flex: 1,
+                        backgroundColor: `rgb(${r},${g},${b})`,
+                      }}
+                    />
+                  );
+                })}
+              </View>
+
+              {/* min / max 레이블 */}
+              <View style={styles.mapLegendLabels}>
+                <Text style={styles.mapLegendValue}>{neutronRange.min}</Text>
+                <Text style={styles.mapLegendValue}>{neutronRange.max}</Text>
+              </View>
+
+              <Text style={styles.mapLegendUnit}>Neutron Count (낮을수록 수소↑)</Text>
             </View>
           </SafeAreaView>
         )}
@@ -1160,6 +1408,9 @@ const styles = StyleSheet.create({
   controlBtnActive: {
     backgroundColor: 'rgba(59, 130, 246, 0.3)',
     borderColor: '#3B82F6',
+  },
+  controlBtnDisabled: {
+    opacity: 0.3,
   },
   arButton: {
     backgroundColor: 'rgba(156, 39, 176, 0.8)',
