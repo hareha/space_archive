@@ -41,8 +41,6 @@ export const CESIUM_HTML = `
 
     /* Controls hidden - handled by React Native */
     #controls, #cellInfo { display: none; }
-
-
   </style>
 
   <!-- Error Handler -->
@@ -67,14 +65,15 @@ export const CESIUM_HTML = `
 
 <body>
   <div id="cesiumContainer"></div>
-
   
   <div id="loadingOverlay">
       <div id="loadingText">INITIALIZING MOON...</div>
       <div id="errorDisplay"></div>
   </div>
 
-
+  <div id="debugOverlay" style="position: absolute; top: 10px; left: 10px; color: yellow; background: rgba(0,0,0,0.5); padding: 5px; font-family: monospace; z-index: 10000;">
+      Camera Height: <span id="cameraHeight">---</span> m
+  </div>
 
   <script type="module">
     // --- S2 IMPORT ---
@@ -160,16 +159,20 @@ export const CESIUM_HTML = `
         return;
       }
 
-      // --- STATE & UTILS (selectionStack 기반) ---
-      let selectionStack = [];
-      let currentAnimFrame = null;
-      let showGrid = true;
+      // --- STATE & UTILS ---
+      const state = {
+        level: 4,               // 현재 렌더링 레벨 (4, 8, 12, 16)
+        showGrid: true,
+        color: '#00FF00',
+        selectedCellId: null,   // 현재 렌더링 기준 부모 (Drill-down 된 상태)
+        focusedCellId: null,    // 현재 클릭(포커스)된 셀
+        history: []             // 뒤로가기를 위한 {parentId, level, zoomLevel} 스택
+      };
 
-      const gridPrimitives = viewer.scene.primitives.add(new Cesium.PrimitiveCollection());
-      const pillarPrimitives = viewer.scene.primitives.add(new Cesium.PrimitiveCollection());
-      const flashPrimitives = viewer.scene.primitives.add(new Cesium.PrimitiveCollection());
-      const FIXED_HEIGHT = 10000;
-
+      let gridPrimitives = viewer.scene.primitives.add(new Cesium.PrimitiveCollection());
+      let selectedCellPrimitive = null;
+      let hoveredCellPrimitive = null;
+      let lastHoveredId = null;
 
       // --- Mineral Data ---
       let mineralDataArray = [];
@@ -179,7 +182,8 @@ export const CESIUM_HTML = `
       let geologicPrimitive = null;
       let mineralStats = { min: 0, max: 1 };
       
-      // 5단계 고정 줌 레벨 (RN 줌 버튼 연동용)
+      // 5단계 고정 줌 레벨
+      // 0=기본뷰(달 전체), 1=S2 Lv4, 2=S2 Lv8, 3=S2 Lv12, 4=S2 Lv16
       const ZOOM_LEVELS = [
         { height: 6105648, s2Level: null, label: 'Global' },
         { height: 1500000, s2Level: 4,    label: 'S2 Level 4' },
@@ -255,15 +259,15 @@ export const CESIUM_HTML = `
             if(message.type === 'GO_BACK') goBack();
             if(message.type === 'RESET') resetExplorer();
             if(message.type === 'TOGGLE_GRID') {
-                showGrid = message.payload;
-                if (gridPrimitives) gridPrimitives.show = showGrid;
+                state.showGrid = message.payload;
+                updateS2Grid();
             }
             if(message.type === 'UPDATE_GRID_VISIBILITY') {
                 updateGridVisibility(message.visible);
             }
             if(message.type === 'CHANGE_GRID_COLOR') {
-                // 색상 변경 시 다시 렌더링
-                render();
+                state.color = message.payload;
+                updateS2Grid();
             }
             if(message.type === 'ZOOM_IN') {
                 changeZoomLevel(1);
@@ -339,14 +343,12 @@ export const CESIUM_HTML = `
       }
 
       function updateUI() {
-        const lastCellId = selectionStack.length === 0 ? null : selectionStack[selectionStack.length - 1];
-        const currentLevel = lastCellId ? s2.cellid.level(lastCellId) : 0;
         sendToRN('STATE_UPDATE', { 
-            level: currentLevel, 
-            historyLength: selectionStack.length,
-            selectedCellId: lastCellId ? s2.cellid.toToken(lastCellId) : null
+            level: state.level, 
+            historyLength: state.history.length,
+            selectedCellId: state.selectedCellId ? s2.cellid.toToken(state.selectedCellId) : null
         });
-        sendToRN('DEPTH_CHANGED', { canGoBack: selectionStack.length > 0 });
+        sendToRN('DEPTH_CHANGED', { canGoBack: state.history.length > 0 });
         sendToRN('ZOOM_LEVEL_CHANGED', {
             currentLevel: currentZoomLevel,
             maxLevel: ZOOM_LEVELS.length - 1,
@@ -355,272 +357,189 @@ export const CESIUM_HTML = `
       }
 
       function resetExplorer() {
-        if (currentAnimFrame) { cancelAnimationFrame(currentAnimFrame); currentAnimFrame = null; }
-        selectionStack = [];
+        state.level = 4;
+        state.selectedCellId = null;
+        state.focusedCellId = null;
+        state.history = [];
         currentZoomLevel = 0;
-        render();
-        pillarPrimitives.removeAll();
         updateUI();
+        updateS2Grid();
         if(moonTileset) viewer.camera.flyToBoundingSphere(moonTileset.boundingSphere, { duration: 1.0 });
+        
+        if (selectedCellPrimitive) {
+          viewer.scene.primitives.remove(selectedCellPrimitive);
+          selectedCellPrimitive = null;
+        }
+        if (hoveredCellPrimitive) {
+          viewer.scene.primitives.remove(hoveredCellPrimitive);
+          hoveredCellPrimitive = null;
+        }
+        lastHoveredId = null;
       }
 
       function goBack() {
-        if (selectionStack.length === 0) return;
-        selectionStack.pop();
-        render();
+        if (state.history.length === 0) return;
+        const last = state.history.pop();
+        
+        state.level = last.level;
+        state.selectedCellId = last.parentId;
+        state.focusedCellId = null;
+        currentZoomLevel = last.zoomLevel !== undefined ? last.zoomLevel : Math.max(0, currentZoomLevel - 1);
+
         updateUI();
-        if (selectionStack.length > 0) {
-            flyToCell(selectionStack[selectionStack.length - 1]);
+        updateS2Grid();
+
+        if (state.selectedCellId) {
+           smoothZoomToCell(state.selectedCellId, 1000);
         } else {
-            if (currentAnimFrame) { cancelAnimationFrame(currentAnimFrame); currentAnimFrame = null; }
-            if(moonTileset) viewer.camera.flyToBoundingSphere(moonTileset.boundingSphere, { duration: 1.0 });
+           if(moonTileset) viewer.camera.flyToBoundingSphere(moonTileset.boundingSphere, { duration: 1.0 });
+        }
+        
+        if(selectedCellPrimitive) {
+            viewer.scene.primitives.remove(selectedCellPrimitive);
+            selectedCellPrimitive = null;
+        }
+        if(hoveredCellPrimitive) {
+            viewer.scene.primitives.remove(hoveredCellPrimitive);
+            hoveredCellPrimitive = null;
+        }
+        lastHoveredId = null;
+      }
+      
+      function getGridAltitude() { return 1500; }
+
+      // Custom Camera Animation (직접 선형 보간 - arc 없이 직선 줌인)
+      function smoothZoomToCell(cellId, duration = 1000) {
+        const cell = s2.Cell.fromCellID(cellId);
+        const center = cell.center();
+
+        const gridAltitude = getGridAltitude();
+        const centerCar3 = s2PointToCesium(center, 0);
+
+        // 현재 줌 레벨에 맞는 높이 사용
+        const additionalHeight = ZOOM_LEVELS[currentZoomLevel].height;
+
+        const normal = Cesium.Cartesian3.normalize(centerCar3, new Cesium.Cartesian3());
+        const targetPosition = Cesium.Cartesian3.add(
+          centerCar3,
+          Cesium.Cartesian3.multiplyByScalar(normal, additionalHeight, new Cesium.Cartesian3()),
+          new Cesium.Cartesian3()
+        );
+
+        // 직접 애니메이션 (arc 없이 직선 이동)
+        const startPosition = Cesium.Cartesian3.clone(viewer.camera.position);
+        const startHeading = viewer.camera.heading;
+        const startPitch = viewer.camera.pitch;
+        const targetPitch = Cesium.Math.toRadians(-90);
+        let startTime = null;
+
+        function animate(timestamp) {
+          if (!startTime) startTime = timestamp;
+          const progress = (timestamp - startTime) / duration;
+
+          if (progress >= 1.0) {
+            viewer.camera.setView({
+              destination: targetPosition,
+              orientation: {
+                heading: startHeading,
+                pitch: targetPitch,
+                roll: 0.0
+              }
+            });
+            return;
+          }
+
+          // Ease-out cubic
+          const t = 1 - Math.pow(1 - progress, 3);
+
+          // 위치 선형 보간
+          const currentPos = new Cesium.Cartesian3();
+          Cesium.Cartesian3.lerp(startPosition, targetPosition, t, currentPos);
+
+          // 피치 보간
+          const currentPitch = Cesium.Math.lerp(startPitch, targetPitch, t);
+
+          viewer.camera.setView({
+            destination: currentPos,
+            orientation: {
+              heading: startHeading,
+              pitch: currentPitch,
+              roll: 0.0
+            }
+          });
+
+          requestAnimationFrame(animate);
+        }
+
+        requestAnimationFrame(animate);
+      }
+
+      function getSegmentCount(level) {
+        if (level <= 4) return 16;
+        if (level <= 8) return 8;
+        return 4;
+      }
+
+      // 동기 버전 (비동기 clampToHeight 제거)
+      function getCellsToDraw(rootCellId, targetLevel, instances, color, renderRadius) {
+        if (!rootCellId) {
+          for (let f = 0; f < 6; f++) {
+            const faceId = s2.cellid.fromFace(f);
+            appendCellsRecursively(faceId, targetLevel, instances, color, renderRadius);
+          }
+        } else {
+          appendCellsRecursively(rootCellId, targetLevel, instances, color, renderRadius);
         }
       }
 
-      // --- 프로토타입 기반 그리드 렌더링 함수들 ---
-
-      const getRenderConfig = (level) => ({
-          segments: level <= 4 ? 8 : (level <= 8 ? 4 : 1)
-      });
-
-      function getExactCellPositions(cellId, height, segments) {
-          const cell = s2.Cell.fromCellID(cellId);
-          const positions = [];
-          for (let i = 0; i < 4; i++) {
-              const p1 = cell.vertex(i); const p2 = cell.vertex((i + 1) % 4);
-              for (let j = 0; j < segments; j++) {
-                  const t = j / segments;
-                  const dx = p1.x * (1 - t) + p2.x * t, dy = p1.y * (1 - t) + p2.y * t, dz = p1.z * (1 - t) + p2.z * t;
-                  const mag = Math.sqrt(dx * dx + dy * dy + dz * dz);
-                  positions.push(Cesium.Cartesian3.fromRadians(Math.atan2(dy / mag, dx / mag), Math.asin(dz / mag), height, Cesium.Ellipsoid.MOON));
-              }
-          }
-          return positions;
-      }
-
-      function flashCell(cellId) {
-          flashPrimitives.removeAll();
-          const cell = s2.Cell.fromCellID(cellId);
-          const polyPositions = [];
-          for (let i = 0; i < 4; i++) {
-              const v = cell.vertex(i); const r = Math.sqrt(v.x ** 2 + v.y ** 2 + v.z ** 2);
-              polyPositions.push(Cesium.Cartesian3.fromRadians(Math.atan2(v.y, v.x), Math.asin(v.z / r), 0, Cesium.Ellipsoid.MOON));
-          }
-          const instanceId = "flash-" + s2.cellid.toToken(cellId);
-          const primitive = flashPrimitives.add(new Cesium.Primitive({
-              geometryInstances: new Cesium.GeometryInstance({
-                  geometry: new Cesium.PolygonGeometry({
-                      polygonHierarchy: new Cesium.PolygonHierarchy(polyPositions),
-                      ellipsoid: Cesium.Ellipsoid.MOON, height: FIXED_HEIGHT + 20,
-                      granularity: Cesium.Math.toRadians(1.0)
-                  }),
-                  attributes: { color: Cesium.ColorGeometryInstanceAttribute.fromColor(Cesium.Color.WHITE.withAlpha(0.6)) },
-                  id: instanceId
-              }),
-              appearance: new Cesium.PerInstanceColorAppearance({ flat: true, translucent: true }), asynchronous: false
+      function appendCellsRecursively(currentId, targetLevel, instances, color, radius) {
+        const currentLvl = s2.cellid.level(currentId);
+        if (currentLvl === targetLevel) {
+          const cell = s2.Cell.fromCellID(currentId);
+          const segments = getSegmentCount(targetLevel);
+          const positions = getCellBoundaryPositions(cell, radius, segments);
+          instances.push(new Cesium.GeometryInstance({
+            geometry: new Cesium.PolylineGeometry({
+              positions: positions,
+              width: 2.0
+            }),
+            attributes: { color: Cesium.ColorGeometryInstanceAttribute.fromColor(color) }
           }));
-          let alpha = 0.6;
-          const fade = () => {
-              if (flashPrimitives.length === 0) return;
-              alpha -= 0.05;
-              if (alpha <= 0) { flashPrimitives.removeAll(); return; }
-              const attr = primitive.getGeometryInstanceAttributes(instanceId);
-              if (attr) attr.color = Cesium.ColorGeometryInstanceAttribute.toValue(Cesium.Color.WHITE.withAlpha(alpha));
-              requestAnimationFrame(fade);
-          };
-          fade();
+          return;
+        }
+        const children = s2.cellid.children(currentId);
+        for (const child of children) {
+          appendCellsRecursively(child, targetLevel, instances, color, radius);
+        }
       }
 
-      function getDescendants(cellId, targetLevel) {
-          let results = [cellId];
-          let currentLevel = s2.cellid.level(cellId);
-          while (currentLevel < targetLevel) {
-              let nextResults = [];
-              for (let id of results) { nextResults.push(...s2.cellid.children(id)); }
-              results = nextResults;
-              currentLevel++;
-          }
-          return results;
+      function interpolateCellEdge(cell, startIdx, endIdx, radius, segments) {
+        const points = [];
+        const v0 = cell.vertex(startIdx);
+        const v1 = cell.vertex(endIdx);
+        const altitude = getGridAltitude();
+
+        for (let i = 0; i <= segments; i++) {
+          const t = i / segments;
+          const x = v0.x * (1 - t) + v1.x * t;
+          const y = v0.y * (1 - t) + v1.y * t;
+          const z = v0.z * (1 - t) + v1.z * t;
+          const cartesian = s2PointToCesium({ x, y, z }, altitude);
+          points.push(cartesian);
+        }
+        return points;
       }
 
-      function render() {
-          gridPrimitives.removeAll();
-          pillarPrimitives.removeAll();
-          const lineInstances = [];
-          const polyInstances = [];
-          const surfaceClassInstances = [];
-          const color = Cesium.Color.LAWNGREEN.withAlpha(0.6);
-
-          const lastCellId = selectionStack.length === 0 ? null : selectionStack[selectionStack.length - 1];
-          const currentLevel = lastCellId ? s2.cellid.level(lastCellId) : 0;
-
-          // 16레벨에 도달했으면 달 표면만 하이라이팅
-          if (currentLevel >= 16) {
-              const cell16 = s2.Cell.fromCellID(lastCellId);
-              const surfPos16 = [];
-              for (let i = 0; i < 4; i++) {
-                  const v = cell16.vertex(i);
-                  const r = Math.sqrt(v.x ** 2 + v.y ** 2 + v.z ** 2);
-                  surfPos16.push(Cesium.Cartesian3.fromRadians(
-                      Math.atan2(v.y, v.x), Math.asin(v.z / r), 0, Cesium.Ellipsoid.MOON
-                  ));
-              }
-              surfaceClassInstances.push(new Cesium.GeometryInstance({
-                  geometry: new Cesium.PolygonGeometry({
-                      polygonHierarchy: new Cesium.PolygonHierarchy(surfPos16),
-                      ellipsoid: Cesium.Ellipsoid.MOON,
-                      height: -15000,
-                      extrudedHeight: 15000,
-                  }),
-                  attributes: {
-                      color: Cesium.ColorGeometryInstanceAttribute.fromColor(
-                          Cesium.Color.YELLOW.withAlpha(0.45)
-                      )
-                  }
-              }));
-
-              // 셀 중심 좌표 + 샘플 데이터 계산
-              const center16 = cell16.center();
-              const cr = Math.sqrt(center16.x ** 2 + center16.y ** 2 + center16.z ** 2);
-              const cLon = Math.atan2(center16.y, center16.x);
-              const cLat = Math.asin(center16.z / cr);
-              const cLonDeg = Cesium.Math.toDegrees(cLon).toFixed(4);
-              const cLatDeg = Cesium.Math.toDegrees(cLat).toFixed(4);
-              const token = s2.cellid.toToken(lastCellId);
-
-              // 샘플 광물/가격 데이터
-              const seed = parseInt(token.substring(0, 6), 16) || 0;
-              const feo = (((seed * 7 + 13) % 100) / 10).toFixed(1);
-              const tio2 = (((seed * 3 + 7) % 50) / 10).toFixed(1);
-              const waterIce = (((seed * 11 + 3) % 30) / 10).toFixed(1);
-              const tempK = 40 + ((seed * 17) % 260);
-              const price = (0.5 + ((seed * 13) % 100) / 20).toFixed(2);
-
-              // RN에 셀 상세 정보 전송 (광물/가격 포함)
-              sendToRN('CELL_SELECTED', {
-                  cellId: token, token: token,
-                  lat: parseFloat(cLatDeg), lng: parseFloat(cLonDeg),
-                  level: 16,
-                  minerals: {
-                      feo: feo + '%',
-                      tio2: tio2 + '%',
-                      waterIce: waterIce + '%',
-                      surfaceTemp: tempK + 'K'
-                  },
-                  price: '$' + price,
-                  area: '~0.8 km²'
-              });
-          } else {
-              // 아직 16레벨 미만이면 다음 4단계 하위 그리드 렌더링
-              const targetLevel = currentLevel + 4;
-              let candidates = [];
-              if (currentLevel === 0) {
-                  for (let f = 0; f < 6; f++) candidates.push(...getDescendants(s2.cellid.fromFace(f), 4));
-              } else {
-                  candidates = getDescendants(lastCellId, targetLevel);
-              }
-
-              const config = getRenderConfig(targetLevel);
-              candidates.forEach(id => {
-                  const linePos = getExactCellPositions(id, FIXED_HEIGHT, config.segments);
-                  lineInstances.push(new Cesium.GeometryInstance({
-                      geometry: new Cesium.PolylineGeometry({
-                          positions: [...linePos, linePos[0]],
-                          width: 1.0, arcType: Cesium.ArcType.NONE
-                      }),
-                      attributes: { color: Cesium.ColorGeometryInstanceAttribute.fromColor(color) }
-                  }));
-
-                  const cell = s2.Cell.fromCellID(id);
-                  const polyPositions = [];
-                  for (let i = 0; i < 4; i++) {
-                      const v = cell.vertex(i); const r = Math.sqrt(v.x ** 2 + v.y ** 2 + v.z ** 2);
-                      polyPositions.push(Cesium.Cartesian3.fromRadians(Math.atan2(v.y, v.x), Math.asin(v.z / r), 0, Cesium.Ellipsoid.MOON));
-                  }
-                  polyInstances.push(new Cesium.GeometryInstance({
-                      geometry: new Cesium.PolygonGeometry({
-                          polygonHierarchy: new Cesium.PolygonHierarchy(polyPositions),
-                          ellipsoid: Cesium.Ellipsoid.MOON, height: FIXED_HEIGHT,
-                          granularity: Cesium.Math.toRadians(5.0)
-                      }),
-                      attributes: { color: Cesium.ColorGeometryInstanceAttribute.fromColor(Cesium.Color.WHITE.withAlpha(0.01)) },
-                      id: id
-                  }));
-              });
-          }
-
-          if (lineInstances.length > 0) {
-              gridPrimitives.add(new Cesium.Primitive({
-                  geometryInstances: lineInstances,
-                  appearance: new Cesium.PolylineColorAppearance({ flat: true }),
-                  asynchronous: true
-              }));
-          }
-
-          if (polyInstances.length > 0) {
-              gridPrimitives.add(new Cesium.Primitive({
-                  geometryInstances: polyInstances,
-                  appearance: new Cesium.PerInstanceColorAppearance({ flat: true, translucent: true }),
-                  asynchronous: true
-              }));
-          }
-
-          // 3D 타일 표면에 하이라이팅 (ClassificationPrimitive)
-          if (surfaceClassInstances.length > 0) {
-              pillarPrimitives.add(new Cesium.ClassificationPrimitive({
-                  geometryInstances: surfaceClassInstances,
-                  appearance: new Cesium.PerInstanceColorAppearance({
-                      flat: true,
-                      translucent: true
-                  }),
-                  classificationType: Cesium.ClassificationType.CESIUM_3D_TILE,
-                  asynchronous: true
-              }));
-          }
-
-          updateUI();
+      function getCellBoundaryPositions(cell, radius, edgeSegments = 4) {
+        const positions = [];
+        for (let i = 0; i < 4; i++) {
+          const nextIdx = (i + 1) % 4;
+          const edgePoints = interpolateCellEdge(cell, i, nextIdx, radius, edgeSegments);
+          if (i < 3) positions.push(...edgePoints.slice(0, -1));
+          else positions.push(...edgePoints);
+        }
+        return positions;
       }
-
-      function flyToCell(targetCellId) {
-          if (currentAnimFrame) { cancelAnimationFrame(currentAnimFrame); currentAnimFrame = null; }
-          const cell = s2.Cell.fromCellID(targetCellId);
-          const center = cell.center();
-          const r = Math.sqrt(center.x ** 2 + center.y ** 2 + center.z ** 2);
-          const lon = Math.atan2(center.y, center.x), lat = Math.asin(center.z / r);
-          const level = s2.cellid.level(targetCellId);
-
-          let targetHeight;
-          if (level === 0) targetHeight = 3500000;
-          else if (level === 4) targetHeight = 600000;
-          else if (level === 8) targetHeight = 40000;
-          else if (level === 12) targetHeight = 12000;
-          else if (level === 16) targetHeight = 2000;
-          else targetHeight = 600000;
-
-          const targetPosition = Cesium.Cartesian3.fromRadians(lon, lat, targetHeight, Cesium.Ellipsoid.MOON);
-          const startPosition = Cesium.Cartesian3.clone(viewer.camera.position);
-          const startHeading = viewer.camera.heading, startPitch = viewer.camera.pitch;
-          const targetPitch = Cesium.Math.toRadians(-90);
-          const duration = 1200;
-          let startTime = null;
-
-          function animate(timestamp) {
-              if (!startTime) startTime = timestamp;
-              const progress = (timestamp - startTime) / duration;
-              if (progress >= 1.0) {
-                  viewer.camera.setView({ destination: targetPosition, orientation: { heading: startHeading, pitch: targetPitch, roll: 0 } });
-                  currentAnimFrame = null; return;
-              }
-              const t = 1 - Math.pow(1 - progress, 3);
-              const currentPos = new Cesium.Cartesian3();
-              Cesium.Cartesian3.lerp(startPosition, targetPosition, t, currentPos);
-              const currentPitch = Cesium.Math.lerp(startPitch, targetPitch, t);
-              viewer.camera.setView({ destination: currentPos, orientation: { heading: startHeading, pitch: currentPitch, roll: 0 } });
-              currentAnimFrame = requestAnimationFrame(animate);
-          }
-          currentAnimFrame = requestAnimationFrame(animate);
-      }
-
 
       // --- Mineral Data Functions ---
       
@@ -1379,22 +1298,177 @@ export const CESIUM_HTML = `
           neutronPrimitive.appearance.material.uniforms.u_showGrid = enabled ? 1.0 : 0.0;
         }
       }
-      // === scene.pick 기반 클릭 핸들러 (프로토타입 방식) ===
+      function updateS2Grid() {
+        gridPrimitives.removeAll();
+        if (!state.showGrid) return;
+        const instances = [];
+        const color = Cesium.Color.fromCssColorString(state.color).withAlpha(0.6);
+        const altitude = getGridAltitude();
+        const renderRadius = moonRadius + altitude;
+        
+        getCellsToDraw(state.selectedCellId, state.level, instances, color, renderRadius);
+        
+        console.log(\`Grid Updated: Level \${state.level}, Cells: \${instances.length}\`);
+
+        if (instances.length > 0) {
+          gridPrimitives.add(new Cesium.Primitive({
+            geometryInstances: instances,
+            appearance: new Cesium.PolylineColorAppearance({ flat: true }),
+            asynchronous: true
+          }));
+        }
+        updateUI();
+      }
+
+      // 호버 상태 관리
+      function highlightHoveredCell(cellId) {
+        if (lastHoveredId === cellId) return;
+        lastHoveredId = cellId;
+        if (hoveredCellPrimitive) {
+          viewer.scene.primitives.remove(hoveredCellPrimitive);
+          hoveredCellPrimitive = null;
+        }
+        if (!cellId) return;
+
+        const cell = s2.Cell.fromCellID(cellId);
+        const altitude = getGridAltitude();
+        const segments = getSegmentCount(state.level);
+        const positions = getCellBoundaryPositions(cell, moonRadius + altitude, segments);
+
+        hoveredCellPrimitive = viewer.scene.primitives.add(new Cesium.Primitive({
+          geometryInstances: new Cesium.GeometryInstance({
+            geometry: new Cesium.PolylineGeometry({
+              positions: positions,
+              width: 5.0
+            }),
+            attributes: { color: Cesium.ColorGeometryInstanceAttribute.fromColor(Cesium.Color.CYAN.withAlpha(0.8)) }
+          }),
+          appearance: new Cesium.PolylineColorAppearance({ flat: true }),
+          asynchronous: false
+        }));
+      }
+
+      function selectCell(cellId, latDeg, lngDeg) {
+        if (selectedCellPrimitive) viewer.scene.primitives.remove(selectedCellPrimitive);
+
+        const cell = s2.Cell.fromCellID(cellId);
+        const level = s2.cellid.level(cellId);
+        const token = s2.cellid.toToken(cellId);
+        const face = s2.cellid.face(cellId);
+        const altitude = getGridAltitude();
+        const segments = getSegmentCount(level);
+        const positions = getCellBoundaryPositions(cell, moonRadius + altitude, segments);
+
+        selectedCellPrimitive = viewer.scene.primitives.add(new Cesium.Primitive({
+          geometryInstances: new Cesium.GeometryInstance({
+            geometry: new Cesium.PolylineGeometry({
+              positions: positions,
+              width: 7.0
+            }),
+            attributes: { color: Cesium.ColorGeometryInstanceAttribute.fromColor(Cesium.Color.YELLOW) }
+          }),
+          appearance: new Cesium.PolylineColorAppearance({ flat: true }),
+          asynchronous: false
+        }));
+        
+        sendToRN('CELL_SELECTED', {
+            cellId: token,
+            token: token,
+            face: face,
+            lat: latDeg,
+            lng: lngDeg,
+            level: level
+        });
+      }
+
+      function pickGridPoint(position) {
+        if (!position) return null;
+        
+        const altitude = getGridAltitude();
+        const r = Cesium.Ellipsoid.MOON.radii;
+        const inflatedEllipsoid = new Cesium.Ellipsoid(
+          r.x + altitude, r.y + altitude, r.z + altitude
+        );
+        
+        const pickedPosition = viewer.camera.pickEllipsoid(position, inflatedEllipsoid);
+        
+        if (Cesium.defined(pickedPosition)) {
+          return { position: pickedPosition, ellipsoid: inflatedEllipsoid };
+        }
+        
+        return null;
+      }
+
+      function pickCellFromPosition(pickResult) {
+        if (!pickResult || !pickResult.position) return null;
+        // [수정] 단순 정규화 기반 변환 사용
+        const s2Point = cesiumToS2Point(pickResult.position);
+        if (!s2Point) return null;
+        const leafCellId = s2.cellid.fromPoint(s2Point);
+        return s2.cellid.parent(leafCellId, state.level);
+      }
+
+      // 클릭 핸들러
       const handler = new Cesium.ScreenSpaceEventHandler(viewer.scene.canvas);
       handler.setInputAction((movement) => {
-          const picked = viewer.scene.pick(movement.position);
-          if (!Cesium.defined(picked) || !picked.id) return;
-          const cellId = picked.id;
-          // cellId 유효성 검사
-          try {
-              const lvl = s2.cellid.level(cellId);
-              if (lvl <= 0) return;
-          } catch(e) { return; }
+        const pickResult = pickGridPoint(movement.position);
+        if (!pickResult) return;
+        
+        const position = pickResult.position;
+        const cellAtStateLevel = pickCellFromPosition(pickResult);
+        if (!cellAtStateLevel) return;
 
-          flashCell(cellId);
-          selectionStack.push(cellId);
-          render();
-          flyToCell(cellId);
+        // Drill-down 상태에서 현재 부모 영역 밖을 클릭했는지 체크
+        if (state.selectedCellId) {
+          const parentLevel = state.level - 4;
+          const clickedCellParent = s2.cellid.parent(cellAtStateLevel, parentLevel);
+
+          if (clickedCellParent !== state.selectedCellId) {
+            // Lateral Switch
+            state.selectedCellId = clickedCellParent;
+            state.focusedCellId = null;
+            lastHoveredId = null;
+
+            updateUI();
+            updateS2Grid();
+            smoothZoomToCell(clickedCellParent, 1000);
+
+            return;
+          }
+        }
+
+        // Single Click Drill Down
+        if (state.level < 16) {
+          state.history.push({
+            parentId: state.selectedCellId,
+            level: state.level,
+            zoomLevel: currentZoomLevel
+          });
+
+          const nextLevel = state.level + 4;
+          state.level = nextLevel;
+          state.selectedCellId = cellAtStateLevel;
+          state.focusedCellId = null;
+          
+          // 줌 레벨도 함께 증가 (S2 레벨에 맞는 줌 레벨로)
+          const matchingZoom = ZOOM_LEVELS.findIndex(z => z.s2Level === nextLevel);
+          if (matchingZoom >= 0) currentZoomLevel = matchingZoom;
+          else currentZoomLevel = Math.min(currentZoomLevel + 1, ZOOM_LEVELS.length - 1);
+
+          lastHoveredId = null;
+
+          updateUI();
+          updateS2Grid();
+          smoothZoomToCell(cellAtStateLevel, 1000);
+
+          if (selectedCellPrimitive) {
+            viewer.scene.primitives.remove(selectedCellPrimitive);
+            selectedCellPrimitive = null;
+          }
+        } else {
+          // 최대 레벨 (상세 보기)
+          state.focusedCellId = cellAtStateLevel;
+        } 
       }, Cesium.ScreenSpaceEventType.LEFT_CLICK);
 
       // --- 5단계 고정 줌 레벨 함수 ---
@@ -1436,7 +1510,7 @@ export const CESIUM_HTML = `
           );
         }
         
-        // 직접 선형 보간 + ease-out cubic 애니메이션
+        // smoothZoomToCell과 동일한 애니메이션 (직접 선형 보간 + ease-out cubic)
         const startPosition = Cesium.Cartesian3.clone(viewer.camera.position);
         const startHeading = viewer.camera.heading;
         const startPitch = viewer.camera.pitch;
@@ -1484,9 +1558,54 @@ export const CESIUM_HTML = `
         updateUI();
       }
 
+      // 마우스 호버 핸들러
+      let lastMousePosition = null;
+      function checkHoverAt(endPosition) {
+         if(!endPosition) { highlightHoveredCell(null); return; }
+         const pickResult = pickGridPoint(endPosition);
+         if(!pickResult) { highlightHoveredCell(null); return; }
+         const cell = pickCellFromPosition(pickResult);
+         if(cell && cell !== state.focusedCellId) highlightHoveredCell(cell);
+         else highlightHoveredCell(null);
+      }
 
+      handler.setInputAction((movement) => {
+        lastMousePosition = Cesium.Cartesian2.clone(movement.endPosition);
+        checkHoverAt(lastMousePosition);
+      }, Cesium.ScreenSpaceEventType.MOUSE_MOVE);
+
+      viewer.scene.postRender.addEventListener(() => {
+        if (lastMousePosition) checkHoverAt(lastMousePosition);
+        
+        // Debug Camera Height (Using Moon Ellipsoid)
+        const pos = viewer.camera.position;
+        const carto = Cesium.Ellipsoid.MOON.cartesianToCartographic(pos);
+        if (carto) {
+            const height = carto.height;
+            const debugEl = document.getElementById('cameraHeight');
+            
+            // Find closest Zoom Level
+            let closestIdx = -1;
+            let minDiff = Infinity;
+            ZOOM_LEVELS.forEach((z, i) => {
+                const diff = Math.abs(z.height - height);
+                if (diff < minDiff) {
+                    minDiff = diff;
+                    closestIdx = i;
+                }
+            });
+
+            if(debugEl) {
+                debugEl.innerHTML = \`
+                    Height: <b>\${Math.round(height).toLocaleString()} m</b><br>
+                    Closest Level: <b>\${closestIdx}</b> (\${ZOOM_LEVELS[closestIdx].label})<br>
+                    Level Target: \${ZOOM_LEVELS[closestIdx].height.toLocaleString()} m
+                \`;
+            }
+        }
+      });
       
-      render();
+      updateS2Grid();
     }
 
     // Start initialization

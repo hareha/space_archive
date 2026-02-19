@@ -6,7 +6,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { BlurView } from 'expo-blur';
 import { useLocalSearchParams } from 'expo-router';
-import { CESIUM_HTML } from '@/constants/CesiumHtml';
+import { CESIUM_HTML } from '@/constants/cesium/CesiumHtml';
 import { loadMineralData } from '@/utils/mineralDataLoader';
 import ARMoonViewer from '@/components/ARMoonViewer';
 import { Asset } from 'expo-asset';
@@ -21,6 +21,7 @@ export default function MoonScreen() {
   const [searchQuery, setSearchQuery] = useState('');
   const [activeLocation, setActiveLocation] = useState<string | null>(null);
   const [selectedCell, setSelectedCell] = useState<any>(null);
+  const [cellExpanded, setCellExpanded] = useState(false);
   const [showARViewer, setShowARViewer] = useState(false);
   const [showTempMap, setShowTempMap] = useState(false);
   const [showThermalGrid, setShowThermalGrid] = useState(false);
@@ -238,6 +239,11 @@ export default function MoonScreen() {
       switch (message.type) {
         case 'CELL_SELECTED':
           setSelectedCell(message.payload);
+          setCellExpanded(false);
+          break;
+        case 'CELL_DESELECTED':
+          setSelectedCell(null);
+          setCellExpanded(false);
           break;
         case 'DEPTH_CHANGED':
           setCanGoBack(message.payload.canGoBack);
@@ -1261,29 +1267,117 @@ export default function MoonScreen() {
         {/* 하단 셀 정보 카드 (캔버스 영역 내부) */}
         {selectedCell && (
           <SafeAreaView style={styles.bottomCardContainer} edges={['bottom', 'left', 'right']}>
-            <BlurView intensity={30} style={styles.bottomCard}>
+            <BlurView intensity={40} style={styles.bottomCard}>
               <View style={styles.cardHeader}>
-                <Text style={styles.cardTitle}>선택된 셀 정보</Text>
-                <TouchableOpacity onPress={() => setSelectedCell(null)}>
-                  <Ionicons name="close" size={24} color="#fff" />
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                  <Text style={{ fontSize: 18 }}>🌕</Text>
+                  <View>
+                    <Text style={styles.cardTitle}>{selectedCell.cellId}</Text>
+                    {selectedCell.lat !== undefined && (
+                      <Text style={styles.cardCoords}>{selectedCell.lat}° N · {selectedCell.lng}° E</Text>
+                    )}
+                  </View>
+                </View>
+                <TouchableOpacity onPress={() => { setSelectedCell(null); setCellExpanded(false); }}>
+                  <Ionicons name="close" size={22} color="#888" />
                 </TouchableOpacity>
               </View>
               <View style={styles.cardContent}>
                 <View style={styles.infoRow}>
-                  <Text style={styles.infoLabel}>Cell ID:</Text>
-                  <Text style={styles.infoValue}>{selectedCell.cellId}</Text>
-                </View>
-                <View style={styles.infoRow}>
-                  <Text style={styles.infoLabel}>Level:</Text>
+                  <Text style={styles.infoLabel}>Level</Text>
                   <Text style={styles.infoValue}>{selectedCell.level}</Text>
                 </View>
-                {selectedCell.face !== undefined && (
+                {selectedCell.area && (
                   <View style={styles.infoRow}>
-                    <Text style={styles.infoLabel}>Face:</Text>
-                    <Text style={styles.infoValue}>{selectedCell.face}</Text>
+                    <Text style={styles.infoLabel}>면적 (추정)</Text>
+                    <Text style={styles.infoValue}>{selectedCell.area}</Text>
+                  </View>
+                )}
+                {selectedCell.unit && (
+                  <View style={styles.infoRow}>
+                    <Text style={styles.infoLabel}>단위</Text>
+                    <Text style={styles.infoValue}>{selectedCell.unit}</Text>
+                  </View>
+                )}
+                {selectedCell.magTokens && (
+                  <View style={{ marginTop: 6 }}>
+                    <Text style={[styles.infoLabel, { marginBottom: 4 }]}>포함 Mag 셀 (Lv.{selectedCell.childLevel || 16} × {selectedCell.magCount})</Text>
+                    {selectedCell.magTokens.map((token: string, idx: number) => (
+                      <Text key={idx} style={{ color: '#aaa', fontSize: 11, fontFamily: 'monospace', marginLeft: 8 }}>
+                        Mag {idx + 1}  |  {token}  |  Lv.{selectedCell.childLevel || 16}
+                      </Text>
+                    ))}
                   </View>
                 )}
               </View>
+
+              {/* 상세정보 펼쳐보기 (15레벨 블록 선택 시) */}
+              {selectedCell.level >= 15 && (
+                <>
+                  <TouchableOpacity
+                    style={styles.expandButton}
+                    onPress={() => setCellExpanded(!cellExpanded)}
+                    activeOpacity={0.7}
+                  >
+                    <Ionicons
+                      name={cellExpanded ? 'chevron-up' : 'chevron-down'}
+                      size={16}
+                      color="#FFD700"
+                    />
+                    <Text style={styles.expandButtonText}>
+                      {cellExpanded ? '상세정보 접기' : '이 땅의 상세정보 펼쳐보기'}
+                    </Text>
+                    <Ionicons
+                      name={cellExpanded ? 'chevron-up' : 'chevron-down'}
+                      size={16}
+                      color="#FFD700"
+                    />
+                  </TouchableOpacity>
+
+                  {cellExpanded && selectedCell.minerals && (
+                    <View style={styles.detailSection}>
+                      <Text style={styles.detailSectionTitle}>광물 데이터</Text>
+                      <View style={styles.mineralGrid}>
+                        <View style={styles.mineralItem}>
+                          <Text style={styles.mineralLabel}>FeO</Text>
+                          <Text style={styles.mineralValue}>{selectedCell.minerals.feo}</Text>
+                        </View>
+                        <View style={styles.mineralItem}>
+                          <Text style={styles.mineralLabel}>TiO₂</Text>
+                          <Text style={styles.mineralValue}>{selectedCell.minerals.tio2}</Text>
+                        </View>
+                        <View style={styles.mineralItem}>
+                          <Text style={styles.mineralLabel}>수소(물)</Text>
+                          <Text style={styles.mineralValue}>{selectedCell.minerals.waterIce}</Text>
+                        </View>
+                        <View style={styles.mineralItem}>
+                          <Text style={styles.mineralLabel}>표면온도</Text>
+                          <Text style={styles.mineralValue}>{selectedCell.minerals.surfaceTemp}</Text>
+                        </View>
+                      </View>
+
+                      {selectedCell.price && (
+                        <View style={styles.priceSection}>
+                          <Text style={styles.priceLabel}>예상 가치</Text>
+                          <Text style={styles.priceValue}>{selectedCell.price}</Text>
+                        </View>
+                      )}
+                    </View>
+                  )}
+
+                  {/* 구매하기 버튼 */}
+                  <TouchableOpacity
+                    style={styles.buyButton}
+                    activeOpacity={0.8}
+                    onPress={() => {
+                      // TODO: 구매 플로우 연결
+                      console.log('Purchase cell:', selectedCell.cellId);
+                    }}
+                  >
+                    <Text style={styles.buyButtonText}>🚀 구매하기</Text>
+                  </TouchableOpacity>
+                </>
+              )}
             </BlurView>
           </SafeAreaView>
         )}
@@ -1601,6 +1695,11 @@ const styles = StyleSheet.create({
   cardContent: {
     gap: 8,
   },
+  cardCoords: {
+    color: 'rgba(255, 255, 255, 0.45)',
+    fontSize: 11,
+    marginTop: 2,
+  },
   infoRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -1613,6 +1712,97 @@ const styles = StyleSheet.create({
     color: '#fff',
     fontSize: 14,
     fontWeight: '500',
+  },
+
+  // 상세정보 펼쳐보기 버튼
+  expandButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    marginTop: 12,
+    paddingVertical: 10,
+    borderTopWidth: 1,
+    borderTopColor: 'rgba(255, 215, 0, 0.15)',
+  },
+  expandButtonText: {
+    color: '#FFD700',
+    fontSize: 13,
+    fontWeight: '600',
+    letterSpacing: 0.5,
+  },
+
+  // 상세 정보 섹션
+  detailSection: {
+    marginTop: 8,
+    paddingTop: 8,
+  },
+  detailSectionTitle: {
+    color: 'rgba(255, 215, 0, 0.7)',
+    fontSize: 11,
+    fontWeight: '600',
+    textTransform: 'uppercase',
+    letterSpacing: 1,
+    marginBottom: 10,
+  },
+  mineralGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  mineralItem: {
+    width: '47%',
+    backgroundColor: 'rgba(255, 255, 255, 0.05)',
+    borderRadius: 8,
+    padding: 10,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.08)',
+  },
+  mineralLabel: {
+    color: '#888',
+    fontSize: 11,
+    marginBottom: 4,
+  },
+  mineralValue: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: '700',
+  },
+
+  // 가격 섹션
+  priceSection: {
+    marginTop: 12,
+    paddingTop: 12,
+    borderTopWidth: 1,
+    borderTopColor: 'rgba(255, 215, 0, 0.15)',
+    alignItems: 'center',
+  },
+  priceLabel: {
+    color: 'rgba(255, 255, 255, 0.4)',
+    fontSize: 10,
+    textTransform: 'uppercase',
+    letterSpacing: 1,
+  },
+  priceValue: {
+    color: '#FFD700',
+    fontSize: 24,
+    fontWeight: '800',
+    marginTop: 2,
+  },
+
+  // 구매 버튼
+  buyButton: {
+    marginTop: 14,
+    paddingVertical: 12,
+    borderRadius: 10,
+    backgroundColor: '#FFD700',
+    alignItems: 'center',
+  },
+  buyButtonText: {
+    color: '#000',
+    fontSize: 15,
+    fontWeight: '700',
+    letterSpacing: 0.5,
   },
 
   // 광물 범례 (맵 오버레이)
