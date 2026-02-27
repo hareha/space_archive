@@ -70,13 +70,48 @@ export const CESIUM_INIT = `
         if (showTempMap) moonTileset.show = false;
         viewer.camera.flyToBoundingSphere(moonTileset.boundingSphere, { duration: 0 });
 
-        viewer.scene.light = new Cesium.DirectionalLight({
-          direction: new Cesium.Cartesian3(1, 0, -1)
+        // ─── 조명 설정 ───
+        viewer.scene.highDynamicRange = false;
+        viewer.scene.backgroundColor = Cesium.Color.BLACK;
+        viewer.shadows = false;
+
+
+        // ─── 자동 자전 (유저 입력 없을 때) ───
+        var _autoRotate = true;
+        var _lastInteraction = Date.now();
+        var _autoRotateSpeed = 0.02; // degree/frame
+        var _idleTimeout = 3000; // 3초 뒤 다시 자전
+        
+        // 유저 입력 감지 → 자전 멈춤
+        var _inputHandler = new Cesium.ScreenSpaceEventHandler(viewer.canvas);
+        function onUserInput() { _lastInteraction = Date.now(); _autoRotate = false; }
+        _inputHandler.setInputAction(onUserInput, Cesium.ScreenSpaceEventType.LEFT_DOWN);
+        _inputHandler.setInputAction(onUserInput, Cesium.ScreenSpaceEventType.RIGHT_DOWN);
+        _inputHandler.setInputAction(onUserInput, Cesium.ScreenSpaceEventType.MIDDLE_DOWN);
+        _inputHandler.setInputAction(onUserInput, Cesium.ScreenSpaceEventType.WHEEL);
+        _inputHandler.setInputAction(onUserInput, Cesium.ScreenSpaceEventType.PINCH_START);
+
+        // preRender에서 자전 실행
+        viewer.scene.preRender.addEventListener(function() {
+            var now = Date.now();
+            // 3초간 입력 없으면 자전 재개
+            if (!_autoRotate && (now - _lastInteraction > _idleTimeout)) {
+                _autoRotate = true;
+            }
+            if (_autoRotate) {
+                viewer.camera.rotate(Cesium.Cartesian3.UNIT_Z, Cesium.Math.toRadians(_autoRotateSpeed));
+            }
         });
         
         // Hide Loading Overlay
         const loader = document.getElementById('loadingOverlay');
         if(loader) loader.style.display = 'none';
+
+        // ─── 기본이 탐사모드이므로 점유모드 전용 UI 숨김 ───
+        var _gridToggle = document.getElementById('gridModeToggle');
+        if (_gridToggle) _gridToggle.style.display = 'none';
+        var _dbgPanel = document.getElementById('debugPanel');
+        if (_dbgPanel) _dbgPanel.style.display = 'none';
 
       } catch (error) {
         console.error('Moon tileset 로드 실패:', error);
@@ -89,11 +124,19 @@ export const CESIUM_INIT = `
       let selectionStack = [];
       let currentAnimFrame = null;
       let showGrid = true;
+      let mainMode = 'exploration';
+      let subMode = 'space';
+      let firstPersonData = {
+          handler: null,
+      };
 
       const gridPrimitives = viewer.scene.primitives.add(new Cesium.PrimitiveCollection());
       const pillarPrimitives = viewer.scene.primitives.add(new Cesium.PrimitiveCollection());
+      const parentPrimitives = viewer.scene.primitives.add(new Cesium.PrimitiveCollection());
       const flashPrimitives = viewer.scene.primitives.add(new Cesium.PrimitiveCollection());
+      const satellitePrimitives = viewer.scene.primitives.add(new Cesium.PrimitiveCollection());
       const FIXED_HEIGHT = 10000;
+      let lastRenderedDepth = 0;
 
       // --- Mineral Data ---
       let mineralDataArray = [];
@@ -187,6 +230,8 @@ export const CESIUM_INIT = `
         if (currentAnimFrame) { cancelAnimationFrame(currentAnimFrame); currentAnimFrame = null; }
         selectionStack = [];
         currentZoomLevel = 0;
+        lastRenderedDepth = 0;
+        parentPrimitives.removeAll();
         render();
         pillarPrimitives.removeAll();
         updateUI();
@@ -198,6 +243,8 @@ export const CESIUM_INIT = `
         if (selectionStack.length === 0) return;
         var wasBlockLevel = s2.cellid.level(selectionStack[selectionStack.length - 1]) >= 15;
         selectionStack.pop();
+        lastRenderedDepth = 0;
+        parentPrimitives.removeAll();
         render();
         updateUI();
         if (wasBlockLevel) {

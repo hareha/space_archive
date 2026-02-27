@@ -20,7 +20,7 @@ export default function MoonScreen() {
   const [showGrid, setShowGrid] = useState(true);
 
   // 모드 상태 추가
-  const [mainMode, setMainMode] = useState<'exploration' | 'occupation'>('occupation');
+  const [mainMode, setMainMode] = useState<'exploration' | 'occupation'>('exploration');
   const [subMode, setSubMode] = useState<'space' | 'firstPerson'>('space');
   const [canGoBack, setCanGoBack] = useState(false);
   const [showFilterModal, setShowFilterModal] = useState(false);
@@ -57,6 +57,7 @@ export default function MoonScreen() {
   const [showLandingSites, setShowLandingSites] = useState(false);
   const [showTerrain, setShowTerrain] = useState(false);
   const [showSatellites, setShowSatellites] = useState(false);
+
   const [landmarkListData, setLandmarkListData] = useState<any>(null);
   const [selectedLandmark, setSelectedLandmark] = useState<any>(null);
 
@@ -393,8 +394,8 @@ export default function MoonScreen() {
       }
       if (showSatellites) {
         setShowSatellites(false);
-        // 위성 레이어 숨김 메시지 (cesiumControls 측에서 처리)
       }
+
       setSelectedLandmark(null);
       setShowFeaturePanel(false);
       setFeatureListView('none');
@@ -1851,6 +1852,7 @@ export default function MoonScreen() {
                       <View style={{ width: 22, height: 22, borderRadius: 11, backgroundColor: '#fff', alignSelf: showSatellites ? 'flex-end' : 'flex-start' }} />
                     </TouchableOpacity>
                   </View>
+
                 </View>
               )}
 

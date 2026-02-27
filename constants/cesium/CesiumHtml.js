@@ -5,10 +5,16 @@ import { CESIUM_STYLES } from './cesiumStyles.js';
 import { CESIUM_INIT } from './cesiumInit.js';
 import { CESIUM_GRID } from './cesiumGrid.js';
 import { CESIUM_MAPS } from './cesiumMaps.js';
+import { CESIUM_LANDMARKS } from './cesiumLandmarks.js';
 import { CESIUM_CONTROLS } from './cesiumControls.js';
 
-export const CESIUM_HTML = `
-<!DOCTYPE html>
+/**
+ * Apollo LM GLB 로컬 URI를 주입하여 HTML 생성
+ * @param {string} apolloModelUri - Asset.localUri (e.g. 'file:///...') 또는 빈 문자열 시 CDN fallback
+ */
+export function createCesiumHtml(apolloModelUri) {
+  const uriJson = JSON.stringify(apolloModelUri || '');
+  return `<!DOCTYPE html>
 <html lang="ko">
 <head>
   <meta charset="utf-8">
@@ -23,7 +29,6 @@ export const CESIUM_HTML = `
 ${CESIUM_STYLES}
   </style>
 
-  <!-- Error Handler -->
   <script>
     window.onerror = function(msg, url, line, col, error) {
         var el = document.getElementById('errorDisplay');
@@ -36,12 +41,14 @@ ${CESIUM_STYLES}
         var overlay = document.getElementById('loadingOverlay');
         if(overlay) overlay.style.display = 'flex';
     };
+    // Apollo LM GLB URI (로컬 파일 또는 CDN fallback)
+    window.APOLLO_LM_URI = ${uriJson};
   </script>
 </head>
 
 <body>
   <div id="cesiumContainer"></div>
-  <div id="debugPanel">Grid Debug: Loading...</div>
+  <div id="debugPanel" style="display:none;">Grid Debug: Loading...</div>
 
   <div id="loadingOverlay">
       <div id="loadingText">INITIALIZING MOON...</div>
@@ -52,8 +59,12 @@ ${CESIUM_STYLES}
 ${CESIUM_INIT}
 ${CESIUM_GRID}
 ${CESIUM_MAPS}
+${CESIUM_LANDMARKS}
 ${CESIUM_CONTROLS}
   </script>
 </body>
-</html>
-`;
+</html>`;
+}
+
+// 하위 호환 (기존 코드에서 CESIUM_HTML을 직접 사용하는 경우)
+export const CESIUM_HTML = createCesiumHtml('');
