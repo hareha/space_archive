@@ -36,8 +36,6 @@ ${CESIUM_STYLES}
             el.innerText = "JS Error: " + msg + "\\nLocation: " + url + ":" + line + ":" + col + "\\n" + (error ? error.stack : 'No stack');
             el.style.display = 'block';
         }
-        var loadText = document.getElementById('loadingText');
-        if(loadText) loadText.style.display = 'none';
         var overlay = document.getElementById('loadingOverlay');
         if(overlay) overlay.style.display = 'flex';
     };
@@ -51,7 +49,6 @@ ${CESIUM_STYLES}
   <div id="debugPanel" style="display:none;">Grid Debug: Loading...</div>
 
   <div id="loadingOverlay">
-      <div id="loadingText">INITIALIZING MOON...</div>
       <div id="errorDisplay"></div>
   </div>
 

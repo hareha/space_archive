@@ -223,7 +223,16 @@ handler.setInputAction((movement) => {
     const lastCellId = selectionStack.length === 0 ? null : selectionStack[selectionStack.length - 1];
     const currentLevel = lastCellId ? s2.cellid.level(lastCellId) : 0;
 
-    if (currentLevel >= 16) return; // 이미 최하위
+    if (currentLevel >= 16) {
+        // L16 이미 선택됨 — 최종 확정 메시지 전송
+        if (lastCellId) {
+            window.ReactNativeWebView.postMessage(JSON.stringify({
+                type: 'CELL_CONFIRMED',
+                payload: { token: s2.cellid.toToken(lastCellId), level: 16 }
+            }));
+        }
+        return;
+    }
 
     const targetLevel = currentLevel + 4;
 
@@ -368,7 +377,7 @@ function updateAppMode(payload) {
             window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'SATELLITE_DESELECTED' }));
         }
 
-        const defaultPos = Cesium.Cartesian3.fromRadians(0, 0, 10000000, Cesium.Ellipsoid.MOON);
+        const defaultPos = Cesium.Cartesian3.fromRadians(0, 0, 6105648, Cesium.Ellipsoid.MOON);
         viewer.camera.flyTo({
             destination: defaultPos,
             orientation: {
@@ -380,11 +389,10 @@ function updateAppMode(payload) {
         });
     }
 
-    // 기본 카메라 제어 초기화
     viewer.scene.screenSpaceCameraController.enableRotate = true;
     viewer.scene.screenSpaceCameraController.enableTranslate = true;
     viewer.scene.screenSpaceCameraController.enableZoom = true;
-    viewer.scene.screenSpaceCameraController.enableTilt = true;
+    viewer.scene.screenSpaceCameraController.enableTilt = false; // 틸트 항상 잠금
     viewer.scene.screenSpaceCameraController.enableLook = true;
 
     // 일인칭 컨트롤러 이벤트 제거
@@ -563,65 +571,102 @@ function highlightSatellite(name) {
     }
 }
 
+// ==== 육각형 마커 이미지 생성 (2x 해상도) ====
+var _hexCanvas = document.createElement('canvas');
+_hexCanvas.width = 64; _hexCanvas.height = 64;
+var _hctx = _hexCanvas.getContext('2d');
+_hctx.strokeStyle = 'rgba(210,210,210,1)';
+_hctx.lineWidth = 2.5;
+_hctx.beginPath();
+for (var hi = 0; hi < 6; hi++) {
+    var hAngle = Math.PI / 3 * hi - Math.PI / 6;
+    var hx = 32 + 22 * Math.cos(hAngle);
+    var hy = 32 + 22 * Math.sin(hAngle);
+    if (hi === 0) _hctx.moveTo(hx, hy);
+    else _hctx.lineTo(hx, hy);
+}
+_hctx.closePath();
+_hctx.stroke();
+var _hexDataUrl = _hexCanvas.toDataURL();
+
 // ==== 위성 데이터 렌더링 ====
 function drawSatelliteData(satellites) {
     if (typeof satellitePrimitives === 'undefined') return;
-    lastSatellitesData = satellites; // 데이터 저장
+    lastSatellitesData = satellites;
     satellitePrimitives.removeAll();
 
-    const polylines = satellitePrimitives.add(new Cesium.PolylineCollection());
-    const points = satellitePrimitives.add(new Cesium.PointPrimitiveCollection());
-    const labels = satellitePrimitives.add(new Cesium.LabelCollection());
+    var labels = satellitePrimitives.add(new Cesium.LabelCollection());
+    var billboards = satellitePrimitives.add(new Cesium.BillboardCollection());
 
-    satellites.forEach(sat => {
-        const isHighlighted = highlightedSatelliteName === sat.name;
-        const hasHighlight = highlightedSatelliteName !== null;
+    satellites.forEach(function(sat) {
+        var isHighlighted = highlightedSatelliteName === sat.name;
+        var hasHighlight = highlightedSatelliteName !== null;
+        var baseAlpha = hasHighlight ? (isHighlighted ? 0.8 : 0.08) : 0.5;
 
-        const opacity = hasHighlight ? (isHighlighted ? 1.0 : 0.1) : 0.6;
-        const width = isHighlighted ? 4.0 : 2.0;
+        // ─── 궤적 (그라데이션 페이드) ───
+        if (sat.trajectory && sat.trajectory.length > 1) {
+            var totalPts = sat.trajectory.length;
+            // 궤적을 여러 세그먼트로 나눠 각각 다른 투명도
+            var segCount = Math.min(totalPts - 1, 40);
+            var step = Math.max(1, Math.floor(totalPts / segCount));
 
-        // 궤적
-        if (sat.trajectory && sat.trajectory.length > 0) {
-            const positions = sat.trajectory.map(pt => {
-                return new Cesium.Cartesian3(pt.x * 1000, pt.y * 1000, pt.z * 1000);
-            });
+            for (var si = 0; si < totalPts - step; si += step) {
+                var ei = Math.min(si + step + 1, totalPts);
+                var segPositions = [];
+                for (var pi = si; pi < ei; pi++) {
+                    var pt = sat.trajectory[pi];
+                    segPositions.push(new Cesium.Cartesian3(pt.x * 1000, pt.y * 1000, pt.z * 1000));
+                }
+                // 현재위치(끝)에 가까울수록 밝고, 과거(시작)일수록 흐림
+                var progress = si / (totalPts - 1); // 0=과거, 1=현재
+                var segAlpha = baseAlpha * (0.05 + 0.95 * progress);
+                var lineWidth = isHighlighted ? 2.5 : 1.5;
 
-            const polyline = polylines.add({
-                positions: positions,
-                width: width,
-                material: Cesium.Material.fromType('Color', {
-                    color: Cesium.Color.fromCssColorString(sat.color || '#00ff00').withAlpha(opacity)
-                })
-            });
-            polyline.id = { ...sat, isSatellite: true };
+                var polylines = satellitePrimitives.add(new Cesium.PolylineCollection());
+                var polyline = polylines.add({
+                    positions: segPositions,
+                    width: lineWidth,
+                    material: Cesium.Material.fromType('Color', {
+                        color: new Cesium.Color(0.75, 0.75, 0.75, segAlpha)
+                    })
+                });
+                polyline.id = { name: sat.name, isSatellite: true, nocsId: sat.nocsId };
+            }
         }
 
-        // 현재 위치 마커
+        // ─── 현재 위치 마커 (육각형) ───
         if (sat.position) {
-            const pos = new Cesium.Cartesian3(
+            var pos = new Cesium.Cartesian3(
                 sat.position.x * 1000,
                 sat.position.y * 1000,
                 sat.position.z * 1000
             );
 
-            const point = points.add({
+            var markerAlpha = hasHighlight ? (isHighlighted ? 1.0 : 0.15) : 0.9;
+            var bb = billboards.add({
                 position: pos,
-                color: Cesium.Color.fromCssColorString(sat.color || '#ffffff').withAlpha(hasHighlight ? (isHighlighted ? 1.0 : 0.3) : 1.0),
-                pixelSize: isHighlighted ? 12 : 8,
-                outlineColor: Cesium.Color.BLACK,
-                outlineWidth: 2
+                image: _hexDataUrl,
+                width: isHighlighted ? 36 : 28,
+                height: isHighlighted ? 36 : 28,
+                color: new Cesium.Color(0.85, 0.85, 0.85, markerAlpha),
+                sizeInMeters: false,
+                disableDepthTestDistance: Number.POSITIVE_INFINITY
             });
-            point.id = { ...sat, isSatellite: true };
+            bb.id = { name: sat.name, isSatellite: true, nocsId: sat.nocsId };
 
+            // ─── 라벨 (심플 무채색) ───
             labels.add({
                 position: pos,
-                text: sat.name,
-                font: isHighlighted ? 'bold 16px sans-serif' : '14px sans-serif',
-                fillColor: Cesium.Color.WHITE.withAlpha(hasHighlight ? (isHighlighted ? 1.0 : 0.4) : 1.0),
-                outlineColor: Cesium.Color.BLACK.withAlpha(hasHighlight ? (isHighlighted ? 1.0 : 0.4) : 1.0),
+                text: sat.name.toUpperCase(),
+                font: isHighlighted ? '500 16px sans-serif' : '14px sans-serif',
+                fillColor: new Cesium.Color(0.8, 0.8, 0.8, hasHighlight ? (isHighlighted ? 1.0 : 0.2) : 0.8),
+                outlineColor: Cesium.Color.BLACK.withAlpha(0.6),
                 outlineWidth: 2,
                 style: Cesium.LabelStyle.FILL_AND_OUTLINE,
-                pixelOffset: new Cesium.Cartesian2(0, -15)
+                pixelOffset: new Cesium.Cartesian2(22, 0),
+                horizontalOrigin: Cesium.HorizontalOrigin.LEFT,
+                verticalOrigin: Cesium.VerticalOrigin.CENTER,
+                disableDepthTestDistance: Number.POSITIVE_INFINITY
             });
         }
     });

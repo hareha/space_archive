@@ -133,13 +133,12 @@ export const fetchSpacecraftPosition = async (designator: string): Promise<Space
  * @param designator 탐사선 ID
  * @param durationHours 조회할 시간 범위 (기본값 24시간). 저궤도 위성은 짧게, 고궤도 위성은 길게 설정 권장.
  */
-export const fetchSpacecraftTrajectory = async (designator: string, durationHours: number = 24): Promise<TrajectoryPoint[]> => {
+export const fetchSpacecraftTrajectory = async (designator: string, durationHours: number = 24, stepMinutes: number = 5): Promise<TrajectoryPoint[]> => {
     try {
         const now = new Date();
-        // durationHours 전부터
+        // 과거 durationHours 전부터 → 현재까지 (현재위치가 궤적의 끝)
         const startTime = new Date(now.getTime() - durationHours * 60 * 60 * 1000).toISOString();
-        // durationHours 후까지
-        const stopTime = new Date(now.getTime() + durationHours * 60 * 60 * 1000).toISOString();
+        const stopTime = now.toISOString();
 
         const params = {
             format: 'text',
@@ -150,7 +149,7 @@ export const fetchSpacecraftTrajectory = async (designator: string, durationHour
             CENTER: '500@301', // 달 중심
             START_TIME: `'${startTime}'`,
             STOP_TIME: `'${stopTime}'`,
-            STEP_SIZE: `'15 m'`, // 15분 간격 (더 부드러운 궤도)
+            STEP_SIZE: `'${stepMinutes} m'`, // 분 단위 간격
             CSV_FORMAT: 'YES'
         };
 

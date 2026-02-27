@@ -14,6 +14,7 @@ export interface Spacecraft {
     period?: string;     // 과거 미션의 경우 활동 기간
     apiEnabled?: boolean; // JPL Horizons API 지원 여부
     missionType?: MissionType; // 미션 유형
+    orbitHours?: number; // 궤도 1주기 시간 (시간 단위)
     // 착륙/충돌 미션의 경우 위치 정보
     landingLocation?: {
         lat: number;
@@ -40,7 +41,8 @@ export const LIVE_MISSIONS: Spacecraft[] = [
         isLive: true,
         description: '2009년 발사, 달 표면 고해상도 매핑 궤도선 (50km 극궤도)',
         apiEnabled: true,
-        missionType: 'orbiter'
+        missionType: 'orbiter',
+        orbitHours: 2 // ~2시간 극궤도
     },
     {
         id: '-155',
@@ -51,7 +53,8 @@ export const LIVE_MISSIONS: Spacecraft[] = [
         isLive: true,
         description: '2022년 발사, 100km 원형 극궤도',
         apiEnabled: true,
-        missionType: 'orbiter'
+        missionType: 'orbiter',
+        orbitHours: 2 // ~2시간 극궤도
     },
     {
         id: '-152',
@@ -62,7 +65,8 @@ export const LIVE_MISSIONS: Spacecraft[] = [
         isLive: true,
         description: '2019년 발사, 100km 극궤도, 2026년까지 운영 예정',
         apiEnabled: true,
-        missionType: 'orbiter'
+        missionType: 'orbiter',
+        orbitHours: 2 // ~2시간 극궤도
     },
     {
         id: '-169',
@@ -84,7 +88,8 @@ export const LIVE_MISSIONS: Spacecraft[] = [
         isLive: true,
         description: '2022년 발사, NRHO (Near-Rectilinear Halo Orbit)',
         apiEnabled: true,
-        missionType: 'orbiter'
+        missionType: 'orbiter',
+        orbitHours: 156 // ~6.5일 NRHO 궤도
     },
     {
         id: '-192',
@@ -95,7 +100,8 @@ export const LIVE_MISSIONS: Spacecraft[] = [
         isLive: true,
         description: '달 주변 L1/L2 라그랑주 점 궤도 탐사선 (THEMIS-B)',
         apiEnabled: true,
-        missionType: 'orbiter'
+        missionType: 'orbiter',
+        orbitHours: 26 // ~26시간 타원궤도
     },
     {
         id: '-193',
@@ -106,7 +112,8 @@ export const LIVE_MISSIONS: Spacecraft[] = [
         isLive: true,
         description: 'P1과 함께 달-태양풍 상호작용 연구 (THEMIS-C)',
         apiEnabled: true,
-        missionType: 'orbiter'
+        missionType: 'orbiter',
+        orbitHours: 26 // ~26시간 타원궤도
     },
 
     {

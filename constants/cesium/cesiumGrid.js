@@ -243,7 +243,7 @@ export const CESIUM_GRID = `
                   instances.push(new Cesium.GeometryInstance({
                       geometry: new Cesium.PolylineGeometry({
                           positions: positions,
-                          width: 1.5,
+                          width: 0.3,
                       }),
                       attributes: {
                           color: Cesium.ColorGeometryInstanceAttribute.fromColor(
@@ -403,8 +403,12 @@ export const CESIUM_GRID = `
                   pathStr += ' → ' + s2.cellid.level(selectionStack[pi]);
               }
               var modeLabel = gridRenderMode === 'fill' ? 'FILL' : 'LINE';
+              var _camCarto = Cesium.Cartographic.fromCartesian(viewer.camera.position, Cesium.Ellipsoid.MOON);
+              var camHeight = _camCarto ? _camCarto.height : 0;
+              var heightStr = camHeight > 1000000 ? (camHeight / 1000000).toFixed(2) + ' Mm' : camHeight > 1000 ? (camHeight / 1000).toFixed(1) + ' km' : camHeight.toFixed(0) + ' m';
               debugEl.innerHTML =
                   '<b>Grid Debug [' + modeLabel + ']</b><br>' +
+                  'Cam Height: <b style="color:#0f0" id="camHeightLive">' + heightStr + ' (' + Math.round(camHeight) + ' m)</b><br>' +
                   'Selection Level: ' + currentLevel + '<br>' +
                   'Showing Level: ' + gridTargetLevel + ' cells<br>' +
                   'Cell Count: ' + displayedCellCount + '<br>' +
@@ -468,4 +472,17 @@ export const CESIUM_GRID = `
           }
           currentAnimFrame = requestAnimationFrame(animate);
       }
+
+      // 카메라 줌 시 실시간 고도 업데이트
+      viewer.camera.changed.addEventListener(function() {
+          if (mainMode !== 'occupation') return;
+          var debugEl = document.getElementById('debugPanel');
+          if (!debugEl) return;
+          var hEl = debugEl.querySelector('#camHeightLive');
+          var _cc = Cesium.Cartographic.fromCartesian(viewer.camera.position, Cesium.Ellipsoid.MOON);
+          var camH = _cc ? _cc.height : 0;
+          var hStr = camH > 1000000 ? (camH / 1000000).toFixed(2) + ' Mm' : camH > 1000 ? (camH / 1000).toFixed(1) + ' km' : camH.toFixed(0) + ' m';
+          if (hEl) { hEl.innerHTML = hStr + ' (' + Math.round(camH) + ' m)'; }
+      });
+      viewer.camera.percentageChanged = 0.01;
 `;

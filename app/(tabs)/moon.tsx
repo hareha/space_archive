@@ -592,9 +592,12 @@ export default function MoonScreen() {
     for (const mission of LIVE_MISSIONS) {
       if (mission.apiEnabled) {
         try {
+          const trajHours = mission.orbitHours || 24;
+          // 궤도주기에 따른 샘플링 간격 (짧은 궤도=촘촘, 긴 궤도=넓게)
+          const stepMin = trajHours <= 4 ? 3 : trajHours <= 48 ? 15 : 30;
           const [position, trajectory] = await Promise.all([
             fetchSpacecraftPosition(mission.id),
-            fetchSpacecraftTrajectory(mission.id, 24) // 기본 24시간 궤적
+            fetchSpacecraftTrajectory(mission.id, trajHours, stepMin)
           ]);
 
           results.push({
@@ -1739,12 +1742,12 @@ export default function MoonScreen() {
         )}
       </View>
 
-      {/* 로딩 */}
+      {/* 위성 데이터 로딩 */}
       {
-        (loading || isLoadingSatellite) && (
+        isLoadingSatellite && (
           <View style={styles.loadingContainer}>
             <Text style={styles.loadingText}>
-              {isLoadingSatellite ? '탐사선 궤도 데이터를 불러오는 중...' : '달 지도 로딩 중...'}
+              탐사선 궤도 데이터를 불러오는 중...
             </Text>
           </View>
         )

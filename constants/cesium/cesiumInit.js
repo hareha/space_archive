@@ -55,11 +55,19 @@ export const CESIUM_INIT = `
         creditContainer: document.createElement('div'),
         scene3DOnly: true,
         contextOptions: {
-            webgl: { alpha: false }
+            webgl: {
+                alpha: false,
+                antialias: true
+            }
         }
       });
       
+      // 해상도 스케일 (네이티브 레티나 해상도, 성능 문제 시 2.0으로 낮추기)
+      try { viewer.resolutionScale = window.devicePixelRatio || 1; } catch(e) {}
+      
       viewer.scene.screenSpaceCameraController.maximumMovementRatio = 15.0;
+      // 카메라 틸트(상하 회전) 잠금 — 모든 모드에서 적용
+      viewer.scene.screenSpaceCameraController.enableTilt = false;
       viewer.scene.globe.show = false;
 
       let moonTileset;
@@ -74,7 +82,144 @@ export const CESIUM_INIT = `
         viewer.scene.highDynamicRange = false;
         viewer.scene.backgroundColor = Cesium.Color.BLACK;
         viewer.shadows = false;
+        // 기본 Cesium 별 SkyBox 유지 (이음새 없음)
 
+        // ─── 태양계 천체 (달에서 본 실제 각크기) ───
+        // 모든 천체를 D=5억m 거리에 배치, sizeInMeters로 실제 각크기 재현
+        // 각크기 = 실제지름 / 실제거리 (rad), 빌보드 크기 = D * 각크기
+        var D = 5e8; // 배치 거리 (500,000km)
+
+        // 🌍 지구 — 각크기 1.9° (달에서 본 크기, 지구에서 본 달의 ~3.7배)
+        // 실제: 지름 12,742km / 거리 384,400km = 0.0332 rad
+        var earthAngular = 12742 / 384400; // 0.0332 rad ≈ 1.9°
+        var earthSize = D * earthAngular; // ~16,600,000m
+        var earthPos = new Cesium.Cartesian3(D * 0.8, D * 0.3, D * 0.15);
+        viewer.entities.add({
+            position: earthPos,
+            billboard: {
+                image: 'https://upload.wikimedia.org/wikipedia/commons/thumb/2/22/Earth_Western_Hemisphere_transparent_background.png/240px-Earth_Western_Hemisphere_transparent_background.png',
+                width: earthSize,
+                height: earthSize,
+                sizeInMeters: true
+            },
+            label: {
+                text: 'Earth',
+                font: '11px sans-serif',
+                fillColor: Cesium.Color.fromCssColorString('#6CB4EE'),
+                pixelOffset: new Cesium.Cartesian2(0, 40),
+                showBackground: false,
+                style: Cesium.LabelStyle.FILL
+            }
+        });
+
+        // ☀️ 태양 — 각크기 0.53° (지구에서나 달에서나 거의 동일)
+        // 실제: 지름 1,392,700km / 거리 150,000,000km = 0.00929 rad
+        var sunAngular = 1392700 / 150000000; // 0.00929 rad ≈ 0.53°
+        var sunSize = D * sunAngular; // ~4,644,000m
+        var sunPos = new Cesium.Cartesian3(-D * 1.2, D * 0.6, D * 0.25);
+
+        // 태양 이미지를 Canvas로 생성 (글로우 효과 포함)
+        var sunCanvas = document.createElement('canvas');
+        sunCanvas.width = 128;
+        sunCanvas.height = 128;
+        var ctx = sunCanvas.getContext('2d');
+        // 외곽 글로우
+        var grad = ctx.createRadialGradient(64, 64, 0, 64, 64, 64);
+        grad.addColorStop(0, 'rgba(255,255,240,1)');
+        grad.addColorStop(0.15, 'rgba(255,250,200,1)');
+        grad.addColorStop(0.3, 'rgba(255,230,120,0.6)');
+        grad.addColorStop(0.6, 'rgba(255,200,50,0.1)');
+        grad.addColorStop(1, 'rgba(255,180,0,0)');
+        ctx.fillStyle = grad;
+        ctx.fillRect(0, 0, 128, 128);
+        var sunDataUrl = sunCanvas.toDataURL();
+
+        // 태양 코어 (sizeInMeters 빌보드)
+        viewer.entities.add({
+            position: sunPos,
+            billboard: {
+                image: sunDataUrl,
+                width: sunSize * 3, // 글로우 포함 3배
+                height: sunSize * 3,
+                sizeInMeters: true
+            },
+            label: {
+                text: 'Sun',
+                font: '10px sans-serif',
+                fillColor: new Cesium.Color(1.0, 0.95, 0.6, 1.0),
+                pixelOffset: new Cesium.Cartesian2(0, 28),
+                showBackground: false,
+                style: Cesium.LabelStyle.FILL
+            }
+        });
+
+        // 🪐 금성 (Venus) — 최대 각크기 ~1 arcmin = 0.017°
+        // 맨눈으로 가장 밝은 행성, 매우 작은 점
+        var planetPoints = viewer.scene.primitives.add(new Cesium.PointPrimitiveCollection());
+        var venusPos = new Cesium.Cartesian3(-D * 0.9, D * 0.7, -D * 0.4);
+        planetPoints.add({
+            position: venusPos,
+            pixelSize: 3,
+            color: new Cesium.Color(1.0, 1.0, 0.92, 1.0)
+        });
+        viewer.entities.add({
+            position: venusPos,
+            label: {
+                text: 'Venus',
+                font: '9px sans-serif',
+                fillColor: new Cesium.Color(1.0, 1.0, 0.85, 0.7),
+                pixelOffset: new Cesium.Cartesian2(0, 10),
+                showBackground: false,
+                style: Cesium.LabelStyle.FILL
+            }
+        });
+
+        // 🔴 화성 (Mars) — 최대 각크기 ~25 arcsec = 0.007°
+        // 약간 붉은빛을 띄는 작은 점
+        var marsPos = new Cesium.Cartesian3(D * 0.4, -D * 0.9, D * 0.5);
+        planetPoints.add({
+            position: marsPos,
+            pixelSize: 2,
+            color: new Cesium.Color(1.0, 0.55, 0.35, 1.0)
+        });
+        viewer.entities.add({
+            position: marsPos,
+            label: {
+                text: 'Mars',
+                font: '9px sans-serif',
+                fillColor: new Cesium.Color(1.0, 0.55, 0.35, 0.7),
+                pixelOffset: new Cesium.Cartesian2(0, 10),
+                showBackground: false,
+                style: Cesium.LabelStyle.FILL
+            }
+        });
+
+        // ─── 배경 별 필드 ───
+        var starField = viewer.scene.primitives.add(new Cesium.PointPrimitiveCollection());
+        for (var si = 0; si < 500; si++) {
+            var sTheta = Math.random() * 2 * Math.PI;
+            var sPhi = Math.acos(2 * Math.random() - 1);
+            var sDist = 3e8 + Math.random() * 5e8;
+            var sx = sDist * Math.sin(sPhi) * Math.cos(sTheta);
+            var sy = sDist * Math.sin(sPhi) * Math.sin(sTheta);
+            var sz = sDist * Math.cos(sPhi);
+            var sRand = Math.random();
+            var sSize = sRand < 0.7 ? 0.5 + Math.random() * 0.8 :
+                        sRand < 0.9 ? 1.2 + Math.random() * 0.8 :
+                                      2.0 + Math.random() * 1.0;
+            var cRand = Math.random();
+            var sR, sG, sB;
+            if (cRand < 0.5) { sR = 0.85 + Math.random() * 0.15; sG = 0.88 + Math.random() * 0.12; sB = 0.95 + Math.random() * 0.05; }
+            else if (cRand < 0.75) { sR = 0.95 + Math.random() * 0.05; sG = 0.85 + Math.random() * 0.1; sB = 0.6 + Math.random() * 0.2; }
+            else if (cRand < 0.9) { sR = 0.7 + Math.random() * 0.15; sG = 0.8 + Math.random() * 0.15; sB = 0.95 + Math.random() * 0.05; }
+            else { sR = 0.95 + Math.random() * 0.05; sG = 0.6 + Math.random() * 0.2; sB = 0.4 + Math.random() * 0.2; }
+            var sBright = 0.4 + Math.random() * 0.6;
+            starField.add({
+                position: new Cesium.Cartesian3(sx, sy, sz),
+                pixelSize: sSize,
+                color: new Cesium.Color(sR * sBright, sG * sBright, sB * sBright, 1.0)
+            });
+        }
 
         // ─── 자동 자전 (유저 입력 없을 때) ───
         var _autoRotate = true;
@@ -94,6 +239,14 @@ export const CESIUM_INIT = `
         // preRender에서 자전 실행
         viewer.scene.preRender.addEventListener(function() {
             var now = Date.now();
+            // 점유 모드 또는 위성/1인칭 모드에서는 자전 안 함
+            var canAutoRotate = mainMode === 'exploration' && (subMode === 'space' || !subMode || subMode === '');
+            
+            if (!canAutoRotate) {
+                _autoRotate = false;
+                return;
+            }
+            
             // 3초간 입력 없으면 자전 재개
             if (!_autoRotate && (now - _lastInteraction > _idleTimeout)) {
                 _autoRotate = true;
@@ -103,9 +256,12 @@ export const CESIUM_INIT = `
             }
         });
         
-        // Hide Loading Overlay
+        // Hide Loading Overlay (fade out)
         const loader = document.getElementById('loadingOverlay');
-        if(loader) loader.style.display = 'none';
+        if(loader) {
+            loader.classList.add('fade-out');
+            setTimeout(function() { loader.style.display = 'none'; }, 900);
+        }
 
         // ─── 기본이 탐사모드이므로 점유모드 전용 UI 숨김 ───
         var _gridToggle = document.getElementById('gridModeToggle');
@@ -115,8 +271,8 @@ export const CESIUM_INIT = `
 
       } catch (error) {
         console.error('Moon tileset 로드 실패:', error);
-        const loader = document.getElementById('loadingOverlay');
-        if(loader) loader.style.display = 'none';
+        const loader2 = document.getElementById('loadingOverlay');
+        if(loader2) { loader2.classList.add('fade-out'); setTimeout(function() { loader2.style.display = 'none'; }, 900); }
         return;
       }
 
