@@ -35,9 +35,11 @@ export const CESIUM_MAPS = `
       }
 
       function updateGridVisibility(visible) {
-        if (gridPrimitives) {
-          gridPrimitives.show = visible;
-        }
+        showGrid = visible; // cesiumInit.js의 전역 플래그 업데이트
+        if (typeof gridPrimitives !== 'undefined' && gridPrimitives) gridPrimitives.show = visible;
+        if (typeof parentPrimitives !== 'undefined' && parentPrimitives) parentPrimitives.show = visible;
+        if (typeof pillarPrimitives !== 'undefined' && pillarPrimitives) pillarPrimitives.show = visible;
+        if (typeof flashPrimitives !== 'undefined' && flashPrimitives) flashPrimitives.show = visible;
       }
 
       function calculateMineralStats(filter) {

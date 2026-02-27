@@ -2,6 +2,28 @@ import axios from 'axios';
 
 const BASE_URL = 'https://ssd.jpl.nasa.gov/api/horizons.api';
 
+// 재시도 딜레이 헬퍼
+const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+
+// 재시도 포함 GET 요청 (최대 maxRetries회, 지수 백오프)
+const axiosGetWithRetry = async (url: string, params: object, maxRetries = 2): Promise<any> => {
+    for (let attempt = 0; attempt <= maxRetries; attempt++) {
+        try {
+            return await axios.get(url, { params, timeout: 10000 });
+        } catch (error: any) {
+            const status = error?.response?.status;
+            const isRetryable = status === 503 || status === 429 || !status; // 503, 429, 네트워크 오류
+            if (isRetryable && attempt < maxRetries) {
+                const delay = 1000 * Math.pow(2, attempt); // 1s, 2s
+                console.warn(`[HorizonsApi] ${status ?? 'Network'} error, retrying in ${delay}ms... (attempt ${attempt + 1}/${maxRetries})`);
+                await sleep(delay);
+            } else {
+                throw error;
+            }
+        }
+    }
+};
+
 // 좌표 데이터 인터페이스
 export interface SpacecraftPosition {
     x: number;
@@ -50,7 +72,7 @@ export const fetchSpacecraftPosition = async (designator: string): Promise<Space
             CSV_FORMAT: 'YES'
         };
 
-        const response = await axios.get(BASE_URL, { params });
+        const response = await axiosGetWithRetry(BASE_URL, params);
         const data = response.data;
 
         if (typeof data !== 'string') return null;
@@ -128,11 +150,11 @@ export const fetchSpacecraftTrajectory = async (designator: string, durationHour
             CENTER: '500@301', // 달 중심
             START_TIME: `'${startTime}'`,
             STOP_TIME: `'${stopTime}'`,
-            STEP_SIZE: `'1 h'`, // 1시간 간격
+            STEP_SIZE: `'15 m'`, // 15분 간격 (더 부드러운 궤도)
             CSV_FORMAT: 'YES'
         };
 
-        const response = await axios.get(BASE_URL, { params });
+        const response = await axiosGetWithRetry(BASE_URL, params);
         const data = response.data;
 
         if (typeof data !== 'string') return [];

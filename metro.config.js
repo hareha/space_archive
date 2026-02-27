@@ -6,5 +6,7 @@ const config = getDefaultConfig(__dirname);
 config.resolver.assetExts.push('tab');
 config.resolver.assetExts.push('html');
 config.resolver.assetExts.push('csv');
+config.resolver.assetExts.push('glb');
+config.resolver.assetExts.push('gltf');
 
 module.exports = config;

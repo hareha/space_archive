@@ -20,6 +20,12 @@ export interface Spacecraft {
         lon: number;
         name: string;
     };
+    // 실시간 데이터 피드 (JPL Horizons)
+    x?: number;
+    y?: number;
+    z?: number;
+    altitude?: number;
+    trajectory?: any[];
 }
 
 // 현재 운영 중인 미션 (Live Layers) - API 기반 실시간 위치

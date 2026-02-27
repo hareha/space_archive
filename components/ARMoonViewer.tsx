@@ -42,6 +42,12 @@ import {
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 
+const DEG2RAD_LOCAL = Math.PI / 180;
+const RAD2DEG = 180 / Math.PI;
+
+const FOV_X = 60; // 수평 시야각 (도)
+const FOV_Y = 80; // 수직 시야각 (도)
+
 // 3D 회전 변환 함수
 function rotatePoint3D(point: { x: number; y: number; z: number }, az: number, el: number) {
     const radAz = (az * Math.PI) / 180;
@@ -150,7 +156,7 @@ interface SpacecraftWithPosition extends Spacecraft {
 export default function ARMoonViewer({ onClose }: Props) {
     const [permission, requestPermission] = useCameraPermissions();
     const [isMoonAligned, setIsMoonAligned] = useState(false);
-    // 달 위치 고정 앵커 (확인 시점의 기기 방향)
+    // 달 위치 고정 앵커 (정렬 시점의 기기 방향)
     const [anchorPosition, setAnchorPosition] = useState<{ azimuth: number; altitude: number } | null>(null);
 
     const [liveSpacecraft, setLiveSpacecraft] = useState<SpacecraftWithPosition[]>([]);
@@ -160,19 +166,25 @@ export default function ARMoonViewer({ onClose }: Props) {
     const [showHistoricalMissions, setShowHistoricalMissions] = useState(false);
     const [apiError, setApiError] = useState<string | null>(null);
 
-    // 부드러운 AR 추적을 위해 센서 업데이트 속도 20ms로 증가
+    // 부드러운 AR 추적을 위해 센서 업데이트 속도 20ms
     const deviceOrientation = useDeviceOrientation(20);
     const moonPosition = useMoonPosition(60000);
 
     // 애니메이션
     const pulseAnim = useRef(new Animated.Value(1)).current;
     const orbitRotation = useRef(new Animated.Value(0)).current;
+    const gridOpacity = useRef(new Animated.Value(1)).current;
 
     // 3D 회전 상태
     const [rotation, setRotation] = useState({ az: 0, el: 0 });
     const isInteracting = useRef(false);
 
-    // PanResponder: 스와이프 제스처 처리
+    // 자동 정렬 타이머
+    const alignTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const ALIGN_THRESHOLD_DEG = 15; // 정렬 임계 각도
+    const ALIGN_HOLD_MS = 500;       // 유지 시간
+
+    // PanResponder: 스와이프 제스처 처리 (정렬 후에만)
     const panResponder = useRef(
         PanResponder.create({
             onStartShouldSetPanResponder: () => true,
@@ -181,7 +193,6 @@ export default function ARMoonViewer({ onClose }: Props) {
                 isInteracting.current = true;
             },
             onPanResponderMove: (_, gestureState) => {
-                // 감도 조절
                 const sensitivity = 0.1;
                 setRotation(prev => ({
                     az: prev.az + gestureState.dx * sensitivity,
@@ -234,74 +245,221 @@ export default function ARMoonViewer({ onClose }: Props) {
         }
     }, [isMoonAligned]);
 
-    // FOV 상수는 (대략적인 값, 아이폰 와이드 렌즈 기준)
-    const PIXELS_PER_DEGREE_X = SCREEN_WIDTH / 60;
-    const PIXELS_PER_DEGREE_Y = SCREEN_HEIGHT / 80;
+    // 정렬 시 그리드 fade-out
+    useEffect(() => {
+        Animated.timing(gridOpacity, {
+            toValue: isMoonAligned ? 0 : 1,
+            duration: 600,
+            useNativeDriver: true
+        }).start();
+    }, [isMoonAligned]);
 
-    // 현재 달의 화면상 좌표 계산 (AR 앵커링)
-    const { moonScreenX, moonScreenY, isVisible } = useMemo(() => {
-        if (!isMoonAligned || !anchorPosition) {
-            // 정렬 전에는 화면 중앙에 고정
-            return {
-                moonScreenX: SCREEN_WIDTH / 2,
-                moonScreenY: SCREEN_HEIGHT / 2 - 80,
-                isVisible: true
-            };
+    // ════════════════════════════════════════════════════════════════
+    // ★ 3D 투영 기반 달 화면 위치 계산 (완전 재설계)
+    // ════════════════════════════════════════════════════════════════
+    const CAM_FOV_X = 60; // 수평 시야각 (도)
+    const CAM_FOV_Y = 80; // 수직 시야각 (도)
+    const RAD = Math.PI / 180;
+
+    // Perspective 투영 초점거리 (pinhole camera)
+    const FOCAL_X = SCREEN_WIDTH / (2 * Math.tan(CAM_FOV_X / 2 * RAD));
+    const FOCAL_Y = SCREEN_HEIGHT / (2 * Math.tan(CAM_FOV_Y / 2 * RAD));
+
+    /** (Az°, Alt°) → 월드 단위벡터 [East, North, Zenith] */
+    const azAltToWorld = useCallback((az: number, alt: number): [number, number, number] => {
+        const a = az * RAD, e = alt * RAD;
+        return [
+            Math.cos(e) * Math.sin(a),  // East
+            Math.cos(e) * Math.cos(a),  // North
+            Math.sin(e),                 // Zenith
+        ];
+    }, []);
+
+    /** 월드 벡터 → 카메라 스크린 좌표 */
+    const worldToScreen = useCallback((
+        wx: number, wy: number, wz: number,
+        fwd: [number, number, number],
+        right: [number, number, number],
+        up: [number, number, number]
+    ): { x: number; y: number; inFront: boolean } => {
+        // 카메라 로컬: dot product
+        const cx = wx * right[0] + wy * right[1] + wz * right[2];
+        const cy = wx * up[0] + wy * up[1] + wz * up[2];
+        const cz = wx * fwd[0] + wy * fwd[1] + wz * fwd[2];
+
+        if (cz <= 0.001) {
+            // 카메라 뒤쪽 → 방향만 2D로 반환
+            return { x: SCREEN_WIDTH / 2 + cx * 1000, y: SCREEN_HEIGHT / 2 - cy * 1000, inFront: false };
         }
 
-        // 앵커 기준 현재 기기 방향과의 차이 계산
-        let diffAz = deviceOrientation.azimuth - anchorPosition.azimuth;
-        // -180 ~ 180도 사이로 정규화
+        // Perspective 투영
+        return {
+            x: SCREEN_WIDTH / 2 + (cx / cz) * FOCAL_X,
+            y: SCREEN_HEIGHT / 2 - (cy / cz) * FOCAL_Y,
+            inFront: true,
+        };
+    }, [FOCAL_X, FOCAL_Y]);
+
+    // ── 달 화면 위치 ──
+    const moonProj = useMemo(() => {
+        const [mx, my, mz] = azAltToWorld(moonPosition.azimuth, moonPosition.altitude);
+        const result = worldToScreen(
+            mx, my, mz,
+            deviceOrientation.forward, deviceOrientation.right, deviceOrientation.up
+        );
+        const M = 60;
+        const onScreen = result.inFront
+            && result.x >= -M && result.x <= SCREEN_WIDTH + M
+            && result.y >= -M && result.y <= SCREEN_HEIGHT + M;
+        return { ...result, onScreen };
+    }, [moonPosition, deviceOrientation, azAltToWorld, worldToScreen]);
+
+    const moonScreenX = moonProj.x;
+    const moonScreenY = moonProj.y;
+    const isVisible = moonProj.onScreen;
+
+    // ════════════════════════════════════════════════════════════════
+    // ★ 돔형 천구 그리드 — 3D 투영 (별자리 앱 스타일)
+    // ════════════════════════════════════════════════════════════════
+    type GridLine = { x1: number; y1: number; x2: number; y2: number; opacity: number; width: number };
+    type GridLabel = { x: number; y: number; text: string; size: number; color: string };
+
+    const domeGrid = useMemo(() => {
+        const lines: GridLine[] = [];
+        const labels: GridLabel[] = [];
+        const { forward: fwd, right: rt, up: upv } = deviceOrientation;
+
+        // ── 고도 동심원 (30°, 60° 간격) ──
+        const altRings = [0, 30, 60]; // 수평선(0°), 30°, 60°
+        for (const altDeg of altRings) {
+            const segments = 72; // 360/5° 해상도
+            let prevPt: { x: number; y: number; front: boolean } | null = null;
+            const isHorizon = altDeg === 0;
+
+            for (let i = 0; i <= segments; i++) {
+                const azDeg = (i / segments) * 360;
+                const [wx, wy, wz] = azAltToWorld(azDeg, altDeg);
+                const p = worldToScreen(wx, wy, wz, fwd, rt, upv);
+                const pt = { x: p.x, y: p.y, front: p.inFront };
+
+                if (prevPt && prevPt.front && pt.front) {
+                    // 화면 내에 있는 선분만 그림 (너무 먼 것 제외)
+                    const dist = Math.sqrt((pt.x - prevPt.x) ** 2 + (pt.y - prevPt.y) ** 2);
+                    if (dist < SCREEN_WIDTH) { // 래핑 방지
+                        lines.push({
+                            x1: prevPt.x, y1: prevPt.y,
+                            x2: pt.x, y2: pt.y,
+                            opacity: isHorizon ? 0.5 : 0.25,
+                            width: isHorizon ? 1.5 : 0.8,
+                        });
+                    }
+                }
+                prevPt = pt;
+            }
+        }
+
+        // ── 방위 방사선 (N/NE/E/SE/S/SW/W/NW + 15° 보조선) ──
+        const cardinals: Record<number, string> = {
+            0: 'N', 45: 'NE', 90: 'E', 135: 'SE',
+            180: 'S', 225: 'SW', 270: 'W', 315: 'NW',
+        };
+
+        for (let azDeg = 0; azDeg < 360; azDeg += 15) {
+            const isCardinal = azDeg % 90 === 0;
+            const isIntercardinal = azDeg % 45 === 0 && !isCardinal;
+
+            // -10° ~ 85° 사이의 세로선
+            const segCount = 20;
+            let prevPt: { x: number; y: number; front: boolean } | null = null;
+
+            for (let j = 0; j <= segCount; j++) {
+                const altDeg = -10 + (j / segCount) * 95; // -10° ~ 85°
+                const [wx, wy, wz] = azAltToWorld(azDeg, altDeg);
+                const p = worldToScreen(wx, wy, wz, fwd, rt, upv);
+                const pt = { x: p.x, y: p.y, front: p.inFront };
+
+                if (prevPt && prevPt.front && pt.front) {
+                    const dist = Math.sqrt((pt.x - prevPt.x) ** 2 + (pt.y - prevPt.y) ** 2);
+                    if (dist < SCREEN_WIDTH) {
+                        lines.push({
+                            x1: prevPt.x, y1: prevPt.y,
+                            x2: pt.x, y2: pt.y,
+                            opacity: isCardinal ? 0.35 : isIntercardinal ? 0.2 : 0.1,
+                            width: isCardinal ? 1 : 0.5,
+                        });
+                    }
+                }
+                prevPt = pt;
+            }
+
+            // 방위 라벨 (수평선 높이에 표시)
+            const label = cardinals[azDeg];
+            if (label) {
+                const [lx, ly, lz] = azAltToWorld(azDeg, 2); // 수평선보다 약간 위
+                const lp = worldToScreen(lx, ly, lz, fwd, rt, upv);
+                if (lp.inFront && lp.x > 0 && lp.x < SCREEN_WIDTH && lp.y > 0 && lp.y < SCREEN_HEIGHT) {
+                    labels.push({
+                        x: lp.x, y: lp.y,
+                        text: label,
+                        size: isCardinal ? 14 : 10,
+                        color: isCardinal ? 'rgba(255,255,255,0.9)' : 'rgba(255,255,255,0.5)',
+                    });
+                }
+            }
+        }
+
+        return { lines, labels };
+    }, [deviceOrientation, azAltToWorld, worldToScreen]);
+
+    // ════════════════════════════════════════════════════════════════
+    // ★ 달 방향 화살표 — 화면 밖일 때만 표시
+    // ════════════════════════════════════════════════════════════════
+    const directionGuide = useMemo(() => {
+        if (isVisible) return null;
+
+        // 달 방향으로의 스크린 오프셋
+        const dx = moonScreenX - SCREEN_WIDTH / 2;
+        const dy = moonScreenY - SCREEN_HEIGHT / 2;
+        const len = Math.sqrt(dx * dx + dy * dy);
+        if (len < 1) return null;
+
+        const nx = dx / len;
+        const ny = dy / len;
+
+        // 방위각/고도각 차이 텍스트
+        let diffAz = moonPosition.azimuth - deviceOrientation.azimuth;
         if (diffAz > 180) diffAz -= 360;
         if (diffAz < -180) diffAz += 360;
+        const diffAlt = moonPosition.altitude - deviceOrientation.altitude;
 
-        const diffAlt = deviceOrientation.altitude - anchorPosition.altitude;
+        const absDiffAz = Math.abs(Math.round(diffAz));
+        const absDiffAlt = Math.abs(Math.round(diffAlt));
 
-        // 화면 좌표 계산 (AR 앵커링)
-        // 센서 값과 화면 이동 방향 보정 (1 or -1)
-        const INVERT_X = 1;  // 좌우 반전 여부 (1: 그대로, -1: 반전)
-        const INVERT_Y = 1;  // 상하 반전 여부
+        const azText = absDiffAz > 3 ? (diffAz > 0 ? `→ ${absDiffAz}°` : `← ${absDiffAz}°`) : '';
+        const altText = absDiffAlt > 3 ? (diffAlt > 0 ? `↑ ${absDiffAlt}°` : `↓ ${absDiffAlt}°`) : '';
 
-        // 기기가 오른쪽(Azimuth 증가)으로 돌면 -> 물체는 화면 왼쪽(X 감소)으로 이동해야 함
-        // 기기가 위쪽(Altitude 변화)으로 돌면 -> 물체는 화면 아래쪽(Y 증가)으로 이동해야 함
+        // 화면 가장자리에 배치
+        const pad = 50;
+        const halfW = SCREEN_WIDTH / 2 - pad;
+        const halfH = SCREEN_HEIGHT / 2 - pad;
 
-        // 사용자 피드백 반영:
-        // 좌우: + 사용 (step 514 요청)
-        // 상하: + 사용 (현재 - 상태에서 반전 요청)
+        let t = Infinity;
+        if (Math.abs(nx) > 0.001) t = Math.min(t, halfW / Math.abs(nx));
+        if (Math.abs(ny) > 0.001) t = Math.min(t, halfH / Math.abs(ny));
 
-        const xOffset = (diffAz * PIXELS_PER_DEGREE_X) * INVERT_X;
-        const yOffset = (diffAlt * PIXELS_PER_DEGREE_Y) * INVERT_Y;
+        const edgeX = SCREEN_WIDTH / 2 + nx * t;
+        const edgeY = SCREEN_HEIGHT / 2 + ny * t;
+        const rotation = Math.atan2(ny, nx) * (180 / Math.PI) + 90;
 
-        const x = (SCREEN_WIDTH / 2) + xOffset;
-        const y = (SCREEN_HEIGHT / 2 - 80) + yOffset;
+        return { azText, altText, arrow: { x: edgeX, y: edgeY, rotation } };
+    }, [moonPosition, deviceOrientation, isVisible, moonScreenX, moonScreenY]);
 
-        // 화면 범위 내에 있는지 확인 (여유 200px)
-        const margin = 200;
-        const visible = (
-            x >= -margin &&
-            x <= SCREEN_WIDTH + margin &&
-            y >= -margin &&
-            y <= SCREEN_HEIGHT + margin
-        );
-
-        return { moonScreenX: x, moonScreenY: y, isVisible: visible };
-    }, [isMoonAligned, anchorPosition, deviceOrientation]);
-
-    // 달 확인 토글
-    const handleMoonConfirm = useCallback(() => {
-        if (!isMoonAligned) {
-            // 정렬 시작: 현재 기기 방향을 앵커로 저장
-            setAnchorPosition({
-                azimuth: deviceOrientation.azimuth,
-                altitude: deviceOrientation.altitude
-            });
-            setIsMoonAligned(true);
-        } else {
-            // 정렬 해제
-            setIsMoonAligned(false);
-            setAnchorPosition(null);
-        }
-    }, [isMoonAligned, deviceOrientation]);
+    // 정렬 해제 함수
+    const handleResetAlignment = useCallback(() => {
+        setIsMoonAligned(false);
+        setAnchorPosition(null);
+        setRotation({ az: 0, el: 0 });
+    }, []);
 
     // 탐사선 선택/해제
     const handleSpacecraftSelect = useCallback((sc: Spacecraft | null) => {
@@ -551,6 +709,84 @@ export default function ARMoonViewer({ onClose }: Props) {
             <View style={styles.container}>
                 <CameraView style={styles.camera} facing="back">
                     <View style={styles.overlay} {...panResponder.panHandlers}>
+                        {/* ═══ 돔형 천구 그리드 (3D 투영) ═══ */}
+                        <Animated.View style={[StyleSheet.absoluteFillObject, { opacity: gridOpacity }]} pointerEvents="none">
+                            <Svg width={SCREEN_WIDTH} height={SCREEN_HEIGHT} style={StyleSheet.absoluteFillObject}>
+                                {/* 그리드 선 (고도 동심원 + 방위 방사선) */}
+                                {domeGrid.lines.map((l, i) => (
+                                    <Line
+                                        key={`gl-${i}`}
+                                        x1={l.x1} y1={l.y1} x2={l.x2} y2={l.y2}
+                                        stroke={`rgba(255,255,255,${l.opacity})`}
+                                        strokeWidth={l.width}
+                                    />
+                                ))}
+                                {/* 방위 라벨 (N/E/S/W 등) */}
+                                {domeGrid.labels.map((lb, i) => (
+                                    <SvgText
+                                        key={`lbl-${i}`}
+                                        x={lb.x} y={lb.y}
+                                        fill={lb.color}
+                                        fontSize={lb.size}
+                                        fontWeight="700"
+                                        textAnchor="middle"
+                                    >
+                                        {lb.text}
+                                    </SvgText>
+                                ))}
+                                {/* 화면 중앙 십자선 */}
+                                <Line x1={SCREEN_WIDTH / 2 - 15} y1={SCREEN_HEIGHT / 2} x2={SCREEN_WIDTH / 2 + 15} y2={SCREEN_HEIGHT / 2} stroke="rgba(255,255,255,0.6)" strokeWidth={1} />
+                                <Line x1={SCREEN_WIDTH / 2} y1={SCREEN_HEIGHT / 2 - 15} x2={SCREEN_WIDTH / 2} y2={SCREEN_HEIGHT / 2 + 15} stroke="rgba(255,255,255,0.6)" strokeWidth={1} />
+                                {/* 달 마커 (화면에 보일 때) */}
+                                {isVisible && (
+                                    <G>
+                                        <Circle cx={moonScreenX} cy={moonScreenY} r={22} stroke="rgba(255,220,100,0.8)" strokeWidth={2} strokeDasharray="5,4" fill="none" />
+                                        <Circle cx={moonScreenX} cy={moonScreenY} r={4} fill="rgba(255,220,100,0.9)" />
+                                        <SvgText x={moonScreenX} y={moonScreenY - 28} fill="rgba(255,220,100,0.9)" fontSize={16} fontWeight="600" textAnchor="middle">🌙</SvgText>
+                                    </G>
+                                )}
+                            </Svg>
+                        </Animated.View>
+
+                        {/* ═══ 디버그 오버레이 ═══ */}
+                        <View style={styles.debugOverlay} pointerEvents="none">
+                            <Text style={styles.debugText}>
+                                📷 Az:{deviceOrientation.azimuth.toFixed(1)}° Alt:{deviceOrientation.altitude.toFixed(1)}°
+                            </Text>
+                            <Text style={styles.debugText}>
+                                🌙 Az:{moonPosition.azimuth.toFixed(1)}° Alt:{moonPosition.altitude.toFixed(1)}°
+                            </Text>
+                            <Text style={styles.debugText}>
+                                {isVisible ? '✅ 화면 내' : '❌ 화면 밖'}
+                            </Text>
+                        </View>
+
+                        {/* ═══ 방향 화살표 (달이 화면 밖일 때) ═══ */}
+                        {directionGuide && (
+                            <>
+                                {directionGuide.arrow && (
+                                    <View
+                                        style={[
+                                            styles.edgeArrowContainer,
+                                            {
+                                                left: directionGuide.arrow.x - 24,
+                                                top: directionGuide.arrow.y - 24,
+                                                transform: [{ rotate: `${directionGuide.arrow.rotation}deg` }]
+                                            }
+                                        ]}
+                                    >
+                                        <Text style={styles.edgeArrowText}>▲</Text>
+                                        <Text style={styles.edgeArrowLabel}>🌙</Text>
+                                    </View>
+                                )}
+                                <View style={styles.directionInfoBox}>
+                                    <Text style={styles.directionInfoText}>
+                                        {directionGuide.azText}{directionGuide.azText && directionGuide.altText ? '  ' : ''}{directionGuide.altText}
+                                    </Text>
+                                </View>
+                            </>
+                        )}
+
                         {/* Three.js 기반 탐사선 궤도 시각화 (GPU 가속) */}
                         {isMoonAligned && (
                             <ThreeOrbitVisualizer
@@ -565,86 +801,83 @@ export default function ARMoonViewer({ onClose }: Props) {
                             />
                         )}
 
-                        {/* 달 가이드 원 */}
-                        {isVisible && (
-                            <TouchableOpacity
+                        {/* 달 가이드 원 (정렬 후에만 표시) */}
+                        {isMoonAligned && isVisible && (
+                            <View
                                 style={[
                                     styles.guideContainer,
                                     {
                                         position: 'absolute',
                                         left: moonScreenX - (GUIDE_CIRCLE_RADIUS + 15),
                                         top: moonScreenY - (GUIDE_CIRCLE_RADIUS + 15),
-                                        // 기존 중앙 정렬 스타일 무시를 위해 width/height 명시가 필요할 수 있음
                                         width: (GUIDE_CIRCLE_RADIUS * 2) + 30,
                                         height: (GUIDE_CIRCLE_RADIUS * 2) + 30,
                                         justifyContent: 'center',
                                         alignItems: 'center'
                                     }
                                 ]}
-                                onPress={handleMoonConfirm}
-                                activeOpacity={0.9}
                             >
-                                <Animated.View style={{ transform: [{ scale: isMoonAligned ? 1 : pulseAnim }] }}>
-                                    {/* 반투명 달 이미지 가이드 */}
-                                    <View style={styles.moonImageWrapper}>
-                                        <Image
-                                            source={require('../assets/moon_texture.png')}
-                                            style={[
-                                                styles.moonGuideImage,
-                                                { opacity: isMoonAligned ? 0.3 : 0.6 }
-                                            ]}
-                                        />
-                                    </View>
+                                <View style={styles.moonImageWrapper}>
+                                    <Image
+                                        source={require('../assets/moon_texture.png')}
+                                        style={[styles.moonGuideImage, { opacity: 0.3 }]}
+                                    />
+                                </View>
 
-                                    <Svg width={GUIDE_CIRCLE_RADIUS * 2 + 30} height={GUIDE_CIRCLE_RADIUS * 2 + 30}>
-                                        <Circle
-                                            cx={GUIDE_CIRCLE_RADIUS + 15}
-                                            cy={GUIDE_CIRCLE_RADIUS + 15}
-                                            r={GUIDE_CIRCLE_RADIUS}
-                                            stroke={isMoonAligned ? "rgba(255,255,255,0.4)" : "#3B82F6"}
-                                            strokeWidth={1}
-                                            strokeDasharray={isMoonAligned ? "0" : "8,6"}
-                                            fill="transparent"
-                                        />
-
-                                        {/* 십자선 */}
-                                        <Line
-                                            x1={GUIDE_CIRCLE_RADIUS + 15 - 10}
-                                            y1={GUIDE_CIRCLE_RADIUS + 15}
-                                            x2={GUIDE_CIRCLE_RADIUS + 15 + 10}
-                                            y2={GUIDE_CIRCLE_RADIUS + 15}
-                                            stroke={isMoonAligned ? "rgba(255,255,255,0.6)" : "#3B82F6"}
-                                            strokeWidth={1}
-                                        />
-                                        <Line
-                                            x1={GUIDE_CIRCLE_RADIUS + 15}
-                                            y1={GUIDE_CIRCLE_RADIUS + 15 - 10}
-                                            x2={GUIDE_CIRCLE_RADIUS + 15}
-                                            y2={GUIDE_CIRCLE_RADIUS + 15 + 10}
-                                            stroke={isMoonAligned ? "rgba(255,255,255,0.6)" : "#3B82F6"}
-                                            strokeWidth={1}
-                                        />
-                                    </Svg>
-                                </Animated.View>
-                            </TouchableOpacity>
+                                <Svg width={GUIDE_CIRCLE_RADIUS * 2 + 30} height={GUIDE_CIRCLE_RADIUS * 2 + 30}>
+                                    <Circle
+                                        cx={GUIDE_CIRCLE_RADIUS + 15}
+                                        cy={GUIDE_CIRCLE_RADIUS + 15}
+                                        r={GUIDE_CIRCLE_RADIUS}
+                                        stroke="rgba(255,255,255,0.4)"
+                                        strokeWidth={1}
+                                        fill="transparent"
+                                    />
+                                    <Line
+                                        x1={GUIDE_CIRCLE_RADIUS + 15 - 10}
+                                        y1={GUIDE_CIRCLE_RADIUS + 15}
+                                        x2={GUIDE_CIRCLE_RADIUS + 15 + 10}
+                                        y2={GUIDE_CIRCLE_RADIUS + 15}
+                                        stroke="rgba(255,255,255,0.6)"
+                                        strokeWidth={1}
+                                    />
+                                    <Line
+                                        x1={GUIDE_CIRCLE_RADIUS + 15}
+                                        y1={GUIDE_CIRCLE_RADIUS + 15 - 10}
+                                        x2={GUIDE_CIRCLE_RADIUS + 15}
+                                        y2={GUIDE_CIRCLE_RADIUS + 15 + 10}
+                                        stroke="rgba(255,255,255,0.6)"
+                                        strokeWidth={1}
+                                    />
+                                </Svg>
+                            </View>
                         )}
 
                         {/* 가이드 텍스트 */}
-                        {isVisible && (
+                        {isMoonAligned && isVisible && (
                             <View style={[
                                 styles.guideTextContainer,
                                 {
                                     top: moonScreenY + GUIDE_CIRCLE_RADIUS + 25,
-                                    left: moonScreenX - 150, // 중앙 정렬을 위한 오프셋
+                                    left: moonScreenX - 150,
                                     width: 300
                                 }
                             ]}>
-                                <Text style={[styles.guideText, isMoonAligned && styles.guideTextSuccess]}>
-                                    {isMoonAligned ? '🌙 탐사선을 탭하여 상세 정보 확인' : '달을 원에 맞추고 탭하세요'}
+                                <Text style={[styles.guideText, styles.guideTextSuccess]}>
+                                    🌙 탐사선을 탭하여 상세 정보 확인
                                 </Text>
-                                {apiError && isMoonAligned && (
+                                {apiError && (
                                     <Text style={styles.errorText}>{apiError}</Text>
                                 )}
+                            </View>
+                        )}
+
+                        {/* 달 위치 안내 */}
+                        {!isMoonAligned && moonPosition.isVisible && (
+                            <View style={styles.guideStatusBox}>
+                                <Text style={styles.guideStatusText}>
+                                    {isVisible ? '🌙 달이 화면 안에 있습니다' : '카메라를 달 방향으로 향해주세요'}
+                                </Text>
                             </View>
                         )}
 
@@ -709,12 +942,22 @@ export default function ARMoonViewer({ onClose }: Props) {
 
                 {/* 상단 컨트롤 */}
                 <SafeAreaView style={styles.topControls} edges={['top']}>
-                    <TouchableOpacity
-                        style={[styles.controlButton, { marginRight: 10 }]}
-                        onPress={() => setRotation({ az: 0, el: 0 })}
-                    >
-                        <MaterialCommunityIcons name="refresh" size={24} color="#fff" />
-                    </TouchableOpacity>
+                    {/* 센서 상태 표시 */}
+                    <View style={styles.sensorBadge}>
+                        <View style={[styles.statusDot, { backgroundColor: deviceOrientation.isAvailable ? '#4CAF50' : '#F44336' }]} />
+                        <Text style={styles.statusText}>
+                            {moonPosition.isVisible ? `달 고도 ${Math.round(moonPosition.altitude)}°` : '달 ▼'}
+                        </Text>
+                    </View>
+                    <View style={{ flex: 1 }} />
+                    {isMoonAligned && (
+                        <TouchableOpacity
+                            style={[styles.controlButton, { marginRight: 10 }]}
+                            onPress={handleResetAlignment}
+                        >
+                            <MaterialCommunityIcons name="refresh" size={24} color="#fff" />
+                        </TouchableOpacity>
+                    )}
                     <TouchableOpacity style={styles.controlButton} onPress={onClose}>
                         <Ionicons name="close" size={26} color="#fff" />
                     </TouchableOpacity>
@@ -938,9 +1181,10 @@ const styles = StyleSheet.create({
         alignItems: 'center'
     },
     guideText: {
-        color: '#3B82F6',
+        color: '#40e0d0',
         fontSize: 14,
         fontWeight: '600',
+        textAlign: 'center',
         textShadowColor: 'rgba(0,0,0,0.8)',
         textShadowOffset: { width: 0, height: 1 },
         textShadowRadius: 3
@@ -948,6 +1192,132 @@ const styles = StyleSheet.create({
     guideTextSuccess: { color: '#FFD700' },
     errorText: { color: '#FF5722', fontSize: 11, marginTop: 4 },
 
+    // 수평선 아래 안내 배너
+    belowHorizonBanner: {
+        position: 'absolute',
+        top: SCREEN_HEIGHT / 2 - 60,
+        left: 30,
+        right: 30,
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        backgroundColor: 'rgba(0,0,0,0.6)',
+        borderRadius: 16,
+        padding: 20,
+        gap: 12,
+        borderWidth: 1,
+        borderColor: 'rgba(64,224,208,0.2)'
+    },
+    belowHorizonText: {
+        color: '#fff',
+        fontSize: 15,
+        fontWeight: '600',
+        lineHeight: 22
+    },
+
+    // 화면 밖 방향 화살표
+    edgeArrowContainer: {
+        position: 'absolute',
+        width: 48,
+        height: 48,
+        alignItems: 'center',
+        justifyContent: 'center'
+    },
+    edgeArrowText: {
+        color: '#40e0d0',
+        fontSize: 22,
+        fontWeight: '700',
+        textShadowColor: 'rgba(0,0,0,0.8)',
+        textShadowOffset: { width: 0, height: 1 },
+        textShadowRadius: 4
+    },
+    edgeArrowLabel: {
+        fontSize: 16,
+        marginTop: -4
+    },
+
+    // 정렬 진행 바
+    alignProgressBar: {
+        width: 120,
+        height: 3,
+        backgroundColor: 'rgba(64,224,208,0.15)',
+        borderRadius: 2,
+        marginTop: 8,
+        overflow: 'hidden'
+    },
+    alignProgressFill: {
+        width: '100%',
+        height: '100%',
+        backgroundColor: '#40e0d0',
+        borderRadius: 2
+    },
+
+    // 정렬 전 상태 안내 박스
+    guideStatusBox: {
+        position: 'absolute',
+        bottom: 220,
+        alignSelf: 'center',
+        backgroundColor: 'rgba(0,0,0,0.6)',
+        paddingHorizontal: 20,
+        paddingVertical: 12,
+        borderRadius: 20,
+        alignItems: 'center',
+        borderWidth: 1,
+        borderColor: 'rgba(100,200,255,0.15)'
+    },
+    guideStatusText: {
+        color: 'rgba(100,200,255,0.9)',
+        fontSize: 14,
+        fontWeight: '600',
+        textAlign: 'center'
+    },
+
+    // 센서 상태 배지
+    sensorBadge: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        backgroundColor: 'rgba(0,0,0,0.5)',
+        paddingHorizontal: 10,
+        paddingVertical: 6,
+        borderRadius: 14
+    },
+
+    // 방향 안내 텍스트 박스
+    directionInfoBox: {
+        position: 'absolute',
+        bottom: 160,
+        alignSelf: 'center',
+        backgroundColor: 'rgba(0,0,0,0.55)',
+        paddingHorizontal: 18,
+        paddingVertical: 10,
+        borderRadius: 20,
+        borderWidth: 1,
+        borderColor: 'rgba(255,255,255,0.15)'
+    },
+    directionInfoText: {
+        color: '#fff',
+        fontSize: 18,
+        fontWeight: '600',
+        letterSpacing: 1,
+        textAlign: 'center'
+    },
+
+    // 디버그 오버레이
+    debugOverlay: {
+        position: 'absolute',
+        top: 60,
+        left: 16,
+        backgroundColor: 'rgba(0,0,0,0.65)',
+        paddingHorizontal: 12,
+        paddingVertical: 8,
+        borderRadius: 10,
+    },
+    debugText: {
+        color: '#0f0',
+        fontSize: 12,
+        fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
+        lineHeight: 18,
+    },
     spacecraftMarker: {
         position: 'absolute',
         alignItems: 'center',
