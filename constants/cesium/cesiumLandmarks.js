@@ -5,7 +5,8 @@
 export const CESIUM_LANDMARKS = `
 
       // ─── NASA 3D 모델 URL (jsdelivr CDN) ───
-      var APOLLO_LM_GLB = 'https://cdn.jsdelivr.net/gh/nasa/NASA-3D-Resources@master/3D%20Models/Apollo%20Lunar%20Module/Apollo%20Lunar%20Module.glb';
+      var APOLLO_LM_GLB_CDN = 'https://cdn.jsdelivr.net/gh/nasa/NASA-3D-Resources@master/3D%20Models/Apollo%20Lunar%20Module/Apollo%20Lunar%20Module.glb';
+      var APOLLO_LM_GLB = (typeof window.APOLLO_LM_URI !== 'undefined' && window.APOLLO_LM_URI) ? window.APOLLO_LM_URI : APOLLO_LM_GLB_CDN;
       var ASTRONAUT_GLB = 'https://cdn.jsdelivr.net/gh/nasa/NASA-3D-Resources@master/3D%20Models/Astronaut/Astronaut.glb';
 
       var APOLLO_SITES = [
@@ -204,6 +205,7 @@ export const CESIUM_LANDMARKS = `
                   show: landingSitesVisible,
               });
               lmEntity._lmId = as.id + '_lm';
+              lmEntity._isApolloModel = true;
               apolloEntities.push(lmEntity);
 
               // Astronaut 모델
@@ -253,6 +255,7 @@ export const CESIUM_LANDMARKS = `
                       show: landingSitesVisible,
                   });
                   lrvEntity._lmId = as.id + '_lrv';
+              lrvEntity._isApolloModel = true;
                   apolloEntities.push(lrvEntity);
               }
           }

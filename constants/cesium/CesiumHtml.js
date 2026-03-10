@@ -7,13 +7,16 @@ import { CESIUM_GRID } from './cesiumGrid.js';
 import { CESIUM_MAPS } from './cesiumMaps.js';
 import { CESIUM_LANDMARKS } from './cesiumLandmarks.js';
 import { CESIUM_CONTROLS } from './cesiumControls.js';
+import { CESIUM_GRID_PL } from './cesiumGridPL.js';
+import { CESIUM_CONTROLS_PL } from './cesiumControlsPL.js';
 
 /**
  * Apollo LM GLB 로컬 URI를 주입하여 HTML 생성
  * @param {string} apolloModelUri - Asset.localUri (e.g. 'file:///...') 또는 빈 문자열 시 CDN fallback
  */
-export function createCesiumHtml(apolloModelUri) {
+export function createCesiumHtml(apolloModelUri, danuriModelUri) {
   const uriJson = JSON.stringify(apolloModelUri || '');
+  const danuriJson = JSON.stringify(danuriModelUri || '');
   return `<!DOCTYPE html>
 <html lang="ko">
 <head>
@@ -41,6 +44,7 @@ ${CESIUM_STYLES}
     };
     // Apollo LM GLB URI (로컬 파일 또는 CDN fallback)
     window.APOLLO_LM_URI = ${uriJson};
+    window.DANURI_GLB_URI = ${danuriJson};
   </script>
 </head>
 
@@ -57,6 +61,8 @@ ${CESIUM_INIT}
 ${CESIUM_GRID}
 ${CESIUM_MAPS}
 ${CESIUM_LANDMARKS}
+${CESIUM_GRID_PL}
+${CESIUM_CONTROLS_PL}
 ${CESIUM_CONTROLS}
   </script>
 </body>

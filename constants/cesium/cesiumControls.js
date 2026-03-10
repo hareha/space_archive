@@ -2,6 +2,9 @@
 // handleRNMessage, 클릭 핸들러, changeZoomLevel
 
 export const CESIUM_CONTROLS = `
+var selectLevel = 16; // 14, 15, 16 중 선택 레벨
+var occupiedTokens = []; // 점유된 셀 토큰 목록 (휘발성)
+
 function handleRNMessage(data) {
     try {
         let message = data;
@@ -19,14 +22,6 @@ function handleRNMessage(data) {
         if (message.type === 'TOGGLE_GRID') {
             showGrid = message.payload;
             if (gridPrimitives) gridPrimitives.show = showGrid;
-        }
-        if (message.type === 'TOGGLE_GRID_MODE') {
-            gridRenderMode = gridRenderMode === 'fill' ? 'line' : 'fill';
-            var btn = document.getElementById('gridModeToggle');
-            if (btn) btn.textContent = gridRenderMode === 'fill' ? '▦ 면' : '╬ 선';
-            lastRenderedDepth = 0;
-            parentPrimitives.removeAll();
-            render();
         }
         if (message.type === 'UPDATE_GRID_VISIBILITY') {
             updateGridVisibility(message.visible);
@@ -50,6 +45,43 @@ function handleRNMessage(data) {
         if (message.type === 'ZOOM_OUT') {
             changeZoomLevel(-1);
         }
+        if (message.type === 'SET_SELECT_LEVEL') {
+            selectLevel = message.payload.level || 16;
+            // 이미 3단계(16레벨 표시)면 re-render
+            var _lastId = selectionStack.length > 0 ? selectionStack[selectionStack.length - 1] : null;
+            if (_lastId && s2.cellid.level(_lastId) >= 12) {
+                render();
+            }
+        }
+        if (message.type === 'DESELECT_CELL') {
+            // 셀 선택만 해제, selectionStack 유지 → 격자 재렌더 + 카메라 복귀
+            render();
+            if (selectionStack.length > 0) {
+                flyToCell(selectionStack[selectionStack.length - 1]);
+            }
+        }
+        if (message.type === 'OCCUPY_CELLS') {
+            // 점유 확정: 토큰을 L16으로 전개하여 저장
+            var tokens = message.payload.tokens || [];
+            var lvl = message.payload.level || 16;
+            tokens.forEach(function(t) {
+                var cid = s2.cellid.fromToken(t);
+                if (lvl < 16) {
+                    var desc = getDescendants(cid, 16);
+                    desc.forEach(function(d) {
+                        var dt = s2.cellid.toToken(d);
+                        if (occupiedTokens.indexOf(dt) === -1) occupiedTokens.push(dt);
+                    });
+                } else {
+                    if (occupiedTokens.indexOf(t) === -1) occupiedTokens.push(t);
+                }
+            });
+            window.multiSelectedL16 = [];
+            render();
+        }
+        if (message.type === 'UPDATE_MAG_BALANCE') {
+            window.magBalance = message.payload.balance || 0;
+        }
         if (message.type === 'RESET_VIEW') {
             resetExplorer();
         }
@@ -70,6 +102,29 @@ function handleRNMessage(data) {
                 },
                 duration: 2.0
             });
+        }
+        if (message.type === 'SET_MODEL_URI') {
+            // GLB 모델 URI 동적 주입 (달 로드 후 나중에 도착)
+            if (message.model === 'apollo') {
+                window.APOLLO_LM_URI = message.uri;
+                APOLLO_LM_GLB = message.uri;
+                // 이미 렌더링된 Apollo 엔티티 모델 URI 업데이트
+                viewer.entities.values.forEach(function(entity) {
+                    if (entity.model && entity._isApolloModel) {
+                        entity.model.uri = new Cesium.ConstantProperty(message.uri);
+                    }
+                });
+                console.log('[Controls] Apollo GLB URI injected');
+            } else if (message.model === 'danuri') {
+                window.DANURI_GLB_URI = message.uri;
+                // 이미 렌더링된 Danuri 엔티티 모델 URI 업데이트
+                viewer.entities.values.forEach(function(entity) {
+                    if (entity.model && entity._isDanuriModel) {
+                        entity.model.uri = new Cesium.ConstantProperty(message.uri);
+                    }
+                });
+                console.log('[Controls] Danuri GLB URI injected');
+            }
         }
         if (message.type === 'LOAD_MINERAL_DATA') {
             loadMineralData(message.data, message.isFirst, message.isLast);
@@ -167,183 +222,251 @@ function handleRNMessage(data) {
     }
 }
 
-// === 표면 레이캐스팅 기반 클릭 핸들러 ===
+// === 클릭 핸들러 (드래그/줌과 탭 구분) ===
 const handler = new Cesium.ScreenSpaceEventHandler(viewer.scene.canvas);
+
+// 터치 시작 위치 저장 (드래그 vs 탭 구분용)
+var _touchStartPos = null;
+handler.setInputAction(function(movement) {
+    _touchStartPos = Cesium.Cartesian2.clone(movement.position);
+}, Cesium.ScreenSpaceEventType.LEFT_DOWN);
+
 handler.setInputAction((movement) => {
-    // 1. 위성 픽킹 (탐사 모드 + 위성 뷰)
-    const pickedObjects = viewer.scene.drillPick(movement.position);
-    let satellitePicked = false;
-    for (let i = 0; i < pickedObjects.length; i++) {
-        const pickedObject = pickedObjects[i];
-        if (Cesium.defined(pickedObject) && pickedObject.id && pickedObject.id.isSatellite) {
-            const sat = pickedObject.id;
-            highlightSatellite(sat.name);
+    // 드래그 vs 탭 구분: 시작점과 끝점 거리가 10px 이상이면 드래그로 간주
+    if (_touchStartPos) {
+        var dx = movement.position.x - _touchStartPos.x;
+        var dy = movement.position.y - _touchStartPos.y;
+        if (Math.sqrt(dx * dx + dy * dy) > 10) {
+            _touchStartPos = null;
+            return; // 드래그 → 무시
+        }
+    }
+    _touchStartPos = null;
+
+    // ─── 위성 모드 전용 ───
+    if (mainMode === 'exploration' && subMode === 'satellite') {
+        // 위성 찾기: scene.pick 으로 단순화
+        var picked = viewer.scene.pick(movement.position);
+        var satInfo = null;
+
+        if (Cesium.defined(picked)) {
+            // Billboard/Polyline/Label의 id에 isSatellite 플래그
+            if (picked.id && picked.id.isSatellite) {
+                satInfo = picked.id;
+            }
+            // 다누리 3D Entity 직접 클릭
+            if (!satInfo && picked.id && picked.id._isDanuriModel) {
+                // 다누리 Entity → KPLO로 매핑
+                satInfo = { name: 'KPLO', isSatellite: true };
+            }
+        }
+
+        // drillPick fallback (pick이 라벨을 못 잡을 수 있음)
+        if (!satInfo) {
+            var drilled = viewer.scene.drillPick(movement.position, 5);
+            for (var di = 0; di < drilled.length; di++) {
+                if (drilled[di].id && drilled[di].id.isSatellite) {
+                    satInfo = drilled[di].id;
+                    break;
+                }
+            }
+        }
+
+        if (satInfo) {
+            // 위성 선택!
+            highlightSatellite(satInfo.name);
             window.ReactNativeWebView.postMessage(JSON.stringify({
                 type: 'SATELLITE_SELECTED',
                 payload: {
-                    name: sat.name,
-                    speed: sat.speed || '알 수 없음',
-                    description: sat.description || ''
+                    name: satInfo.name,
+                    speed: satInfo.speed || '',
+                    description: satInfo.description || ''
                 }
             }));
-            satellitePicked = true;
-            break;
+
+            // trackedEntity로 카메라 고정
+            var trackTarget = null;
+            var satUpper = satInfo.name.toUpperCase();
+            if (_danuriEntities.length > 0 && (satUpper.indexOf('DANURI') !== -1 || satUpper.indexOf('KPLO') !== -1)) {
+                trackTarget = _danuriEntities[0];
+            }
+            if (!trackTarget && lastSatellitesData) {
+                for (var si = 0; si < lastSatellitesData.length; si++) {
+                    if (lastSatellitesData[si].name === satInfo.name && lastSatellitesData[si].position) {
+                        var sp = lastSatellitesData[si].position;
+                        trackTarget = viewer.entities.add({
+                            position: new Cesium.Cartesian3(sp.x * 1000, sp.y * 1000, sp.z * 1000),
+                            point: { pixelSize: 1, color: Cesium.Color.TRANSPARENT },
+                        });
+                        trackTarget._isTempTrack = true;
+                        break;
+                    }
+                }
+            }
+            if (trackTarget) {
+                trackTarget.viewFrom = new Cesium.Cartesian3(800, 800, 400);
+                viewer.trackedEntity = trackTarget;
+            }
+            return;
         }
-    }
 
-    if (satellitePicked) return;
-
-    if (mainMode === 'exploration' && subMode === 'satellite') {
+        // 빈 공간 탭 → 위성 해제
+        if (viewer.trackedEntity) {
+            var wasTemp = viewer.trackedEntity._isTempTrack;
+            var tempEnt = viewer.trackedEntity;
+            viewer.trackedEntity = undefined;
+            if (wasTemp) viewer.entities.remove(tempEnt);
+        }
         highlightSatellite(null);
         window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'SATELLITE_DESELECTED' }));
         return;
     }
 
-    // 2. 달 표면 좌표 얻기 (pickPosition fails on some mobile WebViews, use raycast)
-    let cartesian = viewer.scene.pickPosition(movement.position);
-
-    if (!Cesium.defined(cartesian)) {
-        const ray = viewer.camera.getPickRay(movement.position);
-        cartesian = viewer.scene.globe.pick(ray, viewer.scene);
-    }
-    if (!Cesium.defined(cartesian)) {
-        cartesian = viewer.camera.pickEllipsoid(movement.position, viewer.scene.globe.ellipsoid);
-    }
-
-    if (!Cesium.defined(cartesian)) return;
-
-    // Cartesian3 → S2 Point → 어떤 셀인지 계산
-    const s2Point = cesiumToS2Point(cartesian);
-    if (!s2Point) return;
-
-    // 점유 모드가 아니면 클릭 이벤트를 무시 (그리드 선택 불가)
+    // 2. 히트박스 기반 셀 선택 (scene.pick)
     if (mainMode !== 'occupation') return;
 
-    // 현재 활성 레벨에서 타겟 레벨 결정
+    var picked = viewer.scene.pick(movement.position);
+    if (!Cesium.defined(picked) || !picked.id) return;
+    var pickedCellId = picked.id;
+
     const lastCellId = selectionStack.length === 0 ? null : selectionStack[selectionStack.length - 1];
     const currentLevel = lastCellId ? s2.cellid.level(lastCellId) : 0;
 
-    if (currentLevel >= 16) {
-        // L16 이미 선택됨 — 최종 확정 메시지 전송
-        if (lastCellId) {
-            window.ReactNativeWebView.postMessage(JSON.stringify({
-                type: 'CELL_CONFIRMED',
-                payload: { token: s2.cellid.toToken(lastCellId), level: 16 }
-            }));
-        }
-        return;
-    }
 
-    const targetLevel = currentLevel + 4;
+    if (currentLevel >= 12) {
+        // 3단계: 4셀 단위 다중선택 (L15 그룹 고정)
+        var clickedL16 = pickedCellId;
+        var parentL15 = s2.cellid.parent(clickedL16, 15);
+        var selectedCells = getDescendants(parentL15, 16);
 
-    // 클릭한 좌표가 속하는 타겟 레벨 셀 찾기 (fromPoint는 leaf 반환)
-    try {
-        const leafCellId = s2.cellid.fromPoint(s2Point);
-        if (!leafCellId) return;
+        if (selectedCells.length === 0) return;
+        
+        var hasOccupied = selectedCells.some(function(cid) {
+            return occupiedTokens.indexOf(s2.cellid.toToken(cid)) !== -1;
+        });
+        if (hasOccupied) return;
 
-        const cellId = s2.cellid.parent(leafCellId, targetLevel);
-
-        // 유효성 검증: 현재 선택된 부모 안에 있는 셀인지 확인
-        if (lastCellId) {
-            const parentOfClicked = s2.cellid.parent(cellId, currentLevel);
-            if (s2.cellid.toToken(parentOfClicked) !== s2.cellid.toToken(lastCellId)) {
-                return; // 부모 영역 밖 클릭 무시
+        if (!window.multiSelectedL16) window.multiSelectedL16 = [];
+        var groupTokens = selectedCells.map(function(c) { return s2.cellid.toToken(c); });
+        // 이 그룹이 이미 선택되어 있는지 확인
+        var isAlreadySelected = groupTokens.every(function(t) {
+            return window.multiSelectedL16.indexOf(t) !== -1;
+        });
+        if (isAlreadySelected) {
+            // 토글 제거
+            groupTokens.forEach(function(t) {
+                var i = window.multiSelectedL16.indexOf(t);
+                if (i !== -1) window.multiSelectedL16.splice(i, 1);
+            });
+        } else {
+            // mag 초과 체크
+            var newTotal = window.multiSelectedL16.length + groupTokens.length;
+            var balance = (typeof window.magBalance !== 'undefined') ? window.magBalance : 40;
+            if (newTotal > balance) {
+                sendToRN('MAG_EXCEEDED', { needed: newTotal, balance: balance });
+                return;
             }
-        }
-
-        const lvl = s2.cellid.level(cellId);
-        if (lvl <= 0) return;
-
-        flashCell(cellId);
-        selectionStack.push(cellId);
-        render();
-        flyToCell(cellId);
-    } catch (e) {
-        return;
-    }
-}, Cesium.ScreenSpaceEventType.LEFT_CLICK);
-
-// --- 5단계 고정 줌 레벨 함수 ---
-function changeZoomLevel(direction) {
-    const newLevel = currentZoomLevel + direction;
-
-    if (newLevel < 0 || newLevel >= ZOOM_LEVELS.length) {
-        updateUI();
-        return;
-    }
-
-    currentZoomLevel = newLevel;
-    const targetHeight = ZOOM_LEVELS[currentZoomLevel].height;
-
-    const center = viewer.camera.pickEllipsoid(
-        new Cesium.Cartesian2(viewer.canvas.width / 2, viewer.canvas.height / 2),
-        moonEllipsoid
-    );
-
-    let targetPosition;
-
-    if (center) {
-        const normal = Cesium.Cartesian3.normalize(center, new Cesium.Cartesian3());
-        targetPosition = Cesium.Cartesian3.add(
-            center,
-            Cesium.Cartesian3.multiplyByScalar(normal, targetHeight, new Cesium.Cartesian3()),
-            new Cesium.Cartesian3()
-        );
-    } else {
-        const camPos = viewer.camera.position;
-        const normal = Cesium.Cartesian3.normalize(camPos, new Cesium.Cartesian3());
-        const surfacePoint = Cesium.Cartesian3.multiplyByScalar(normal, moonRadius, new Cesium.Cartesian3());
-        targetPosition = Cesium.Cartesian3.add(
-            surfacePoint,
-            Cesium.Cartesian3.multiplyByScalar(normal, targetHeight, new Cesium.Cartesian3()),
-            new Cesium.Cartesian3()
-        );
-    }
-
-    const startPosition = Cesium.Cartesian3.clone(viewer.camera.position);
-    const startHeading = viewer.camera.heading;
-    const startPitch = viewer.camera.pitch;
-    const targetPitch = Cesium.Math.toRadians(-90);
-    const duration = 1000;
-    let startTime = null;
-
-    function animate(timestamp) {
-        if (!startTime) startTime = timestamp;
-        const progress = (timestamp - startTime) / duration;
-
-        if (progress >= 1.0) {
-            viewer.camera.setView({
-                destination: targetPosition,
-                orientation: {
-                    heading: startHeading,
-                    pitch: targetPitch,
-                    roll: 0.0
+            // 중복 방지하면서 추가
+            groupTokens.forEach(function(t) {
+                if (window.multiSelectedL16.indexOf(t) === -1) {
+                    window.multiSelectedL16.push(t);
                 }
             });
+        }
+        if (window.multiSelectedL16.length === 0) {
+            sendToRN('CELL_DESELECTED', {});
+            render();
             return;
         }
-
-        const t = 1 - Math.pow(1 - progress, 3);
-
-        const currentPos = new Cesium.Cartesian3();
-        Cesium.Cartesian3.lerp(startPosition, targetPosition, t, currentPos);
-
-        const currentPitch = Cesium.Math.lerp(startPitch, targetPitch, t);
-
-        viewer.camera.setView({
-            destination: currentPos,
-            orientation: {
-                heading: startHeading,
-                pitch: currentPitch,
-                roll: 0.0
-            }
+        // 다중선택 정보 전송
+        var firstToken = window.multiSelectedL16[0];
+        var cc2 = s2.Cell.fromCellID(clickedL16).center();
+        var ccr2 = Math.sqrt(cc2.x**2+cc2.y**2+cc2.z**2);
+        sendToRN('CELL_SELECTED', {
+            cellId: firstToken, token: firstToken,
+            lat: parseFloat((Math.asin(cc2.z / ccr2) * 180 / Math.PI).toFixed(2)),
+            lng: parseFloat((Math.atan2(cc2.y, cc2.x) * 180 / Math.PI).toFixed(2)),
+            level: 15, childLevel: 16,
+            cellCount: window.multiSelectedL16.length,
+            unit: window.multiSelectedL16.length + ' Block = ' + window.multiSelectedL16.length + ' Mag',
+            magCount: window.multiSelectedL16.length,
+            price: '$' + window.multiSelectedL16.length,
+            area: '~' + (0.8 * window.multiSelectedL16.length).toFixed(1) + ' km²',
+            multiTokens: window.multiSelectedL16.slice(),
+            isMultiSelect: window.multiSelectedL16.length > 1
         });
+        if (!window.selectionPrimMap) window.selectionPrimMap = {};
 
-        requestAnimationFrame(animate);
+        if (isAlreadySelected) {
+            // 제거된 그룹만 primitive 삭제
+            groupTokens.forEach(function(tk) {
+                if (window.selectionPrimMap[tk]) {
+                    selectionPrimitives.remove(window.selectionPrimMap[tk]);
+                    delete window.selectionPrimMap[tk];
+                }
+            });
+        } else {
+            // 새 그룹만 primitive 추가
+            groupTokens.forEach(function(tk) {
+                if (window.selectionPrimMap[tk]) return; // 이미 있으면 스킵
+                var cid = s2.cellid.fromToken(tk);
+                var cell = s2.Cell.fromCellID(cid);
+                var positions = [];
+                for (var vi = 0; vi < 4; vi++) {
+                    var v = cell.vertex(vi);
+                    var vr = Math.sqrt(v.x ** 2 + v.y ** 2 + v.z ** 2);
+                    positions.push(Cesium.Cartesian3.fromRadians(
+                        Math.atan2(v.y, v.x), Math.asin(v.z / vr), 0, Cesium.Ellipsoid.MOON
+                    ));
+                }
+                var prim = selectionPrimitives.add(new Cesium.ClassificationPrimitive({
+                    geometryInstances: new Cesium.GeometryInstance({
+                        geometry: new Cesium.PolygonGeometry({
+                            polygonHierarchy: new Cesium.PolygonHierarchy(positions),
+                            ellipsoid: Cesium.Ellipsoid.MOON,
+                            height: -15000, extrudedHeight: 15000,
+                        }),
+                        attributes: { color: Cesium.ColorGeometryInstanceAttribute.fromColor(
+                            new Cesium.Color(0.15, 0.45, 0.95, 0.45)
+                        )}
+                    }),
+                    appearance: new Cesium.PerInstanceColorAppearance({ flat: true, translucent: true }),
+                    classificationType: Cesium.ClassificationType.CESIUM_3D_TILE,
+                    asynchronous: true,
+                }));
+                window.selectionPrimMap[tk] = prim;
+            });
+        }
+        return;
     }
 
-    requestAnimationFrame(animate);
-    updateUI();
+    // 0~2단계: 히트박스에서 직접 감지된 셀 사용
+    var cellId = pickedCellId;
+    var lvl = s2.cellid.level(cellId);
+    if (lvl <= 0) return;
+
+    // 프러스텀 컬링: 모든 보이는 셀 클릭 가능 (부모 범위 제한 제거)
+
+    flashCell(cellId);
+    selectionStack.push(cellId);
+    render();
+    flyToCell(cellId);
+}, Cesium.ScreenSpaceEventType.LEFT_CLICK);
+
+// --- 단순 줌 증감 함수 ---
+function changeZoomLevel(direction) {
+    var carto = Cesium.Cartographic.fromCartesian(viewer.camera.position, Cesium.Ellipsoid.MOON);
+    if (!carto) return;
+    var currentHeight = carto.height;
+    // 현재 고도의 40%만큼 이동 (방향 유지, 고도만 변경)
+    var moveAmount = currentHeight * 0.4;
+    if (direction > 0) {
+        // 줌인: 앞으로 이동
+        viewer.camera.moveForward(moveAmount);
+    } else {
+        // 줌아웃: 뒤로 이동
+        viewer.camera.moveBackward(moveAmount);
+    }
 }
 
 // ==== 모드 전환 헬퍼 함수 ====
@@ -352,18 +475,6 @@ function updateAppMode(payload) {
     mainMode = payload.mainMode;
     subMode = payload.subMode;
 
-    // 탐사 모드일 때 좌측 상단 "면/선" 전환 버튼 숨김
-    const gridModeBtn = document.getElementById('gridModeToggle');
-    if (gridModeBtn) {
-        gridModeBtn.style.display = mainMode === 'occupation' ? 'block' : 'none';
-    }
-
-    // 탐사 모드일 때 좌측 하단 디버그 패널(그리드 정보) 숨김
-    const debugPanel = document.getElementById('debugPanel');
-    if (debugPanel) {
-        debugPanel.style.display = mainMode === 'occupation' ? 'block' : 'none';
-    }
-
     // 탐사 <-> 점유 모드 상호 전환 시 카메라 뷰 완전 초기화
     if (oldMainMode && oldMainMode !== mainMode) {
         viewer.camera.cancelFlight();
@@ -371,6 +482,10 @@ function updateAppMode(payload) {
         // 모드 전환 시 이전 모드의 잔여물(예: 위성 궤적) 완벽히 초기화
         if (typeof satellitePrimitives !== 'undefined') {
             satellitePrimitives.removeAll();
+        }
+        if (typeof _danuriEntities !== 'undefined') {
+            _danuriEntities.forEach(function(e) { viewer.entities.remove(e); });
+            _danuriEntities = [];
         }
         if (typeof highlightSatellite === 'function') {
             highlightSatellite(null);
@@ -392,7 +507,7 @@ function updateAppMode(payload) {
     viewer.scene.screenSpaceCameraController.enableRotate = true;
     viewer.scene.screenSpaceCameraController.enableTranslate = true;
     viewer.scene.screenSpaceCameraController.enableZoom = true;
-    viewer.scene.screenSpaceCameraController.enableTilt = false; // 틸트 항상 잠금
+    viewer.scene.screenSpaceCameraController.enableTilt = true; // 틸트 잠금 해제
     viewer.scene.screenSpaceCameraController.enableLook = true;
 
     // 일인칭 컨트롤러 이벤트 제거
@@ -415,7 +530,15 @@ function updateAppMode(payload) {
     }
 
     if (mainMode === 'occupation') {
-        // 점유 모드: 기존 자유 탐색 (그리드 표시)
+        // 점유 모드: 그리드 활성화 + 렌더링
+        showGrid = true;
+        if (typeof gridPrimitives !== 'undefined' && gridPrimitives) gridPrimitives.show = true;
+        if (typeof pillarPrimitives !== 'undefined' && pillarPrimitives) pillarPrimitives.show = true;
+        if (typeof parentPrimitives !== 'undefined' && parentPrimitives) parentPrimitives.show = true;
+        if (typeof flashPrimitives !== 'undefined' && flashPrimitives) flashPrimitives.show = true;
+        // RN 측에 그리드 상태 동기화
+        sendToRN('GRID_VISIBILITY_CHANGED', { visible: true });
+        render();
     } else {
         // 탐사 모드
         if (typeof gridPrimitives !== 'undefined' && gridPrimitives) gridPrimitives.show = false;
@@ -425,7 +548,7 @@ function updateAppMode(payload) {
 
         if (subMode === 'satellite') {
             // 위성 뷰: 틸팅 비활성화, 화면에 달이 절반만 찰 정도로 아주 멀리 줌 아웃 (2만 km 고도)
-            viewer.scene.screenSpaceCameraController.enableTilt = false;
+            viewer.scene.screenSpaceCameraController.enableTilt = true;
             viewer.scene.screenSpaceCameraController.enableLook = false;
             let carto = viewer.camera.positionCartographic;
             const newPos = Cesium.Cartesian3.fromRadians(carto.longitude, carto.latitude, 20000000, Cesium.Ellipsoid.MOON);
@@ -437,7 +560,7 @@ function updateAppMode(payload) {
             }
         } else if (subMode === 'space') {
             // 우주 뷰: 틸팅 비활성화, 줌/회전만 가능
-            viewer.scene.screenSpaceCameraController.enableTilt = false;
+            viewer.scene.screenSpaceCameraController.enableTilt = true;
             viewer.scene.screenSpaceCameraController.enableLook = false;
 
             // 만약 1인칭이었다가 돌아왔다면 고도를 좀 높여줌
@@ -472,7 +595,7 @@ function updateAppMode(payload) {
                     viewer.scene.screenSpaceCameraController.enableRotate = false;
                     viewer.scene.screenSpaceCameraController.enableTranslate = false;
                     viewer.scene.screenSpaceCameraController.enableZoom = false; // 기본 줌 불가 (추후 전진/후진 터치로)
-                    viewer.scene.screenSpaceCameraController.enableTilt = false;
+                    viewer.scene.screenSpaceCameraController.enableTilt = true;
                     viewer.scene.screenSpaceCameraController.enableLook = true;
 
                     // 터치 드래그로 Camera Look 방향 변경 핸들러 추가
@@ -590,10 +713,15 @@ _hctx.stroke();
 var _hexDataUrl = _hexCanvas.toDataURL();
 
 // ==== 위성 데이터 렌더링 ====
+var _danuriEntities = [];
 function drawSatelliteData(satellites) {
     if (typeof satellitePrimitives === 'undefined') return;
     lastSatellitesData = satellites;
     satellitePrimitives.removeAll();
+
+    // 이전 다누리 3D 모델 정리
+    _danuriEntities.forEach(function(e) { viewer.entities.remove(e); });
+    _danuriEntities = [];
 
     var labels = satellitePrimitives.add(new Cesium.LabelCollection());
     var billboards = satellitePrimitives.add(new Cesium.BillboardCollection());
@@ -668,12 +796,45 @@ function drawSatelliteData(satellites) {
                 verticalOrigin: Cesium.VerticalOrigin.CENTER,
                 disableDepthTestDistance: Number.POSITIVE_INFINITY
             });
+
+            // 다누리호 3D 모델
+            var satNameUpper = sat.name.toUpperCase();
+            if ((satNameUpper.indexOf('DANURI') !== -1 || satNameUpper.indexOf('KPLO') !== -1) && window.DANURI_GLB_URI) {
+                var danuriEntity = viewer.entities.add({
+                    position: pos,
+                    model: {
+                        uri: window.DANURI_GLB_URI,
+                        scale: 500,
+                        minimumPixelSize: 32,
+                        maximumScale: 50000,
+                        silhouetteColor: Cesium.Color.fromCssColorString('#60A5FA'),
+                        silhouetteSize: 1.5,
+                    },
+                });
+                danuriEntity._isDanuriModel = true;
+                _danuriEntities.push(danuriEntity);
+            }
         }
     });
 }
 
 // --- 초기 렌더링 ---
 render();
+
+// --- 초기화 완료: 메시지 큐 리플레이 ---
+window._initComplete = true;
+document.removeEventListener('message', _earlyMessageHandler);
+window.removeEventListener('message', _earlyMessageHandler);
+if (window._messageQueue.length > 0) {
+    console.log('[Queue] Replaying', window._messageQueue.length, 'buffered messages');
+    window._messageQueue.forEach(function(msgData) {
+        var evt = new MessageEvent('message', { data: msgData });
+        document.dispatchEvent(evt);
+    });
+    window._messageQueue = [];
+}
+console.log('[Init] initMoon() fully complete');
+
     } // end of initMoon
 
 // Start initialization

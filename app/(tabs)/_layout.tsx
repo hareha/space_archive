@@ -1,30 +1,24 @@
 import React from 'react';
-import { Link, Tabs } from 'expo-router';
-import { Pressable } from 'react-native';
-import { FontAwesome } from '@expo/vector-icons';
-import { useColorScheme } from '@/components/useColorScheme';
-import Colors from '../../constants/Colors';
-
-function TabBarIcon(props: {
-    name: React.ComponentProps<typeof FontAwesome>['name'];
-    color: string;
-}) {
-    return <FontAwesome size={28} style={{ marginBottom: -3 }} {...props} />;
-}
+import { Tabs } from 'expo-router';
+import { FontAwesome, Ionicons } from '@expo/vector-icons';
 
 export default function TabLayout() {
-    const colorScheme = useColorScheme();
 
     return (
         <Tabs
             screenOptions={{
-                tabBarActiveTintColor: '#3B82F6',
-                tabBarInactiveTintColor: '#666',
+                tabBarActiveTintColor: '#1A1A1A',
+                tabBarInactiveTintColor: '#ACACAC',
                 tabBarStyle: {
-                    backgroundColor: '#0B0B15',
-                    borderTopColor: 'rgba(255,255,255,0.1)',
+                    backgroundColor: '#FFFFFF',
+                    borderTopColor: '#E5E5E5',
+                    borderTopWidth: 1,
                     height: 90,
-                    paddingVertical: 10,
+                    paddingVertical: 8,
+                },
+                tabBarLabelStyle: {
+                    fontSize: 11,
+                    fontWeight: '500',
                 },
                 headerShown: false,
             }}>
@@ -32,22 +26,29 @@ export default function TabLayout() {
                 name="index"
                 options={{
                     title: '인사이트',
-                    tabBarIcon: ({ color }) => <TabBarIcon name="newspaper-o" color={color} />,
+                    tabBarIcon: ({ color, size }) => <Ionicons name="document-text-outline" size={22} color={color} />,
                 }}
             />
             <Tabs.Screen
                 name="moon"
                 options={{
-                    title: 'Moon 3D',
-                    tabBarIcon: ({ color }) => <TabBarIcon name="globe" color={color} />,
+                    title: '홈',
+                    tabBarIcon: ({ color, size }) => <Ionicons name="home-outline" size={22} color={color} />,
+                }}
+            />
+            <Tabs.Screen
+                name="mypage"
+                options={{
+                    title: '마이페이지',
+                    tabBarIcon: ({ color, size }) => <Ionicons name="person-outline" size={22} color={color} />,
                 }}
             />
             <Tabs.Screen
                 name="two"
                 options={{
-                    href: null, // Hide tab two
+                    href: null,
                 }}
             />
-        </Tabs >
+        </Tabs>
     );
 }

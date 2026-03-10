@@ -9,6 +9,23 @@ export const CESIUM_INIT = `
     // --- CESIUM TOKEN ---
     Cesium.Ion.defaultAccessToken = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJqdGkiOiI3MjNhYjIzZi0wMWU5LTQzOTEtODY3Ni1kY2JkNTEyMmE2NTgiLCJpZCI6Mzc2MDQ4LCJpYXQiOjE3Njc4MzYyNTR9.K6HpEEiCNNlC8AzsTe3zuuGtcg9AJKEAnt8mA2MIoMg';
 
+    // ═══ 글로벌 메시지 큐 ═══
+    // initMoon()이 완료되기 전에 도착하는 postMessage를 버퍼링
+    window._messageQueue = [];
+    window._initComplete = false;
+    function _earlyMessageHandler(event) {
+        if (window._initComplete) return; // 이미 초기화 완료됨
+        try {
+            var data = typeof event.data === 'string' ? JSON.parse(event.data) : event.data;
+            if (data && data.type) {
+                console.log('[Queue] Buffered early message:', data.type);
+                window._messageQueue.push(event.data);
+            }
+        } catch(e) {}
+    }
+    document.addEventListener('message', _earlyMessageHandler);
+    window.addEventListener('message', _earlyMessageHandler);
+
     async function initMoon() {
       const moonEllipsoid = Cesium.Ellipsoid.MOON;
       const moonRadius = moonEllipsoid.maximumRadius;
@@ -67,14 +84,17 @@ export const CESIUM_INIT = `
       
       viewer.scene.screenSpaceCameraController.maximumMovementRatio = 15.0;
       // 카메라 틸트(상하 회전) 잠금 — 모든 모드에서 적용
-      viewer.scene.screenSpaceCameraController.enableTilt = false;
+      viewer.scene.screenSpaceCameraController.enableTilt = true;
       viewer.scene.globe.show = false;
 
       let moonTileset;
+      window.tilesetReady = false;
       try {
         const resource = await Cesium.IonResource.fromAssetId(2684829);
         moonTileset = await Cesium.Cesium3DTileset.fromUrl(resource);
         viewer.scene.primitives.add(moonTileset);
+        window.tilesetReady = true;
+        console.log('[Init] Moon tileset loaded, tilesetReady = true');
         if (showTempMap) moonTileset.show = false;
         viewer.camera.flyToBoundingSphere(moonTileset.boundingSphere, { duration: 0 });
 
@@ -264,10 +284,6 @@ export const CESIUM_INIT = `
         }
 
         // ─── 기본이 탐사모드이므로 점유모드 전용 UI 숨김 ───
-        var _gridToggle = document.getElementById('gridModeToggle');
-        if (_gridToggle) _gridToggle.style.display = 'none';
-        var _dbgPanel = document.getElementById('debugPanel');
-        if (_dbgPanel) _dbgPanel.style.display = 'none';
 
       } catch (error) {
         console.error('Moon tileset 로드 실패:', error);
@@ -290,6 +306,7 @@ export const CESIUM_INIT = `
       const pillarPrimitives = viewer.scene.primitives.add(new Cesium.PrimitiveCollection());
       const parentPrimitives = viewer.scene.primitives.add(new Cesium.PrimitiveCollection());
       const flashPrimitives = viewer.scene.primitives.add(new Cesium.PrimitiveCollection());
+      const selectionPrimitives = viewer.scene.primitives.add(new Cesium.PrimitiveCollection());
       const satellitePrimitives = viewer.scene.primitives.add(new Cesium.PrimitiveCollection());
       const FIXED_HEIGHT = 10000;
       let lastRenderedDepth = 0;
@@ -332,21 +349,22 @@ export const CESIUM_INIT = `
         );
       }
       
-      // Cesium Cartesian3 → S2 Point (단순 정규화)
+      // Cesium Cartesian3 → S2 Point (Cartographic 경유, 지형 높이 무시)
       function cesiumToS2Point(cartesian) {
         if (!cartesian) return null;
         
-        const magnitude = Math.sqrt(
-          cartesian.x * cartesian.x + 
-          cartesian.y * cartesian.y + 
-          cartesian.z * cartesian.z
-        );
+        // Cartesian3 → Cartographic (MOON 타원체 기준 위경도 추출)
+        const carto = Cesium.Cartographic.fromCartesian(cartesian, Cesium.Ellipsoid.MOON);
+        if (!carto) return null;
         
-        if (magnitude === 0) return null;
+        const lon = carto.longitude; // radians
+        const lat = carto.latitude;  // radians
         
-        const x = cartesian.x / magnitude;
-        const y = cartesian.y / magnitude;
-        const z = cartesian.z / magnitude;
+        // 위경도 → 단위 구 좌표 (S2 Point)
+        const cosLat = Math.cos(lat);
+        const x = cosLat * Math.cos(lon);
+        const y = cosLat * Math.sin(lon);
+        const z = Math.sin(lat);
         
         return new s2.Point(x, y, z);
       }
@@ -374,7 +392,7 @@ export const CESIUM_INIT = `
             historyLength: selectionStack.length,
             selectedCellId: lastCellId ? s2.cellid.toToken(lastCellId) : null
         });
-        sendToRN('DEPTH_CHANGED', { canGoBack: selectionStack.length > 0 });
+        sendToRN('DEPTH_CHANGED', { canGoBack: selectionStack.length > 0, depth: selectionStack.length });
         sendToRN('ZOOM_LEVEL_CHANGED', {
             currentLevel: currentZoomLevel,
             maxLevel: ZOOM_LEVELS.length - 1,
@@ -390,6 +408,8 @@ export const CESIUM_INIT = `
         parentPrimitives.removeAll();
         render();
         pillarPrimitives.removeAll();
+        selectionPrimitives.removeAll();
+        window.selectionPrimMap = {};
         updateUI();
         sendToRN('CELL_DESELECTED', {});
         if(moonTileset) viewer.camera.flyToBoundingSphere(moonTileset.boundingSphere, { duration: 1.0 });
@@ -397,6 +417,7 @@ export const CESIUM_INIT = `
 
       function goBack() {
         if (selectionStack.length === 0) return;
+        window.multiSelectedL16 = [];
         var wasBlockLevel = s2.cellid.level(selectionStack[selectionStack.length - 1]) >= 15;
         selectionStack.pop();
         lastRenderedDepth = 0;

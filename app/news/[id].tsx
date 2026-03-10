@@ -1,17 +1,15 @@
 import { useLocalSearchParams, useRouter, Stack } from 'expo-router';
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity, SafeAreaView, StatusBar } from 'react-native';
 import { Image } from 'expo-image';
-import { FontAwesome, Ionicons } from '@expo/vector-icons';
-import { NEWS_DATA, SCRAPPED_NEWS } from '@/constants/MockData';
+import { Ionicons } from '@expo/vector-icons';
+import { NEWS_DATA, SCRAPPED_NEWS, NewsItem } from '@/constants/MockData';
 
 export default function NewsDetailScreen() {
     const { id } = useLocalSearchParams();
     const router = useRouter();
 
-    // ID로 뉴스 데이터 찾기 (MockData 사용)
-    // id가 문자열로 넘어오므로 처리가 필요할 수 있음. MockData의 id는 숫자일 수도 있음.
-    // NEWS_DATA와 SCRAPPED_NEWS 모두 검색
-    const newsItem = NEWS_DATA.find(item => item.id.toString() === id) ||
+    const newsItem: NewsItem | undefined =
+        NEWS_DATA.find(item => item.id.toString() === id) ||
         SCRAPPED_NEWS.find(item => item.id.toString() === id);
 
     if (!newsItem) {
@@ -19,7 +17,7 @@ export default function NewsDetailScreen() {
             <SafeAreaView style={styles.container}>
                 <View style={styles.header}>
                     <TouchableOpacity onPress={() => router.back()} style={styles.backButton}>
-                        <Ionicons name="arrow-back" size={24} color="#fff" />
+                        <Ionicons name="chevron-back" size={24} color="#1A1A1A" />
                     </TouchableOpacity>
                 </View>
                 <View style={styles.errorContainer}>
@@ -29,71 +27,80 @@ export default function NewsDetailScreen() {
         );
     }
 
+    const handleExplore = () => {
+        if (!newsItem.location) return;
+        // Moon 3D 탭으로 이동하면서 위경도 정보를 전달
+        router.push({
+            pathname: '/moon',
+            params: {
+                flyToLat: newsItem.location.lat.toString(),
+                flyToLng: newsItem.location.lng.toString(),
+                flyToName: newsItem.location.name,
+            },
+        });
+    };
+
     return (
         <SafeAreaView style={styles.container}>
             <Stack.Screen options={{ headerShown: false }} />
-            <StatusBar barStyle="light-content" />
-            <ScrollView contentContainerStyle={styles.scrollContent}>
+            <StatusBar barStyle="dark-content" />
 
-                {/* Header (Back Button) */}
-                <View style={styles.header}>
-                    <TouchableOpacity onPress={() => router.back()} style={styles.backButton}>
-                        <Ionicons name="arrow-back" size={24} color="#fff" />
+            {/* ── 헤더 ── */}
+            <View style={styles.header}>
+                <TouchableOpacity onPress={() => router.back()} style={styles.backButton}>
+                    <Ionicons name="chevron-back" size={24} color="#1A1A1A" />
+                </TouchableOpacity>
+                <Text style={styles.headerTitle}>인사이트</Text>
+                <View style={styles.headerActions}>
+                    <TouchableOpacity style={styles.actionButton}>
+                        <Ionicons name="bookmark-outline" size={22} color="#1A1A1A" />
                     </TouchableOpacity>
-                    <View style={styles.headerActions}>
-                        <TouchableOpacity style={styles.actionButton}>
-                            <Ionicons name="share-outline" size={24} color="#fff" />
-                        </TouchableOpacity>
-                        <TouchableOpacity style={styles.actionButton}>
-                            <Ionicons name="bookmark-outline" size={24} color="#fff" />
-                        </TouchableOpacity>
-                    </View>
+                    <TouchableOpacity style={styles.actionButton}>
+                        <Ionicons name="share-outline" size={22} color="#1A1A1A" />
+                    </TouchableOpacity>
                 </View>
+            </View>
 
-                {/* Category & Date */}
-                <View style={styles.metaInfo}>
-                    <View style={styles.categoryChip}>
-                        <Text style={styles.categoryText}>{newsItem.category}</Text>
-                    </View>
-                    <Text style={styles.dateText}>{newsItem.date}</Text>
-                </View>
+            <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
 
-                {/* Title */}
+                {/* ① 제목 */}
                 <Text style={styles.title}>{newsItem.title}</Text>
 
-                {/* Image */}
-                {/* Image */}
+                {/* 출처 · 날짜 */}
+                <View style={styles.metaRow}>
+                    <Text style={styles.source}>{newsItem.source}</Text>
+                    <Text style={styles.metaDot}>•</Text>
+                    <Text style={styles.publishDate}>{newsItem.publishDate}</Text>
+                </View>
+
+                {/* 대표 이미지 */}
                 <View style={styles.imageContainer}>
-                    <Image source={{ uri: newsItem.imageUrl }} style={styles.image} contentFit="cover" transition={300} />
+                    <Image
+                        source={{ uri: newsItem.imageUrl }}
+                        style={styles.image}
+                        contentFit="cover"
+                        transition={300}
+                    />
                 </View>
 
-                {/* Summary (Lead) */}
-                <Text style={styles.summary}>{newsItem.summary}</Text>
-
-                {/* Divider */}
-                <View style={styles.divider} />
-
-                {/* Dummy Content */}
-                <View style={styles.contentContainer}>
-                    <Text style={styles.contentParagraph}>
-                        (이 기사는 더미 텍스트로 구성되어 있습니다. 실제 기사 내용이 들어갈 자리입니다.)
-                    </Text>
-                    <Text style={styles.contentParagraph}>
-                        루나 게이트웨이 정거장 건설이 본격화되면서 달 궤도 경제권에 대한 기대감이 고조되고 있습니다.
-                        이번 프로젝트는 단순한 정거장 건설을 넘어, 인류가 심우주로 나아가는 중요한 교두보 역할을 할 것입니다.
-                        특히 민간 기업들의 참여가 두드러지면서 우주 산업 생태계가 빠르게 확장되고 있습니다.
-                    </Text>
-                    <Text style={styles.contentParagraph}>
-                        전문가들은 이번 성과가 향후 10년 내 달 거주지 건설의 초석이 될 것이라고 입을 모으고 있습니다.
-                        에너지, 자원 채굴, 그리고 우주 관광에 이르기까지 다양한 분야에서 새로운 기회가 창출될 것으로 예상됩니다.
-                        하지만 기술적 난제와 막대한 비용 문제는 여전히 해결해야 할 과제로 남아있습니다.
-                    </Text>
-                    <Text style={styles.contentParagraph}>
-                        QiHomeworld를 비롯한 선도 기업들은 지속 가능한 달 개발을 위해 현지 자원 활용(ISRU) 기술 개발에 박차를 가하고 있습니다.
-                        달의 표토에서 산소와 물을 추출하고, 건축 자재를 생산하는 기술은 달 기지 건설의 핵심이 될 것입니다.
-                    </Text>
+                {/* 본문 */}
+                <View style={styles.bodyContainer}>
+                    {newsItem.body.map((paragraph, index) => (
+                        <Text key={index} style={styles.bodyParagraph}>
+                            {paragraph}
+                        </Text>
+                    ))}
                 </View>
 
+                {/* ② 탐사 연결 액션 */}
+                {newsItem.location && (
+                    <TouchableOpacity style={styles.exploreButton} onPress={handleExplore} activeOpacity={0.7}>
+                        <Text style={styles.exploreText}>이 지점 탐사 하기</Text>
+                        <Ionicons name="arrow-forward" size={18} color="#1A1A1A" />
+                    </TouchableOpacity>
+                )}
+
+                <View style={{ height: 60 }} />
             </ScrollView>
         </SafeAreaView>
     );
@@ -102,102 +109,119 @@ export default function NewsDetailScreen() {
 const styles = StyleSheet.create({
     container: {
         flex: 1,
-        backgroundColor: '#0B0B15',
+        backgroundColor: '#FFFFFF',
     },
-    scrollContent: {
-        paddingBottom: 40,
-    },
+
+    // ── 헤더 ──
     header: {
         flexDirection: 'row',
-        justifyContent: 'space-between',
         alignItems: 'center',
-        paddingHorizontal: 20,
+        justifyContent: 'space-between',
+        paddingHorizontal: 16,
         paddingVertical: 10,
+        borderBottomWidth: 1,
+        borderBottomColor: '#F0F0F0',
     },
     backButton: {
-        padding: 8,
-        borderRadius: 20,
-        backgroundColor: 'rgba(255,255,255,0.1)',
+        padding: 4,
+    },
+    headerTitle: {
+        fontSize: 16,
+        fontWeight: '600',
+        color: '#1A1A1A',
     },
     headerActions: {
         flexDirection: 'row',
+        gap: 12,
     },
     actionButton: {
-        padding: 8,
-        marginLeft: 10,
-        borderRadius: 20,
-        backgroundColor: 'rgba(255,255,255,0.1)',
+        padding: 4,
     },
+
+    // ── 에러 ──
     errorContainer: {
         flex: 1,
         justifyContent: 'center',
         alignItems: 'center',
     },
     errorText: {
-        color: '#fff',
+        color: '#999',
         fontSize: 16,
     },
-    metaInfo: {
-        flexDirection: 'row',
-        alignItems: 'center',
+
+    scrollContent: {
         paddingHorizontal: 24,
-        marginTop: 20,
+        paddingTop: 24,
+    },
+
+    // ── 제목 ──
+    title: {
+        fontSize: 22,
+        fontWeight: '700',
+        color: '#1A1A1A',
+        lineHeight: 32,
         marginBottom: 12,
     },
-    categoryChip: {
-        backgroundColor: '#2563EB',
-        paddingHorizontal: 12,
-        paddingVertical: 4,
-        borderRadius: 12,
-        marginRight: 10,
-    },
-    categoryText: {
-        color: '#fff',
-        fontSize: 12,
-        fontWeight: 'bold',
-    },
-    dateText: {
-        color: '#888',
-        fontSize: 12,
-    },
-    title: {
-        fontSize: 24,
-        fontWeight: 'bold',
-        color: '#fff',
-        lineHeight: 34,
-        paddingHorizontal: 24,
+
+    // ── 출처 · 날짜 ──
+    metaRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
         marginBottom: 20,
     },
+    source: {
+        fontSize: 13,
+        color: '#999',
+    },
+    metaDot: {
+        fontSize: 13,
+        color: '#CCC',
+        marginHorizontal: 8,
+    },
+    publishDate: {
+        fontSize: 13,
+        color: '#999',
+    },
+
+    // ── 이미지 ──
     imageContainer: {
-        width: '100%',
-        height: 250,
+        borderRadius: 12,
+        overflow: 'hidden',
         marginBottom: 24,
     },
     image: {
         width: '100%',
-        height: '100%',
+        height: 220,
+        backgroundColor: '#E5E5E5',
     },
-    summary: {
-        fontSize: 18,
-        color: '#ddd',
-        lineHeight: 28,
-        fontWeight: '600',
-        paddingHorizontal: 24,
-        marginBottom: 20,
-    },
-    divider: {
-        height: 1,
-        backgroundColor: '#333',
-        marginHorizontal: 24,
+
+    // ── 본문 ──
+    bodyContainer: {
         marginBottom: 24,
     },
-    contentContainer: {
-        paddingHorizontal: 24,
-    },
-    contentParagraph: {
-        fontSize: 16,
-        color: '#bbb',
+    bodyParagraph: {
+        fontSize: 15,
+        color: '#333',
         lineHeight: 26,
-        marginBottom: 20,
+        marginBottom: 16,
+        letterSpacing: -0.2,
+    },
+
+    // ── 탐사 연결 버튼 ──
+    exploreButton: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        backgroundColor: '#F5F5F5',
+        borderRadius: 12,
+        paddingHorizontal: 20,
+        paddingVertical: 16,
+        borderWidth: 1,
+        borderColor: '#E8E8E8',
+    },
+    exploreText: {
+        fontSize: 15,
+        fontWeight: '600',
+        color: '#1A1A1A',
     },
 });
