@@ -50,14 +50,25 @@ function handleRNMessage(data) {
             // 이미 3단계(16레벨 표시)면 re-render
             var _lastId = selectionStack.length > 0 ? selectionStack[selectionStack.length - 1] : null;
             if (_lastId && s2.cellid.level(_lastId) >= 12) {
-                render();
+                if (mainMode === 'occupation2') {
+                    renderPolyline();
+                } else {
+                    render();
+                }
             }
         }
         if (message.type === 'DESELECT_CELL') {
             // 셀 선택만 해제, selectionStack 유지 → 격자 재렌더 + 카메라 복귀
-            render();
-            if (selectionStack.length > 0) {
-                flyToCell(selectionStack[selectionStack.length - 1]);
+            if (mainMode === 'occupation2') {
+                renderPolyline();
+                if (selectionStack.length > 0) {
+                    flyToCellPL(selectionStack[selectionStack.length - 1]);
+                }
+            } else {
+                render();
+                if (selectionStack.length > 0) {
+                    flyToCell(selectionStack[selectionStack.length - 1]);
+                }
             }
         }
         if (message.type === 'OCCUPY_CELLS') {
@@ -67,7 +78,7 @@ function handleRNMessage(data) {
             tokens.forEach(function(t) {
                 var cid = s2.cellid.fromToken(t);
                 if (lvl < 16) {
-                    var desc = getDescendants(cid, 16);
+                    var desc = (mainMode === 'occupation2') ? getDescendantsPL(cid, 16) : getDescendants(cid, 16);
                     desc.forEach(function(d) {
                         var dt = s2.cellid.toToken(d);
                         if (occupiedTokens.indexOf(dt) === -1) occupiedTokens.push(dt);
@@ -77,7 +88,11 @@ function handleRNMessage(data) {
                 }
             });
             window.multiSelectedL16 = [];
-            render();
+            if (mainMode === 'occupation2') {
+                renderPolyline();
+            } else {
+                render();
+            }
         }
         if (message.type === 'UPDATE_MAG_BALANCE') {
             window.magBalance = message.payload.balance || 0;
@@ -530,21 +545,29 @@ function updateAppMode(payload) {
     }
 
     if (mainMode === 'occupation') {
-        // 점유 모드: 그리드 활성화 + 렌더링
+        // 점유 모드(모드1): 오리지널 그리드 활성화, PL 그리드 숨김
         showGrid = true;
         if (typeof gridPrimitives !== 'undefined' && gridPrimitives) gridPrimitives.show = true;
         if (typeof pillarPrimitives !== 'undefined' && pillarPrimitives) pillarPrimitives.show = true;
         if (typeof parentPrimitives !== 'undefined' && parentPrimitives) parentPrimitives.show = true;
         if (typeof flashPrimitives !== 'undefined' && flashPrimitives) flashPrimitives.show = true;
-        // RN 측에 그리드 상태 동기화
+        if (typeof plGridPrimitives !== 'undefined' && plGridPrimitives) plGridPrimitives.show = false;
         sendToRN('GRID_VISIBILITY_CHANGED', { visible: true });
         render();
-    } else {
-        // 탐사 모드
+    } else if (mainMode === 'occupation2') {
+        // 점유 모드(모드2): 모드1 그리드 숨기기, PL은 cesiumControlsPL.js가 독립 관리
         if (typeof gridPrimitives !== 'undefined' && gridPrimitives) gridPrimitives.show = false;
         if (typeof pillarPrimitives !== 'undefined' && pillarPrimitives) pillarPrimitives.show = false;
         if (typeof parentPrimitives !== 'undefined' && parentPrimitives) parentPrimitives.show = false;
         if (typeof flashPrimitives !== 'undefined' && flashPrimitives) flashPrimitives.show = false;
+        if (typeof plGridPrimitives !== 'undefined' && plGridPrimitives) plGridPrimitives.show = true;
+    } else {
+        // 탐사 모드: 모든 그리드 숨기기
+        if (typeof gridPrimitives !== 'undefined' && gridPrimitives) gridPrimitives.show = false;
+        if (typeof pillarPrimitives !== 'undefined' && pillarPrimitives) pillarPrimitives.show = false;
+        if (typeof parentPrimitives !== 'undefined' && parentPrimitives) parentPrimitives.show = false;
+        if (typeof flashPrimitives !== 'undefined' && flashPrimitives) flashPrimitives.show = false;
+        if (typeof plGridPrimitives !== 'undefined' && plGridPrimitives) plGridPrimitives.show = false;
 
         if (subMode === 'satellite') {
             // 위성 뷰: 틸팅 비활성화, 화면에 달이 절반만 찰 정도로 아주 멀리 줌 아웃 (2만 km 고도)

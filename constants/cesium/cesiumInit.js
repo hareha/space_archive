@@ -406,10 +406,17 @@ export const CESIUM_INIT = `
         currentZoomLevel = 0;
         lastRenderedDepth = 0;
         parentPrimitives.removeAll();
-        render();
         pillarPrimitives.removeAll();
         selectionPrimitives.removeAll();
         window.selectionPrimMap = {};
+        window.multiSelectedL16 = [];
+        // PL primitive도 정리
+        if (typeof plGridPrimitives !== 'undefined' && plGridPrimitives) plGridPrimitives.removeAll();
+        if (mainMode === 'occupation2') {
+            renderPolyline();
+        } else {
+            render();
+        }
         updateUI();
         sendToRN('CELL_DESELECTED', {});
         if(moonTileset) viewer.camera.flyToBoundingSphere(moonTileset.boundingSphere, { duration: 1.0 });
@@ -422,13 +429,21 @@ export const CESIUM_INIT = `
         selectionStack.pop();
         lastRenderedDepth = 0;
         parentPrimitives.removeAll();
-        render();
+        if (mainMode === 'occupation2') {
+            renderPolyline();
+        } else {
+            render();
+        }
         updateUI();
         if (wasBlockLevel) {
             sendToRN('CELL_DESELECTED', {});
         }
         if (selectionStack.length > 0) {
-            flyToCell(selectionStack[selectionStack.length - 1]);
+            if (mainMode === 'occupation2') {
+                flyToCellPL(selectionStack[selectionStack.length - 1]);
+            } else {
+                flyToCell(selectionStack[selectionStack.length - 1]);
+            }
         } else {
             sendToRN('CELL_DESELECTED', {});
             if (currentAnimFrame) { cancelAnimationFrame(currentAnimFrame); currentAnimFrame = null; }

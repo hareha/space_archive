@@ -1,12 +1,55 @@
 // cesiumGridPL.js — Polyline 기반 그리드 렌더링 (점유모드2 전용)
-// 기존 cesiumGrid.js와 독립적. gridMode === 'polyline' 일 때만 사용됨.
+// 점유모드1과 완전 독립. mainMode === 'occupation2' 일 때만 사용됨.
 
 export const CESIUM_GRID_PL = `
       // ═══════════════════════════════════════════════════
       // Polyline Grid Renderer (cesiumGridPL.js)
+      // 점유모드2 전용 — 점유모드1과 완전 독립
       // ═══════════════════════════════════════════════════
       const PL_FIXED_HEIGHT = 10000;
       const plGridPrimitives = viewer.scene.primitives.add(new Cesium.PrimitiveCollection());
+
+      // ═══ PL 전용 유틸리티 함수 (독립 정의) ═══
+
+      function getDescendantsPL(cellId, targetLevel) {
+          var results = [cellId];
+          var currentLevel = s2.cellid.level(cellId);
+          while (currentLevel < targetLevel) {
+              var nextResults = [];
+              for (var i = 0; i < results.length; i++) {
+                  var children = s2.cellid.children(results[i]);
+                  for (var j = 0; j < children.length; j++) nextResults.push(children[j]);
+              }
+              results = nextResults;
+              currentLevel++;
+          }
+          return results;
+      }
+
+      function sendBlockDataPL(lastCellId) {
+          var blockCell = s2.Cell.fromCellID(lastCellId);
+          var center16 = blockCell.center();
+          var cr = Math.sqrt(center16.x ** 2 + center16.y ** 2 + center16.z ** 2);
+          var cLon = Math.atan2(center16.y, center16.x);
+          var cLat = Math.asin(center16.z / cr);
+          var cLonDeg = Cesium.Math.toDegrees(cLon).toFixed(4);
+          var cLatDeg = Cesium.Math.toDegrees(cLat).toFixed(4);
+          var token = s2.cellid.toToken(lastCellId);
+          var seed = parseInt(token.substring(0, 6), 16) || 0;
+          var feo = (((seed * 7 + 13) % 100) / 10).toFixed(1);
+          var tio2 = (((seed * 3 + 7) % 50) / 10).toFixed(1);
+          var waterIce = (((seed * 11 + 3) % 30) / 10).toFixed(1);
+          var tempK = 40 + ((seed * 17) % 260);
+          var price = (0.5 + ((seed * 13) % 100) / 20).toFixed(2);
+          sendToRN('CELL_SELECTED', {
+              cellId: token, token: token,
+              lat: parseFloat(cLatDeg), lng: parseFloat(cLonDeg),
+              level: 16, childLevel: 16,
+              unit: '1 Block = 1 Mag', magCount: 1, magTokens: [token],
+              minerals: { feo: feo + '%', tio2: tio2 + '%', waterIce: waterIce + '%', surfaceTemp: tempK + 'K' },
+              price: '\\$' + price, area: '~0.8 km\\u00B2'
+          });
+      }
 
       function getPLCellPositions(cellId, height, segments) {
           var cell = s2.Cell.fromCellID(cellId);
@@ -35,10 +78,8 @@ export const CESIUM_GRID_PL = `
       }
 
       function renderPolyline() {
+          // PL 전용 primitives만 클리어 (모드1 primitives 건드리지 않음)
           plGridPrimitives.removeAll();
-          gridPrimitives.removeAll();
-          parentPrimitives.removeAll();
-          pillarPrimitives.removeAll();
 
           var lastCellId = selectionStack.length === 0 ? null : selectionStack[selectionStack.length - 1];
           var currentLevel = lastCellId ? s2.cellid.level(lastCellId) : 0;
@@ -52,11 +93,11 @@ export const CESIUM_GRID_PL = `
 
           if (currentLevel >= 12) {
               // 3단계: selectLevel에 따른 굵은선/얇은선 분기
-              var candidates16 = getDescendants(lastCellId, 16);
+              var candidates16 = getDescendantsPL(lastCellId, 16);
 
               if (selectLevel < 16) {
                   // 굵은선: selectLevel(14/15) 경계
-                  var groupCells = getDescendants(lastCellId, selectLevel);
+                  var groupCells = getDescendantsPL(lastCellId, selectLevel);
                   groupCells.forEach(function(gid) {
                       var gPos = getPLCellPositions(gid, PL_FIXED_HEIGHT, 1);
                       lineInstances.push(new Cesium.GeometryInstance({
@@ -153,10 +194,10 @@ export const CESIUM_GRID_PL = `
                   var parentId = (si > 0) ? selectionStack[si - 1] : null;
                   var siblings = [];
                   if (parentId) {
-                      siblings = getDescendants(parentId, activeLevel);
+                      siblings = getDescendantsPL(parentId, activeLevel);
                   } else {
                       for (var ff2 = 0; ff2 < 6; ff2++) {
-                          siblings = siblings.concat(getDescendants(s2.cellid.fromFace(ff2), activeLevel));
+                          siblings = siblings.concat(getDescendantsPL(s2.cellid.fromFace(ff2), activeLevel));
                       }
                   }
                   var parentAlpha = 0.12 - (selectionStack.length - 1 - si) * 0.03;
@@ -180,9 +221,9 @@ export const CESIUM_GRID_PL = `
               var targetLevel = currentLevel + 4;
               var candidates = [];
               if (currentLevel === 0) {
-                  for (var f = 0; f < 6; f++) candidates = candidates.concat(getDescendants(s2.cellid.fromFace(f), 4));
+                  for (var f = 0; f < 6; f++) candidates = candidates.concat(getDescendantsPL(s2.cellid.fromFace(f), 4));
               } else {
-                  candidates = getDescendants(lastCellId, targetLevel);
+                  candidates = getDescendantsPL(lastCellId, targetLevel);
               }
 
               var config = getPLRenderConfig(targetLevel);
@@ -230,11 +271,11 @@ export const CESIUM_GRID_PL = `
                       var parentId = (si > 0) ? selectionStack[si - 1] : null;
                       var siblings = [];
                       if (parentId) {
-                          siblings = getDescendants(parentId, activeLevel);
+                          siblings = getDescendantsPL(parentId, activeLevel);
                       } else {
                           // 최상위 — 6개 face 전체의 L4 셀
                           for (var ff = 0; ff < 6; ff++) {
-                              siblings = siblings.concat(getDescendants(s2.cellid.fromFace(ff), activeLevel));
+                              siblings = siblings.concat(getDescendantsPL(s2.cellid.fromFace(ff), activeLevel));
                           }
                       }
                       var parentAlpha = 0.15 - (selectionStack.length - 1 - si) * 0.04;

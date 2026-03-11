@@ -480,8 +480,8 @@ export default function MoonScreen() {
           return newF;
         });
       }
-      // polyline 모드 해제
-      webviewRef.current?.postMessage(JSON.stringify({ type: 'SET_GRID_MODE', payload: { mode: 'default' } }));
+      // PL 모드 해제
+      webviewRef.current?.postMessage(JSON.stringify({ type: 'EXIT_PL_MODE' }));
     } else {
       // 점유 모드(occupation/occupation2)로 전환 시
       if (showLandingSites || showTerrain) {
@@ -501,9 +501,12 @@ export default function MoonScreen() {
       setShowGrid(true);
       webviewRef.current?.postMessage(JSON.stringify({ type: 'UPDATE_GRID_VISIBILITY', visible: true }));
 
-      // gridMode 전환
-      var gm = mainMode === 'occupation2' ? 'polyline' : 'default';
-      webviewRef.current?.postMessage(JSON.stringify({ type: 'SET_GRID_MODE', payload: { mode: gm } }));
+      // PL 모드 전환: occupation2일 때만 ENTER_PL_MODE 전송
+      if (mainMode === 'occupation2') {
+        webviewRef.current?.postMessage(JSON.stringify({ type: 'ENTER_PL_MODE' }));
+      } else {
+        webviewRef.current?.postMessage(JSON.stringify({ type: 'EXIT_PL_MODE' }));
+      }
     }
   }, [mainMode]);
 
@@ -835,6 +838,7 @@ export default function MoonScreen() {
             >
               <Text style={[styles.modeTabText, mainMode === 'occupation2' && styles.modeTabTextActive]}>점유모드2</Text>
             </TouchableOpacity>
+
           </View>
         </View>
 

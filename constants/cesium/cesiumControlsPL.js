@@ -1,30 +1,14 @@
 // cesiumControlsPL.js — Polyline 모드 컨트롤 (점유모드2 전용)
-// 기존 코드 무수정. render(), flyToCell() 래핑 + PL 전용 클릭 핸들러.
+// 점유모드1과 완전 독립. monkey-patch 없음.
 
 export const CESIUM_CONTROLS_PL = `
       // ═══════════════════════════════════════════════════
       // Polyline Mode Controller (cesiumControlsPL.js)
-      // render/flyToCell 래핑 + SET_GRID_MODE 핸들러 + PL 클릭 핸들러
+      // 점유모드2 전용 — 독립 함수 정의, monkey-patch 없음
       // ═══════════════════════════════════════════════════
-      window.gridMode = 'default';
 
-      // --- render() 래핑: PL 모드면 renderPolyline() 호출 ---
-      var _origRender = render;
-      render = function() {
-          if (window.gridMode === 'polyline') {
-              renderPolyline();
-              return;
-          }
-          _origRender();
-      };
-
-      // --- flashCell() 래핑: PL 모드면 공중 Primitive로 점멸 ---
-      var _origFlashCell = flashCell;
-      flashCell = function(cellId) {
-          if (window.gridMode !== 'polyline') {
-              return _origFlashCell(cellId);
-          }
-          // PL 전용 플래시: 공중 높이에 흰색 반투명 면
+      // --- PL 전용 flashCell (독립 정의) ---
+      function flashCellPL(cellId) {
           flashPrimitives.removeAll();
           var cell = s2.Cell.fromCellID(cellId);
           var cc = cell.center();
@@ -61,15 +45,10 @@ export const CESIUM_CONTROLS_PL = `
               asynchronous: false
           }));
           setTimeout(function() { flashPrimitives.removeAll(); }, 600);
-      };
+      }
 
-      // --- flyToCell() 래핑: PL 모드면 고정 높이 사용 ---
-      var _origFlyToCell = flyToCell;
-      flyToCell = function(targetCellId, onMidFlight) {
-          if (window.gridMode !== 'polyline') {
-              return _origFlyToCell(targetCellId, onMidFlight);
-          }
-          // PL 전용 flyToCell — 고정 높이
+      // --- PL 전용 flyToCell (독립 정의) ---
+      function flyToCellPL(targetCellId, onMidFlight) {
           if (currentAnimFrame) { cancelAnimationFrame(currentAnimFrame); currentAnimFrame = null; }
           var cell = s2.Cell.fromCellID(targetCellId);
           var center = cell.center();
@@ -109,13 +88,12 @@ export const CESIUM_CONTROLS_PL = `
               else { currentAnimFrame = null; }
           }
           currentAnimFrame = requestAnimationFrame(animFrame);
-      };
+      }
 
-      // --- PL 전용 클릭 핸들러 (별도 추가) ---
+      // --- PL 전용 클릭 핸들러 ---
       var plClickHandler = new Cesium.ScreenSpaceEventHandler(viewer.scene.canvas);
       plClickHandler.setInputAction(function(movement) {
-          if (window.gridMode !== 'polyline') return; // PL 모드가 아니면 무시
-          if (mainMode !== 'occupation2') return;
+          if (mainMode !== 'occupation2') return; // 점유모드2가 아니면 무시
 
           var picked = viewer.scene.pick(movement.position);
           if (!Cesium.defined(picked) || !picked.id) return;
@@ -125,10 +103,10 @@ export const CESIUM_CONTROLS_PL = `
           var currentLevel = lastCellId ? s2.cellid.level(lastCellId) : 0;
 
           if (currentLevel >= 12) {
-              // 3단계: 다중선택 (모든 selectLevel 공통)
+              // 3단계: 다중선택
               var clickedL16 = pickedCellId;
               var parentAtSelectLvl = s2.cellid.parent(clickedL16, selectLevel);
-              var selectedCells = (selectLevel === 16) ? [clickedL16] : getDescendants(parentAtSelectLvl, 16);
+              var selectedCells = (selectLevel === 16) ? [clickedL16] : getDescendantsPL(parentAtSelectLvl, 16);
               if (selectedCells.length === 0) return;
 
               var hasOccupied = selectedCells.some(function(cid) {
@@ -162,7 +140,7 @@ export const CESIUM_CONTROLS_PL = `
               }
               if (window.multiSelectedL16.length === 0) {
                   sendToRN('CELL_DESELECTED', {});
-                  render();
+                  renderPolyline();
                   return;
               }
               var mFirstToken = window.multiSelectedL16[0];
@@ -176,13 +154,12 @@ export const CESIUM_CONTROLS_PL = `
                   cellCount: window.multiSelectedL16.length,
                   unit: window.multiSelectedL16.length + ' Block = ' + window.multiSelectedL16.length + ' Mag',
                   magCount: window.multiSelectedL16.length,
-                  price: '\\$' + window.multiSelectedL16.length,
-                  area: '~' + (0.8 * window.multiSelectedL16.length).toFixed(1) + ' km\\u00B2',
+                  price: '\\\\$' + window.multiSelectedL16.length,
+                  area: '~' + (0.8 * window.multiSelectedL16.length).toFixed(1) + ' km\\\\u00B2',
                   multiTokens: window.multiSelectedL16.slice(),
                   isMultiSelect: window.multiSelectedL16.length > 1
               });
-              // 하이라이트만 갱신 (깜빡임 방지)
-              // PL 하이라이트
+              // 하이라이트 갱신
               window.multiSelectedL16.forEach(function(tk) {
                   var cid2 = s2.cellid.fromToken(tk);
                   var cell2 = s2.Cell.fromCellID(cid2);
@@ -210,15 +187,14 @@ export const CESIUM_CONTROLS_PL = `
                   }));
               });
           } else {
-              // 0~2단계: picked.id를 selectionStack에 push
+              // 0~2단계: 드릴다운
               var cellId = pickedCellId;
               var lvl = s2.cellid.level(cellId);
               if (lvl <= 0) return;
-              // 프러스텀 컬링: 모든 보이는 셀 클릭 가능 (부모 범위 제한 없음)
               selectionStack.push(cellId);
-              render();
-              flyToCell(cellId);
-              // PL 전용 플래시: 선택한 셀에 흰색 면 칠했다 사라짐
+              renderPolyline();
+              flyToCellPL(cellId);
+              // PL 전용 플래시
               (function(fid) {
                   setTimeout(function() {
                       var fPos = getPLCellPositions(fid, PL_FIXED_HEIGHT + 1, 1);
@@ -245,44 +221,40 @@ export const CESIUM_CONTROLS_PL = `
           }
       }, Cesium.ScreenSpaceEventType.LEFT_CLICK);
 
-      // --- SET_GRID_MODE 메시지 핸들러 ---
+      // --- ENTER_PL_MODE / EXIT_PL_MODE 메시지 핸들러 ---
       function handlePLMessage(event) {
           try {
               var msg = typeof event.data === 'string' ? JSON.parse(event.data) : event.data;
-              if (msg.type === 'SET_GRID_MODE') {
-                  var newMode = msg.payload.mode || 'default';
-                  console.log('[PL] SET_GRID_MODE:', newMode, 'current:', window.gridMode, 'tilesetReady:', window.tilesetReady);
-                  window.gridMode = newMode;
-                  gridPrimitives.removeAll();
-                  parentPrimitives.removeAll();
-                  pillarPrimitives.removeAll();
+              if (msg.type === 'ENTER_PL_MODE') {
+                  console.log('[PL] ENTER_PL_MODE, tilesetReady:', window.tilesetReady);
+                  // PL 전용 primitives만 클리어 (모드1 건드리지 않음)
                   plGridPrimitives.removeAll();
 
-                  // 타일셋이 아직 로드 안 됐으면 대기 후 render
                   function doRenderWhenReady() {
                       if (!window.tilesetReady) {
                           console.log('[PL] Tileset not ready, waiting...');
                           setTimeout(doRenderWhenReady, 500);
                           return;
                       }
-                      console.log('[PL] Tileset ready, rendering grid');
-                      render();
+                      console.log('[PL] Tileset ready, rendering PL grid');
+                      renderPolyline();
                       // PL 모드 진입 시 카메라 줌인
-                      if (newMode === 'polyline') {
-                          setTimeout(function() {
-                              var camCart = Cesium.Cartographic.fromCartesian(viewer.camera.position, Cesium.Ellipsoid.MOON);
-                              console.log('[PL] zoom camCart:', camCart ? camCart.height : 'null');
-                              if (camCart) {
-                                  viewer.camera.flyTo({
-                                      destination: Cesium.Cartesian3.fromRadians(camCart.longitude, camCart.latitude, 4000000, Cesium.Ellipsoid.MOON),
-                                      orientation: { heading: viewer.camera.heading, pitch: Cesium.Math.toRadians(-90), roll: 0 },
-                                      duration: 1.0
-                                  });
-                              }
-                          }, 500);
-                      }
+                      setTimeout(function() {
+                          var camCart = Cesium.Cartographic.fromCartesian(viewer.camera.position, Cesium.Ellipsoid.MOON);
+                          if (camCart) {
+                              viewer.camera.flyTo({
+                                  destination: Cesium.Cartesian3.fromRadians(camCart.longitude, camCart.latitude, 4000000, Cesium.Ellipsoid.MOON),
+                                  orientation: { heading: viewer.camera.heading, pitch: Cesium.Math.toRadians(-90), roll: 0 },
+                                  duration: 1.0
+                              });
+                          }
+                      }, 500);
                   }
                   doRenderWhenReady();
+              }
+              if (msg.type === 'EXIT_PL_MODE') {
+                  console.log('[PL] EXIT_PL_MODE');
+                  plGridPrimitives.removeAll();
               }
           } catch(e) {}
       }

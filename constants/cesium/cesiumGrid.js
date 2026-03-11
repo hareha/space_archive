@@ -73,8 +73,27 @@ export const CESIUM_GRID = `
 
       // ═══ 프러스텀 + 백페이스 컬링 헬퍼 ═══
 
+      // ═══ 디버그 수치 저장용 ═══
+      var _perfStats = {
+          filterCalls: 0, filterCandidates: 0, filterResults: 0, filterTimeMs: 0,
+          getVisibleTimeMs: 0, getVisibleRecursions: 0,
+          renderOneParentCalls: 0, renderOneParentTimeMs: 0,
+          updateGridTimeMs: 0, geoInstanceCount: 0
+      };
+      function resetPerfStats() {
+          _perfStats.filterCalls = 0; _perfStats.filterCandidates = 0;
+          _perfStats.filterResults = 0; _perfStats.filterTimeMs = 0;
+          _perfStats.getVisibleTimeMs = 0; _perfStats.getVisibleRecursions = 0;
+          _perfStats.renderOneParentCalls = 0; _perfStats.renderOneParentTimeMs = 0;
+          _perfStats.updateGridTimeMs = 0; _perfStats.geoInstanceCount = 0;
+      }
+
       // 셀 ID 배열 → 화면에 보이는 셀만 필터
       function filterVisible(cellIds) {
+          var t0 = performance.now();
+          _perfStats.filterCalls++;
+          _perfStats.filterCandidates += cellIds.length;
+
           var camPos = viewer.camera.positionWC;
           var camLen = Cesium.Cartesian3.magnitude(camPos);
           var camNorm = { x: camPos.x / camLen, y: camPos.y / camLen, z: camPos.z / camLen };
@@ -85,13 +104,13 @@ export const CESIUM_GRID = `
               camPos, viewer.camera.directionWC, viewer.camera.upWC
           );
 
-          return cellIds.filter(function(id) {
+          var result = cellIds.filter(function(id) {
               var cc = s2.Cell.fromCellID(id).center();
-              // 백페이스: 지평선 뒤 셀 제거
               var dot = cc.x * camNorm.x + cc.y * camNorm.y + cc.z * camNorm.z;
-              if (dot < cosHorizon * 0.7) return false;
-
-              // 프러스텀: 화면 밖 셀 제거
+              // 카메라가 표면에 가까울수록 백페이스 컬링을 관대하게
+              var altRatio = camLen / moonR; // 1.0 = 표면, 2.0 = 반지름 높이
+              var backfaceFactor = (altRatio < 1.05) ? 0.3 : (altRatio < 1.5) ? 0.5 : 0.7;
+              if (dot < cosHorizon * backfaceFactor) return false;
               var ccr = Math.sqrt(cc.x * cc.x + cc.y * cc.y + cc.z * cc.z);
               var cart = Cesium.Cartesian3.fromRadians(
                   Math.atan2(cc.y, cc.x), Math.asin(cc.z / ccr), 0, Cesium.Ellipsoid.MOON
@@ -101,29 +120,46 @@ export const CESIUM_GRID = `
               var bs = new Cesium.BoundingSphere(cart, cellRadius * 2);
               return cullingVolume.computeVisibility(bs) !== Cesium.Intersect.OUTSIDE;
           });
+
+          _perfStats.filterResults += result.length;
+          _perfStats.filterTimeMs += performance.now() - t0;
+          return result;
       }
 
       // 화면에 보이는 셀만 반환 (프러스텀+백페이스, MAX 안전장치)
       var MAX_VISIBLE = 20;
 
-      // 디버그 오버레이
-      var _gridDebugEl = document.createElement('div');
-      _gridDebugEl.id = 'gridDebugOverlay';
-      _gridDebugEl.style.cssText = 'position:fixed;bottom:10px;left:10px;background:rgba(0,0,0,0.7);color:#0f0;font:12px monospace;padding:6px 10px;border-radius:4px;z-index:9999;pointer-events:none;';
-      document.body.appendChild(_gridDebugEl);
+
       function getVisibleCellsAtLevel(level) {
+          _perfStats.getVisibleRecursions++;
+          var t0 = performance.now();
+          var result;
           if (level <= 4) {
               var all = [];
               for (var f = 0; f < 6; f++) all = all.concat(getDescendants(s2.cellid.fromFace(f), level));
-              return filterVisible(all).slice(0, MAX_VISIBLE);
+              result = sortByCameraCenter(filterVisible(all)).slice(0, MAX_VISIBLE);
+          } else {
+              var parentVisible = getVisibleCellsAtLevel(level - 4);
+              var children = [];
+              parentVisible.forEach(function(pid) {
+                  children = children.concat(getDescendants(pid, level));
+              });
+              result = sortByCameraCenter(filterVisible(children)).slice(0, MAX_VISIBLE);
           }
-          // 부모 → 자식 전개 → 프러스텀+백페이스 필터 (화면 안의 것만)
-          var parentVisible = getVisibleCellsAtLevel(level - 4);
-          var children = [];
-          parentVisible.forEach(function(pid) {
-              children = children.concat(getDescendants(pid, level));
+          _perfStats.getVisibleTimeMs += performance.now() - t0;
+          return result;
+      }
+
+      // 화면 중앙(카메라 위치)에 가까운 셀 우선 정렬
+      function sortByCameraCenter(cellIds) {
+          var camPos = viewer.camera.positionWC;
+          return cellIds.sort(function(a, b) {
+              var ca = s2.Cell.fromCellID(a).center();
+              var cb = s2.Cell.fromCellID(b).center();
+              var dotA = ca.x * camPos.x + ca.y * camPos.y + ca.z * camPos.z;
+              var dotB = cb.x * camPos.x + cb.y * camPos.y + cb.z * camPos.z;
+              return dotB - dotA; // 높은 dot product = 카메라 위치에 가까운 셀 우선
           });
-          return filterVisible(children).slice(0, MAX_VISIBLE);
       }
 
       // ═══ 증분 업데이트 트래킹 ═══
@@ -135,6 +171,8 @@ export const CESIUM_GRID = `
 
       // 부모 셀 1개에 대한 프리미티브 생성 (parent outline + child grid + hitbox)
       function renderOneParent(pid, currentLevel, targetLevel, lineWidth, lastCellId) {
+          var _ropT0 = performance.now();
+          _perfStats.renderOneParentCalls++;
           var token = s2.cellid.toToken(pid);
           var entry = { parentPrims: [], childPrims: [], hitPrims: [] };
           var PARENT_COLOR = Cesium.Color.WHITE.withAlpha(0.25);
@@ -200,7 +238,7 @@ export const CESIUM_GRID = `
                       oP.push(Cesium.Cartesian3.fromRadians(Math.atan2(v.y,v.x),Math.asin(v.z/vr),0,Cesium.Ellipsoid.MOON)); }
                   occI.push(new Cesium.GeometryInstance({ geometry: new Cesium.PolygonGeometry({
                       polygonHierarchy: new Cesium.PolygonHierarchy(oP), ellipsoid: Cesium.Ellipsoid.MOON,
-                      height: -15000, extrudedHeight: 15000 }),
+                      height: -15000, extrudedHeight: 15000, granularity: Cesium.Math.toRadians(10) }),
                       attributes: { color: Cesium.ColorGeometryInstanceAttribute.fromColor(OCC_COLOR) } }));
               });
               if (occI.length > 0) {
@@ -219,7 +257,7 @@ export const CESIUM_GRID = `
                   hP.push(Cesium.Cartesian3.fromRadians(Math.atan2(v.y,v.x),Math.asin(v.z/vr),0,Cesium.Ellipsoid.MOON)); }
               hitI.push(new Cesium.GeometryInstance({ geometry: new Cesium.PolygonGeometry({
                   polygonHierarchy: new Cesium.PolygonHierarchy(hP), ellipsoid: Cesium.Ellipsoid.MOON,
-                  height: -15000, extrudedHeight: 15000 }),
+                  height: -15000, extrudedHeight: 15000, granularity: Cesium.Math.toRadians(10) }),
                   attributes: { color: Cesium.ColorGeometryInstanceAttribute.fromColor(Cesium.Color.WHITE.withAlpha(0.01)) },
                   id: cid }));
           });
@@ -231,6 +269,7 @@ export const CESIUM_GRID = `
           }
 
           _renderedCells[token] = entry;
+          _perfStats.renderOneParentTimeMs += performance.now() - _ropT0;
       }
 
       // 증분 업데이트: 기존 셀 유지 + 새 셀 추가 + 안 보이는 셀 제거
@@ -270,12 +309,20 @@ export const CESIUM_GRID = `
               renderOneParent(newTokens[token], currentLevel, targetLevel, lineWidth, lastCellId);
           });
 
-          updateUI();
+          // 디버그 오버레이
+          try {
+              if (!window._classDebugEl) {
+                  window._classDebugEl = document.createElement('div');
+                  window._classDebugEl.style.cssText = 'position:fixed;left:10px;bottom:80px;background:rgba(0,0,0,0.8);color:#0f0;font:12px monospace;padding:8px;z-index:9999;border-radius:4px;pointer-events:none;white-space:pre;';
+                  document.body.appendChild(window._classDebugEl);
+              }
+              var renderedCount = Object.keys(_renderedCells).length;
+              window._classDebugEl.innerHTML =
+                  'rendered=' + renderedCount + ' visible=' + visibleParents.length + ' / MAX=' + MAX_VISIBLE +
+                  '<br>removed=' + toRemove.length + ' kept=' + (renderedCount - (visibleParents.length - toRemove.length));
+          } catch(e) {}
 
-          // 디버그 오버레이 업데이트
-          var renderedCount = Object.keys(_renderedCells).length;
-          var visibleCount = Object.keys(newTokens).length;
-          _gridDebugEl.textContent = 'GRID: rendered=' + renderedCount + ' visible=' + visibleCount + ' / MAX=' + MAX_VISIBLE + ' removed=' + toRemove.length + ' added=' + (renderedCount - (visibleCount - toRemove.length));
+          updateUI();
       }
 
       // ═══════════════════════════════════════════════════
@@ -308,6 +355,7 @@ export const CESIUM_GRID = `
           }
           // 1~3단계: pillarPrimitives 유지 (자식 그리드 보이는 상태)
           // flyToCell 완료 후 onFlightDone이 증분 업데이트
+          updateUI();
       }
 
       // ═══════════════════════════════════════════════════
@@ -352,6 +400,7 @@ export const CESIUM_GRID = `
                       geometry: new Cesium.PolygonGeometry({
                           polygonHierarchy: new Cesium.PolygonHierarchy(hitPos),
                           ellipsoid: Cesium.Ellipsoid.MOON, height: -15000, extrudedHeight: 15000,
+                          granularity: Cesium.Math.toRadians(10)
                       }),
                       attributes: { color: Cesium.ColorGeometryInstanceAttribute.fromColor(Cesium.Color.WHITE.withAlpha(0.01)) },
                       id: id
@@ -385,7 +434,8 @@ export const CESIUM_GRID = `
               pillarPrimitives.add(new Cesium.ClassificationPrimitive({
                   geometryInstances: new Cesium.GeometryInstance({ geometry: new Cesium.PolygonGeometry({
                       polygonHierarchy: new Cesium.PolygonHierarchy(pos16),
-                      ellipsoid: Cesium.Ellipsoid.MOON, height: -15000, extrudedHeight: 15000 }),
+                      ellipsoid: Cesium.Ellipsoid.MOON, height: -15000, extrudedHeight: 15000,
+                      granularity: Math.PI }),
                       attributes: { color: Cesium.ColorGeometryInstanceAttribute.fromColor(new Cesium.Color(0.15,0.45,0.95,0.45)) } }),
                   appearance: new Cesium.PerInstanceColorAppearance({ flat: true, translucent: true }),
                   classificationType: Cesium.ClassificationType.CESIUM_3D_TILE, asynchronous: false }));
@@ -418,7 +468,8 @@ export const CESIUM_GRID = `
                   cCart.x+(vc.x-cCart.x)*inset, cCart.y+(vc.y-cCart.y)*inset, cCart.z+(vc.z-cCart.z)*inset); });
               instances.push(new Cesium.GeometryInstance({ geometry: new Cesium.PolygonGeometry({
                   polygonHierarchy: new Cesium.PolygonHierarchy(outer,[new Cesium.PolygonHierarchy(inner)]),
-                  ellipsoid: Cesium.Ellipsoid.MOON, height: -15000, extrudedHeight: 15000 }),
+                  ellipsoid: Cesium.Ellipsoid.MOON, height: -15000, extrudedHeight: 15000,
+                  granularity: Math.PI }),
                   attributes: { color: Cesium.ColorGeometryInstanceAttribute.fromColor(color) } }));
           });
           return instances;
@@ -436,12 +487,13 @@ export const CESIUM_GRID = `
               for (var vi = 0; vi < 4; vi++) { var vv = gCell.vertex(vi), vvr = Math.sqrt(vv.x**2+vv.y**2+vv.z**2);
                   gO.push(Cesium.Cartesian3.fromRadians(Math.atan2(vv.y,vv.x),Math.asin(vv.z/vvr),0,Cesium.Ellipsoid.MOON)); }
               var gEdge = Cesium.Cartesian3.distance(gO[0], gO[1]);
-              var thickInset = Math.max(0.5, 1 - (lineWidth * 6) / gEdge);
+              var thickInset = Math.max(0.5, 1 - (lineWidth * 2) / gEdge);
               var gI = gO.map(function(vc) { return new Cesium.Cartesian3(
                   gCenter.x+(vc.x-gCenter.x)*thickInset, gCenter.y+(vc.y-gCenter.y)*thickInset, gCenter.z+(vc.z-gCenter.z)*thickInset); });
               instances.push(new Cesium.GeometryInstance({ geometry: new Cesium.PolygonGeometry({
                   polygonHierarchy: new Cesium.PolygonHierarchy(gO,[new Cesium.PolygonHierarchy(gI)]),
-                  ellipsoid: Cesium.Ellipsoid.MOON, height: -15000, extrudedHeight: 15000 }),
+                  ellipsoid: Cesium.Ellipsoid.MOON, height: -15000, extrudedHeight: 15000,
+                  granularity: Math.PI }),
                   attributes: { color: Cesium.ColorGeometryInstanceAttribute.fromColor(THICK_COLOR) } }));
           });
           return instances;
@@ -556,15 +608,15 @@ export const CESIUM_GRID = `
           currentAnimFrame = requestAnimationFrame(animate);
       }
 
-      // ═══ 카메라 이동 시 증분 업데이트 (디바운스) ═══
+      // ═══ 카메라 이동 시 배치 업데이트 (디바운스) ═══
       var _camDebounceTimer = null;
       // percentageChanged를 현재 줌 레벨에 맞게 동적 조정
       function updateCameraSensitivity(parentLevel) {
           var MOON_R = 1737400;
           var cellSize = MOON_R * Math.sqrt(Math.PI / (6 * Math.pow(4, parentLevel)));
           var camDist = Cesium.Cartesian3.magnitude(viewer.camera.positionWC);
-          // 셀 크기의 30% 이동 시 발동
-          viewer.camera.percentageChanged = Math.max(0.0001, (cellSize / camDist) * 0.3);
+          // 셀 크기의 10% 이동 시 발동 (민감하게)
+          viewer.camera.percentageChanged = Math.max(0.0001, (cellSize / camDist) * 0.1);
       }
       viewer.camera.percentageChanged = 0.01; // 초기값
       viewer.camera.changed.addEventListener(function() {
@@ -577,6 +629,6 @@ export const CESIUM_GRID = `
               _camDebounceTimer = null;
               updateCameraSensitivity(currentLevel);
               updateDynamicGrid();
-          }, 200);
+          }, 80);
       });
 `;
