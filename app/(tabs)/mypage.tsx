@@ -1,242 +1,255 @@
 import React, { useState } from 'react';
-import { StyleSheet, View, ScrollView, TouchableOpacity, StatusBar, SafeAreaView } from 'react-native';
+import { StyleSheet, View, ScrollView, TouchableOpacity, StatusBar, SafeAreaView, Modal } from 'react-native';
 import { useRouter } from 'expo-router';
-import { Image } from 'expo-image';
 import { Text } from '@/components/Themed';
-import LandCard from '@/components/LandCard';
-import { MY_LANDS, SCRAPPED_NEWS } from '@/constants/MockData';
-import { FontAwesome } from '@expo/vector-icons';
+import { Ionicons } from '@expo/vector-icons';
+import AR2MoonViewer from '@/components/AR2MoonViewer';
 
+// ─── 메뉴 아이템 ───
+function MenuRow({ icon, label, onPress, color }: { icon: string; label: string; onPress?: () => void; color?: string }) {
+    return (
+        <TouchableOpacity style={styles.menuRow} onPress={onPress} activeOpacity={0.6}>
+            <View style={styles.menuRowLeft}>
+                <Ionicons name={icon as any} size={20} color={color || '#555'} style={styles.menuIcon} />
+                <Text style={[styles.menuLabel, color ? { color } : null]}>{label}</Text>
+            </View>
+            <Ionicons name="chevron-forward" size={18} color="#BDBDBD" />
+        </TouchableOpacity>
+    );
+}
+
+// ─── 메인 컴포넌트 ───
 export default function MyPageScreen() {
     const router = useRouter();
-    const [activeTab, setActiveTab] = useState('lands');
+    const [showLogoutModal, setShowLogoutModal] = useState(false);
+    const [showAR, setShowAR] = useState(false);
 
-    const handleViewMap = (coordinates: string) => {
-        // Parse coordinates "Lat 0.67N, Lon 23.47E"
-        try {
-            const latMatch = coordinates.match(/Lat\s*([\d.]+)([NS])/);
-            const lonMatch = coordinates.match(/Lon\s*([\d.]+)([EW])/);
-
-            if (latMatch && lonMatch) {
-                let lat = parseFloat(latMatch[1]);
-                if (latMatch[2] === 'S') lat = -lat;
-
-                let lon = parseFloat(lonMatch[1]);
-                if (lonMatch[2] === 'W') lon = -lon;
-
-                router.push({
-                    pathname: '/moon',
-                    params: { lat, lng: lon }
-                });
-            }
-        } catch (e) {
-            console.error('Error parsing coordinates', e);
-        }
+    const handleLogout = () => {
+        setShowLogoutModal(false);
+        // TODO: 실제 로그아웃 처리
     };
 
     return (
         <SafeAreaView style={styles.container}>
-            <StatusBar barStyle="light-content" />
+            <StatusBar barStyle="dark-content" />
 
-            {/* Header Bar */}
+            {/* 헤더 */}
             <View style={styles.headerBar}>
-                <TouchableOpacity style={styles.iconButton}>
-                    <FontAwesome name="arrow-left" size={18} color="#fff" />
-                </TouchableOpacity>
                 <Text style={styles.headerTitle}>마이페이지</Text>
-                <TouchableOpacity style={styles.iconButton}>
-                    <FontAwesome name="cog" size={18} color="#fff" />
-                </TouchableOpacity>
             </View>
 
-            <ScrollView contentContainerStyle={styles.scrollContent}>
-                {/* Profile Section */}
-                <View style={styles.profileSection}>
-                    <View style={styles.avatarContainer}>
-                        <Image
-                            source={{ uri: 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?q=80&w=200&auto=format&fit=crop' }}
-                            style={styles.avatar}
-                        />
-                        <View style={styles.verifiedBadge}>
-                            <FontAwesome name="check" size={10} color="#fff" />
+            <ScrollView
+                contentContainerStyle={styles.scrollContent}
+                showsVerticalScrollIndicator={false}
+            >
+                {/* User Profile */}
+                <TouchableOpacity
+                    style={styles.profileSection}
+                    activeOpacity={0.7}
+                    onPress={() => router.push('/profile/manage')}
+                >
+                    <View style={styles.profileRow}>
+                        <View style={styles.avatarPlaceholder}>
+                            <Ionicons name="person" size={28} color="#9E9E9E" />
                         </View>
+                        <View style={styles.profileInfo}>
+                            <Text style={styles.userName}>USER011</Text>
+                            <Text style={styles.userEmail}>luna_explorer@lunaverse.io</Text>
+                        </View>
+                        <Ionicons name="chevron-forward" size={20} color="#BDBDBD" />
                     </View>
-                    <Text style={styles.name}>김우주</Text>
-                    <Text style={styles.level}>Space Pioneer Lv.4</Text>
+                    <View style={styles.membershipBadge}>
+                        <Text style={styles.membershipText}>FREE 멤버십</Text>
+                        <Text style={styles.membershipCta}>업그레이드 →</Text>
+                    </View>
+                </TouchableOpacity>
 
-                    {/* Stats Boxes */}
+                {/* 자산 및 활동 대시보드 */}
+                <View style={styles.dashboardSection}>
+                    <View style={styles.dashboardHeader}>
+                        <Text style={styles.dashboardLabel}>보유 자산</Text>
+                        <TouchableOpacity style={styles.purchaseButton} activeOpacity={0.7}>
+                            <Text style={styles.purchaseButtonText}>+이용권 구매하기</Text>
+                        </TouchableOpacity>
+                    </View>
+                    <Text style={styles.assetValue}>12,500 ell</Text>
+                    <Text style={styles.assetPeriod}>2025.03.09 ~ 2025.04.09</Text>
+
                     <View style={styles.statsRow}>
                         <View style={styles.statBox}>
-                            <Text style={styles.statLabel}>보유 토지</Text>
-                            <Text style={styles.statValue}>12 필지</Text>
+                            <Text style={styles.statLabel}>총 점유 구역</Text>
+                            <View style={styles.statValueRow}>
+                                <Text style={styles.statNumber}>400</Text>
+                                <Text style={styles.statUnit}> Mag</Text>
+                            </View>
                         </View>
+                        <View style={styles.statDivider} />
+                        <View style={styles.statBox}>
+                            <Text style={styles.statLabel}>점유 가능 구역</Text>
+                            <View style={styles.statValueRow}>
+                                <Text style={styles.statNumber}>36</Text>
+                                <Text style={styles.statUnit}> Mag</Text>
+                            </View>
+                        </View>
+                        <View style={styles.statDivider} />
                         <View style={styles.statBox}>
                             <Text style={styles.statLabel}>스크랩</Text>
-                            <Text style={styles.statValue}>48 건</Text>
+                            <View style={styles.statValueRow}>
+                                <Text style={styles.statNumber}>5</Text>
+                                <Text style={styles.statUnit}> 건</Text>
+                            </View>
+                            <Text style={styles.statSub}>구역 3 · 콘텐츠 2</Text>
                         </View>
                     </View>
                 </View>
 
-                {/* Tabs */}
-                <View style={styles.tabsContainer}>
-                    <TouchableOpacity
-                        style={styles.tabItem}
-                        onPress={() => setActiveTab('lands')}
-                    >
-                        <FontAwesome name="flag" size={14} color={activeTab === 'lands' ? '#3B82F6' : '#666'} style={{ marginRight: 6 }} />
-                        <Text style={[styles.tabText, activeTab === 'lands' && styles.activeTabText]}>내 토지</Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity
-                        style={styles.tabItem}
-                        onPress={() => setActiveTab('scrap')}
-                    >
-                        <FontAwesome name="bookmark" size={14} color={activeTab === 'scrap' ? '#3B82F6' : '#666'} style={{ marginRight: 6 }} />
-                        <Text style={[styles.tabText, activeTab === 'scrap' && styles.activeTabText]}>스크랩한 칼럼</Text>
-                    </TouchableOpacity>
+                {/* 내 활동 */}
+                <View style={styles.menuSection}>
+                    <Text style={styles.sectionTitle}>내 활동</Text>
+                    <View style={styles.menuGroup}>
+                        <MenuRow icon="grid-outline" label="내 구역 관리" onPress={() => router.push('/profile/my-territories')} />
+                        <MenuRow icon="bookmark-outline" label="스크랩북" />
+                        <MenuRow icon="cube-outline" label="AR 모드" onPress={() => setShowAR(true)} />
+                    </View>
                 </View>
 
-                {/* Content List */}
-                <View style={styles.listHeader}>
-                    <Text style={styles.listTitle}>보유 목록</Text>
-                    <TouchableOpacity>
-                        <Text style={styles.viewAll}>전체보기 <FontAwesome name="chevron-right" size={10} /></Text>
-                    </TouchableOpacity>
+                {/* 결제 · 이용권 */}
+                <View style={styles.menuSection}>
+                    <Text style={styles.sectionTitle}>결제 · 이용권</Text>
+                    <View style={styles.menuGroup}>
+                        <MenuRow icon="card-outline" label="이용권 및 프로모션" onPress={() => router.push('/profile/subscription')} />
+                        <MenuRow icon="receipt-outline" label="거래 내역" />
+                    </View>
                 </View>
 
-                <View style={styles.listContainer}>
-                    {activeTab === 'lands' ? (
-                        <>
-                            {MY_LANDS.map((land) => (
-                                <LandCard
-                                    key={land.id}
-                                    id={land.id}
-                                    location={land.location}
-                                    coordinates={land.coordinates}
-                                    area={land.area}
-                                    purchaseDate={land.purchaseDate}
-                                    imageUrl={land.imageUrl}
-                                    onViewMap={() => handleViewMap(land.coordinates)}
-                                />
-                            ))}
-                            {/* Promo Card matching design */}
-                            <TouchableOpacity style={styles.promoCard}>
-                                <View style={styles.promoIcon}>
-                                    <FontAwesome name="map-marker" size={20} color="#3B82F6" />
-                                </View>
-                                <Text style={styles.promoTitle}>새로운 좌표 남기기</Text>
-                                <Text style={styles.promoDesc}>250억여개로 나뉘어진 달에 나만의 좌표를 남겨보세요</Text>
-                            </TouchableOpacity>
-                        </>
-                    ) : (
-                        <>
-                            {SCRAPPED_NEWS.map((item) => (
-                                <TouchableOpacity
-                                    key={item.id}
-                                    style={styles.scrapCard}
-                                    onPress={() => router.push(`/news/${item.id}`)}
-                                >
-                                    <Image source={{ uri: item.imageUrl }} style={styles.scrapImage} />
-                                    <View style={styles.scrapContent}>
-                                        <View style={styles.scrapHeader}>
-                                            <Text style={styles.scrapCategory}>{item.category}</Text>
-                                            <Text style={styles.scrapDate}>{item.date}</Text>
-                                        </View>
-                                        <Text style={styles.scrapTitle} numberOfLines={2}>{item.title}</Text>
-                                        <View style={styles.scrapAction}>
-                                            <FontAwesome name="bookmark" size={12} color="#3B82F6" />
-                                            <Text style={styles.scrapActionText}>저장됨</Text>
-                                        </View>
-                                    </View>
-                                </TouchableOpacity>
-                            ))}
-                        </>
-                    )}
+                {/* 설정 */}
+                <View style={styles.menuSection}>
+                    <Text style={styles.sectionTitle}>설정</Text>
+                    <View style={styles.menuGroup}>
+                        <MenuRow icon="headset-outline" label="고객센터" onPress={() => router.push('/profile/customer-service')} />
+                    </View>
                 </View>
             </ScrollView>
+
+            {showAR && <AR2MoonViewer onClose={() => setShowAR(false)} />}
+
+            {/* 로그아웃 모달 */}
+            <Modal
+                visible={showLogoutModal}
+                transparent
+                animationType="fade"
+                onRequestClose={() => setShowLogoutModal(false)}
+            >
+                <View style={styles.modalOverlay}>
+                    <View style={styles.modalContent}>
+                        <Ionicons name="log-out-outline" size={36} color="#E53935" style={{ marginBottom: 16 }} />
+                        <Text style={styles.modalTitle}>로그아웃 하시겠습니까?</Text>
+                        <TouchableOpacity style={styles.logoutConfirmBtn} onPress={handleLogout}>
+                            <Text style={styles.logoutConfirmText}>로그아웃</Text>
+                        </TouchableOpacity>
+                        <TouchableOpacity style={styles.logoutCancelBtn} onPress={() => setShowLogoutModal(false)}>
+                            <Text style={styles.logoutCancelText}>취소</Text>
+                        </TouchableOpacity>
+                    </View>
+                </View>
+            </Modal>
         </SafeAreaView>
     );
 }
 
+// ─── 스타일 ───
 const styles = StyleSheet.create({
-    container: { flex: 1, backgroundColor: '#0B0B15' },
+    container: { flex: 1, backgroundColor: '#FFFFFF' },
+
     headerBar: {
-        flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
-        paddingHorizontal: 20, paddingVertical: 10,
+        paddingHorizontal: 20, paddingVertical: 14,
+        borderBottomWidth: 1, borderBottomColor: '#F0F0F0',
     },
-    headerTitle: { fontSize: 16, fontWeight: 'bold', color: '#fff' },
-    iconButton: { padding: 8 },
+    headerTitle: { fontSize: 17, fontWeight: '700', color: '#1A1A1A' },
     scrollContent: { paddingBottom: 40 },
 
+    // ── User Profile ──
     profileSection: {
-        alignItems: 'center', paddingVertical: 30, paddingHorizontal: 20,
-        backgroundColor: '#10101A', marginBottom: 20,
+        paddingHorizontal: 20, paddingVertical: 20,
+        borderBottomWidth: 8, borderBottomColor: '#F5F5F5',
     },
-    avatarContainer: { position: 'relative', marginBottom: 16 },
-    avatar: {
-        width: 80, height: 80, borderRadius: 40,
-        borderWidth: 2, borderColor: '#1E1E2C',
+    profileRow: {
+        flexDirection: 'row', alignItems: 'center', marginBottom: 14,
     },
-    verifiedBadge: {
-        position: 'absolute', bottom: 0, right: 0,
-        backgroundColor: '#3B82F6', width: 24, height: 24, borderRadius: 12,
-        justifyContent: 'center', alignItems: 'center',
-        borderWidth: 2, borderColor: '#10101A',
+    avatarPlaceholder: {
+        width: 52, height: 52, borderRadius: 26,
+        backgroundColor: '#F0F0F0', justifyContent: 'center', alignItems: 'center', marginRight: 14,
     },
-    name: { fontSize: 20, fontWeight: 'bold', color: '#fff', marginBottom: 4 },
-    level: { fontSize: 13, color: '#888', marginBottom: 24 },
+    profileInfo: { flex: 1 },
+    userName: { fontSize: 17, fontWeight: '700', color: '#1A1A1A', marginBottom: 3 },
+    userEmail: { fontSize: 13, color: '#9E9E9E' },
+    membershipBadge: {
+        flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+        backgroundColor: '#F7F7FA', borderRadius: 10, paddingVertical: 12, paddingHorizontal: 16,
+    },
+    membershipText: { fontSize: 13, fontWeight: '600', color: '#666' },
+    membershipCta: { fontSize: 13, fontWeight: '600', color: '#4A90D9' },
 
-    statsRow: { flexDirection: 'row', gap: 12, width: '100%' },
-    statBox: {
-        flex: 1, backgroundColor: '#1A1A25', borderRadius: 12, padding: 16,
-        alignItems: 'center', justifyContent: 'center',
+    // ── 자산 대시보드 ──
+    dashboardSection: {
+        paddingHorizontal: 20, paddingVertical: 20,
+        borderBottomWidth: 8, borderBottomColor: '#F5F5F5',
     },
-    statLabel: { color: '#888', fontSize: 12, marginBottom: 4 },
-    statValue: { color: '#fff', fontSize: 16, fontWeight: 'bold' },
+    dashboardHeader: {
+        flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6,
+    },
+    dashboardLabel: { fontSize: 13, color: '#9E9E9E', fontWeight: '500' },
+    purchaseButton: {
+        backgroundColor: '#4A90D9', borderRadius: 16, paddingVertical: 6, paddingHorizontal: 14,
+    },
+    purchaseButtonText: { fontSize: 12, fontWeight: '600', color: '#FFFFFF' },
+    assetValue: { fontSize: 32, fontWeight: '800', color: '#1A1A1A', marginBottom: 4, letterSpacing: -0.5 },
+    assetPeriod: { fontSize: 12, color: '#BDBDBD', marginBottom: 20 },
+    statsRow: {
+        flexDirection: 'row', backgroundColor: '#F7F7FA', borderRadius: 12,
+        paddingVertical: 16, paddingHorizontal: 8,
+    },
+    statBox: { flex: 1, alignItems: 'center' },
+    statDivider: { width: 1, backgroundColor: '#E5E5E5', marginVertical: 4 },
+    statLabel: { fontSize: 11, color: '#9E9E9E', marginBottom: 6, fontWeight: '500' },
+    statValueRow: { flexDirection: 'row', alignItems: 'baseline' },
+    statNumber: { fontSize: 20, fontWeight: '800', color: '#1A1A1A' },
+    statUnit: { fontSize: 12, fontWeight: '500', color: '#9E9E9E' },
+    statSub: { fontSize: 10, color: '#BDBDBD', marginTop: 3 },
 
-    tabsContainer: {
-        flexDirection: 'row', justifyContent: 'center', marginBottom: 20,
-        borderBottomWidth: 1, borderBottomColor: '#222',
+    // ── 섹션 / 메뉴 ──
+    menuSection: {
+        paddingHorizontal: 20, paddingTop: 22, paddingBottom: 6,
+        borderBottomWidth: 8, borderBottomColor: '#F5F5F5',
     },
-    tabItem: {
-        flexDirection: 'row', alignItems: 'center', paddingVertical: 12, paddingHorizontal: 24,
-    },
-    tabText: { color: '#666', fontSize: 14, fontWeight: '600' },
-    activeTabText: { color: '#fff' },
-
-    listHeader: {
+    sectionTitle: { fontSize: 13, fontWeight: '600', color: '#9E9E9E', marginBottom: 4 },
+    menuGroup: { marginTop: 4 },
+    menuRow: {
         flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
-        paddingHorizontal: 20, marginBottom: 12,
+        paddingVertical: 15, borderBottomWidth: 1, borderBottomColor: '#F0F0F0',
     },
-    listTitle: { fontSize: 16, fontWeight: 'bold', color: '#fff' },
-    viewAll: { fontSize: 12, color: '#3B82F6' },
+    menuRowLeft: { flexDirection: 'row', alignItems: 'center' },
+    menuIcon: { marginRight: 14 },
+    menuLabel: { fontSize: 15, color: '#333333', fontWeight: '400' },
 
-    listContainer: { paddingHorizontal: 20 },
-
-    promoCard: {
-        backgroundColor: '#12121A', borderRadius: 16, padding: 24, alignItems: 'center',
-        borderWidth: 1, borderColor: '#222', borderStyle: 'dashed',
+    // ── 로그아웃 모달 ──
+    modalOverlay: {
+        flex: 1, backgroundColor: 'rgba(0,0,0,0.4)',
+        justifyContent: 'center', alignItems: 'center', paddingHorizontal: 40,
     },
-    promoIcon: {
-        width: 40, height: 40, borderRadius: 20, backgroundColor: 'rgba(59, 130, 246, 0.1)',
-        justifyContent: 'center', alignItems: 'center', marginBottom: 12,
+    modalContent: {
+        backgroundColor: '#fff', borderRadius: 16, paddingVertical: 32, paddingHorizontal: 24,
+        alignItems: 'center', width: '100%',
     },
-    promoTitle: { color: '#ccc', fontSize: 14, fontWeight: 'bold', marginBottom: 4 },
-    promoDesc: { color: '#666', fontSize: 11, textAlign: 'center' },
-
-    emptyState: { alignItems: 'center', padding: 40 },
-    emptyText: { color: '#666', marginTop: 10 },
-
-    // Scrap Card Styles
-    scrapCard: {
-        flexDirection: 'row', backgroundColor: '#1A1A25', borderRadius: 12, marginBottom: 12,
-        padding: 12, alignItems: 'center',
+    modalTitle: { fontSize: 17, fontWeight: '700', color: '#1A1A1A', marginBottom: 24 },
+    logoutConfirmBtn: {
+        backgroundColor: '#E53935', borderRadius: 12, paddingVertical: 14,
+        alignItems: 'center', width: '100%', marginBottom: 10,
     },
-    scrapImage: { width: 80, height: 80, borderRadius: 8, marginRight: 16 },
-    scrapContent: { flex: 1 },
-    scrapHeader: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 6 },
-    scrapCategory: { color: '#3B82F6', fontSize: 11, fontWeight: 'bold' },
-    scrapDate: { color: '#666', fontSize: 11 },
-    scrapTitle: { color: '#fff', fontSize: 14, fontWeight: 'bold', lineHeight: 20, marginBottom: 8 },
-    scrapAction: { flexDirection: 'row', alignItems: 'center', gap: 6 },
-    scrapActionText: { color: '#3B82F6', fontSize: 11 },
+    logoutConfirmText: { color: '#fff', fontSize: 16, fontWeight: '700' },
+    logoutCancelBtn: {
+        backgroundColor: '#F0F0F0', borderRadius: 12, paddingVertical: 14,
+        alignItems: 'center', width: '100%',
+    },
+    logoutCancelText: { color: '#666', fontSize: 16, fontWeight: '600' },
 });

@@ -81,6 +81,7 @@ export const CESIUM_INIT = `
       
       // 해상도 스케일 (네이티브 레티나 해상도, 성능 문제 시 2.0으로 낮추기)
       try { viewer.resolutionScale = window.devicePixelRatio || 1; } catch(e) {}
+      window.viewer = viewer; // 외부 스크립트(injectedJavaScript)에서 접근 가능하도록 노출
       
       viewer.scene.screenSpaceCameraController.maximumMovementRatio = 15.0;
       // 카메라 틸트(상하 회전) 잠금 — 모든 모드에서 적용
@@ -94,6 +95,7 @@ export const CESIUM_INIT = `
         moonTileset = await Cesium.Cesium3DTileset.fromUrl(resource);
         viewer.scene.primitives.add(moonTileset);
         window.tilesetReady = true;
+        window.moonTileset = moonTileset; // 타일 로드 이벤트 감지용
         console.log('[Init] Moon tileset loaded, tilesetReady = true');
         if (showTempMap) moonTileset.show = false;
         viewer.camera.flyToBoundingSphere(moonTileset.boundingSphere, { duration: 0 });
@@ -241,40 +243,7 @@ export const CESIUM_INIT = `
             });
         }
 
-        // ─── 자동 자전 (유저 입력 없을 때) ───
-        var _autoRotate = true;
-        var _lastInteraction = Date.now();
-        var _autoRotateSpeed = 0.02; // degree/frame
-        var _idleTimeout = 3000; // 3초 뒤 다시 자전
-        
-        // 유저 입력 감지 → 자전 멈춤
-        var _inputHandler = new Cesium.ScreenSpaceEventHandler(viewer.canvas);
-        function onUserInput() { _lastInteraction = Date.now(); _autoRotate = false; }
-        _inputHandler.setInputAction(onUserInput, Cesium.ScreenSpaceEventType.LEFT_DOWN);
-        _inputHandler.setInputAction(onUserInput, Cesium.ScreenSpaceEventType.RIGHT_DOWN);
-        _inputHandler.setInputAction(onUserInput, Cesium.ScreenSpaceEventType.MIDDLE_DOWN);
-        _inputHandler.setInputAction(onUserInput, Cesium.ScreenSpaceEventType.WHEEL);
-        _inputHandler.setInputAction(onUserInput, Cesium.ScreenSpaceEventType.PINCH_START);
 
-        // preRender에서 자전 실행
-        viewer.scene.preRender.addEventListener(function() {
-            var now = Date.now();
-            // 점유 모드 또는 위성/1인칭 모드에서는 자전 안 함
-            var canAutoRotate = mainMode === 'exploration' && (subMode === 'space' || !subMode || subMode === '');
-            
-            if (!canAutoRotate) {
-                _autoRotate = false;
-                return;
-            }
-            
-            // 3초간 입력 없으면 자전 재개
-            if (!_autoRotate && (now - _lastInteraction > _idleTimeout)) {
-                _autoRotate = true;
-            }
-            if (_autoRotate) {
-                viewer.camera.rotate(Cesium.Cartesian3.UNIT_Z, Cesium.Math.toRadians(_autoRotateSpeed));
-            }
-        });
         
         // Hide Loading Overlay (fade out)
         const loader = document.getElementById('loadingOverlay');
@@ -412,7 +381,11 @@ export const CESIUM_INIT = `
         window.multiSelectedL16 = [];
         // PL primitive도 정리
         if (typeof plGridPrimitives !== 'undefined' && plGridPrimitives) plGridPrimitives.removeAll();
-        if (mainMode === 'occupation2') {
+        // TR primitive도 정리
+        if (typeof trGridPrimitives !== 'undefined' && trGridPrimitives) trGridPrimitives.removeAll();
+        if (mainMode === 'occupation3') {
+            renderTerrain();
+        } else if (mainMode === 'occupation2') {
             renderPolyline();
         } else {
             render();
@@ -429,7 +402,9 @@ export const CESIUM_INIT = `
         selectionStack.pop();
         lastRenderedDepth = 0;
         parentPrimitives.removeAll();
-        if (mainMode === 'occupation2') {
+        if (mainMode === 'occupation3') {
+            renderTerrain();
+        } else if (mainMode === 'occupation2') {
             renderPolyline();
         } else {
             render();
@@ -439,7 +414,10 @@ export const CESIUM_INIT = `
             sendToRN('CELL_DESELECTED', {});
         }
         if (selectionStack.length > 0) {
-            if (mainMode === 'occupation2') {
+            if (mainMode === 'occupation3') {
+                var backLevel = s2.cellid.level(selectionStack[selectionStack.length - 1]);
+                flyToCellTR(selectionStack[selectionStack.length - 1], backLevel >= 8);
+            } else if (mainMode === 'occupation2') {
                 flyToCellPL(selectionStack[selectionStack.length - 1]);
             } else {
                 flyToCell(selectionStack[selectionStack.length - 1]);

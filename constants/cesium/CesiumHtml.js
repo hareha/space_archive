@@ -9,6 +9,8 @@ import { CESIUM_LANDMARKS } from './cesiumLandmarks.js';
 import { CESIUM_CONTROLS } from './cesiumControls.js';
 import { CESIUM_GRID_PL } from './cesiumGridPL.js';
 import { CESIUM_CONTROLS_PL } from './cesiumControlsPL.js';
+import { CESIUM_GRID_TR } from './cesiumGridTR.js';
+import { CESIUM_CONTROLS_TR } from './cesiumControlsTR.js';
 
 
 /**
@@ -64,6 +66,8 @@ ${CESIUM_MAPS}
 ${CESIUM_LANDMARKS}
 ${CESIUM_GRID_PL}
 ${CESIUM_CONTROLS_PL}
+${CESIUM_GRID_TR}
+${CESIUM_CONTROLS_TR}
 
 ${CESIUM_CONTROLS}
   </script>

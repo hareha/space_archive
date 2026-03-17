@@ -37,12 +37,22 @@ function handleRNMessage(data) {
             updateAppMode(message.payload);
         }
         if (message.type === 'CHANGE_GRID_COLOR') {
-            render();
+            if (mainMode !== 'occupation2' && mainMode !== 'occupation3') render();
         }
         if (message.type === 'ZOOM_IN') {
+            // 점유모드 전용: 레벨 기반 단계 줌
             changeZoomLevel(1);
         }
         if (message.type === 'ZOOM_OUT') {
+            // 점유모드 전용: 레벨 기반 단계 줌
+            changeZoomLevel(-1);
+        }
+        if (message.type === 'EXPLORE_ZOOM_IN') {
+            // 탐사모드 전용: 절대값 줌인 (레벨 무관)
+            changeZoomLevel(1);
+        }
+        if (message.type === 'EXPLORE_ZOOM_OUT') {
+            // 탐사모드 전용: 절대값 줌아웃 (레벨 무관)
             changeZoomLevel(-1);
         }
         if (message.type === 'SET_SELECT_LEVEL') {
@@ -50,7 +60,9 @@ function handleRNMessage(data) {
             // 이미 3단계(16레벨 표시)면 re-render
             var _lastId = selectionStack.length > 0 ? selectionStack[selectionStack.length - 1] : null;
             if (_lastId && s2.cellid.level(_lastId) >= 12) {
-                if (mainMode === 'occupation2') {
+                if (mainMode === 'occupation3') {
+                    renderTerrain();
+                } else if (mainMode === 'occupation2') {
                     renderPolyline();
                 } else {
                     render();
@@ -59,7 +71,12 @@ function handleRNMessage(data) {
         }
         if (message.type === 'DESELECT_CELL') {
             // 셀 선택만 해제, selectionStack 유지 → 격자 재렌더 + 카메라 복귀
-            if (mainMode === 'occupation2') {
+            if (mainMode === 'occupation3') {
+                renderTerrain();
+                if (selectionStack.length > 0) {
+                    flyToCellTR(selectionStack[selectionStack.length - 1]);
+                }
+            } else if (mainMode === 'occupation2') {
                 renderPolyline();
                 if (selectionStack.length > 0) {
                     flyToCellPL(selectionStack[selectionStack.length - 1]);
@@ -78,7 +95,10 @@ function handleRNMessage(data) {
             tokens.forEach(function(t) {
                 var cid = s2.cellid.fromToken(t);
                 if (lvl < 16) {
-                    var desc = (mainMode === 'occupation2') ? getDescendantsPL(cid, 16) : getDescendants(cid, 16);
+                    var desc;
+                    if (mainMode === 'occupation3') desc = getDescendantsTR(cid, 16);
+                    else if (mainMode === 'occupation2') desc = getDescendantsPL(cid, 16);
+                    else desc = getDescendants(cid, 16);
                     desc.forEach(function(d) {
                         var dt = s2.cellid.toToken(d);
                         if (occupiedTokens.indexOf(dt) === -1) occupiedTokens.push(dt);
@@ -88,7 +108,9 @@ function handleRNMessage(data) {
                 }
             });
             window.multiSelectedL16 = [];
-            if (mainMode === 'occupation2') {
+            if (mainMode === 'occupation3') {
+                renderTerrain();
+            } else if (mainMode === 'occupation2') {
                 renderPolyline();
             } else {
                 render();
@@ -98,6 +120,29 @@ function handleRNMessage(data) {
             window.magBalance = message.payload.balance || 0;
         }
         if (message.type === 'RESET_VIEW') {
+            // 위성/착륙지 포커스 해제
+            viewer.camera.lookAtTransform(Cesium.Matrix4.IDENTITY);
+            if (_focusSatPos) {
+                _focusSatPos = null;
+                _focusSatLookTarget = null;
+            }
+            // pitch clamp 리스너 해제
+            if (window._fpPitchClamp) { window._fpPitchClamp(); window._fpPitchClamp = null; }
+            window._fpLookTarget = null;
+            window._fpAboveAlt = null;
+            // 3D 깃발 제거
+            if (window._fpFlagEntities) {
+                window._fpFlagEntities.forEach(function(e) { viewer.entities.remove(e); });
+                window._fpFlagEntities = null;
+            }
+            // 컨트롤러 기본값 복원
+            viewer.scene.screenSpaceCameraController.enableRotate = true;
+            viewer.scene.screenSpaceCameraController.enableTranslate = true;
+            viewer.scene.screenSpaceCameraController.enableZoom = true;
+            viewer.scene.screenSpaceCameraController.enableTilt = true;
+            viewer.scene.screenSpaceCameraController.enableLook = true;
+            viewer.scene.screenSpaceCameraController.minimumZoomDistance = 1;
+            viewer.scene.screenSpaceCameraController.maximumZoomDistance = Infinity;
             resetExplorer();
         }
         if (message.type === 'GO_TO_LOCATION') {
@@ -105,18 +150,282 @@ function handleRNMessage(data) {
             const latRad = Cesium.Math.toRadians(lat);
             const lngRad = Cesium.Math.toRadians(lng);
 
-            const altitude = 500000;
-            const position = Cesium.Cartesian3.fromRadians(lngRad, latRad, altitude, Cesium.Ellipsoid.MOON);
+            // 패널이 하단 50%를 차지 → 지점이 상단 50% 중앙에 오도록
+            const altitude = 150000;
+            var latOffset = Cesium.Math.toRadians(7.0); // 7도 남쪽 offset
+            var camLatRad = latRad - latOffset;
+            var pitchDeg = -55; // 비스듬하게 (지점이 화면 상단에 보이도록)
 
             viewer.camera.flyTo({
-                destination: position,
+                destination: Cesium.Cartesian3.fromRadians(lngRad, camLatRad, altitude, Cesium.Ellipsoid.MOON),
                 orientation: {
                     heading: 0,
-                    pitch: Cesium.Math.toRadians(-90),
+                    pitch: Cesium.Math.toRadians(pitchDeg),
                     roll: 0
                 },
                 duration: 2.0
             });
+        }
+        // 특정 좌표에서 공중뷰 (lerp 기반 매끄러운 전환, 바운스 없음)
+        if (message.type === 'FIRST_PERSON_AT') {
+            const { lat, lng } = message.payload;
+            const latRad = Cesium.Math.toRadians(lat);
+            const lngRad = Cesium.Math.toRadians(lng);
+
+            const aboveAlt = 20000;
+
+            var terrainProvider = viewer.terrainProvider;
+            var carto = new Cesium.Cartographic(lngRad, latRad, 0);
+
+            function doFlyToSurface(terrainHeight) {
+                var safeHeight = (terrainHeight && !isNaN(terrainHeight)) ? Math.max(0, terrainHeight) : 0;
+                var lookTarget = Cesium.Cartesian3.fromRadians(lngRad, latRad, safeHeight, Cesium.Ellipsoid.MOON);
+                var viewPitch = -60;
+                var viewPitchRad = Cesium.Math.toRadians(viewPitch);
+
+                // 기존 깃발 제거
+                if (window._fpFlagEntities) {
+                    window._fpFlagEntities.forEach(function(e) { viewer.entities.remove(e); });
+                }
+                window._fpFlagEntities = [];
+
+                // lookAt이 카메라를 배치할 위치 계산
+                var horizDist = aboveAlt * Math.cos(Math.abs(viewPitchRad));
+                var vertDist = aboveAlt * Math.sin(Math.abs(viewPitchRad));
+                var latOffsetRad = horizDist / 1737400;
+                var camLat = latRad - latOffsetRad;
+                var camAlt = safeHeight + vertDist;
+
+                // 카메라 현재 위치를 달 타원체 기준 Cartographic으로 변환
+                // (positionCartographic는 scene 기본 타원체(WGS84)를 쓸 수 있어 오류 발생)
+                var startCarto = Cesium.Cartographic.fromCartesian(viewer.camera.positionWC, Cesium.Ellipsoid.MOON);
+                if (!startCarto) {
+                    // fallback
+                    startCarto = new Cesium.Cartographic(lngRad, latRad, 150000);
+                }
+                var targetLon = lngRad;
+                var targetLat = camLat;
+                var targetAlt = camAlt;
+                var startHeading = viewer.camera.heading;
+                var startPitch = viewer.camera.pitch;
+                var targetPitchVal = viewPitchRad;
+                var duration = 1500;
+                var startTime = null;
+
+                if (window._fpAnimFrame) { cancelAnimationFrame(window._fpAnimFrame); window._fpAnimFrame = null; }
+
+                function onArrival() {
+                    viewer.camera.lookAt(
+                        lookTarget,
+                        new Cesium.HeadingPitchRange(0, viewPitchRad, aboveAlt)
+                    );
+
+                    // ── 위치 마커 생성 ──
+                    var pinCanvas = document.createElement('canvas');
+                    pinCanvas.width = 48;
+                    pinCanvas.height = 120;
+                    var ctx = pinCanvas.getContext('2d');
+                    var cx = 24;
+
+                    ctx.strokeStyle = 'rgba(96, 165, 250, 0.6)';
+                    ctx.lineWidth = 1.5;
+                    ctx.beginPath();
+                    ctx.moveTo(cx, 30);
+                    ctx.lineTo(cx, 110);
+                    ctx.stroke();
+
+                    var glow = ctx.createRadialGradient(cx, 112, 0, cx, 112, 8);
+                    glow.addColorStop(0, 'rgba(96, 165, 250, 0.8)');
+                    glow.addColorStop(1, 'rgba(96, 165, 250, 0)');
+                    ctx.fillStyle = glow;
+                    ctx.beginPath();
+                    ctx.arc(cx, 112, 8, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.fillStyle = '#60A5FA';
+                    ctx.beginPath();
+                    ctx.arc(cx, 112, 3, 0, Math.PI * 2);
+                    ctx.fill();
+
+                    ctx.save();
+                    ctx.translate(cx, 16);
+                    ctx.rotate(Math.PI / 4);
+                    ctx.shadowColor = '#60A5FA';
+                    ctx.shadowBlur = 8;
+                    ctx.fillStyle = '#1E3A5F';
+                    ctx.fillRect(-9, -9, 18, 18);
+                    ctx.shadowBlur = 0;
+                    ctx.strokeStyle = '#60A5FA';
+                    ctx.lineWidth = 1.5;
+                    ctx.strokeRect(-9, -9, 18, 18);
+                    ctx.fillStyle = '#60A5FA';
+                    ctx.fillRect(-4, -4, 8, 8);
+                    ctx.restore();
+
+                    var pinImg = pinCanvas.toDataURL();
+                    var pinBillboard = viewer.entities.add({
+                        position: Cesium.Cartesian3.fromRadians(lngRad, latRad, 0, Cesium.Ellipsoid.MOON),
+                        billboard: {
+                            image: pinImg,
+                            scale: 0.7,
+                            heightReference: Cesium.HeightReference.CLAMP_TO_GROUND,
+                            verticalOrigin: Cesium.VerticalOrigin.BOTTOM,
+                            horizontalOrigin: Cesium.HorizontalOrigin.CENTER,
+                            disableDepthTestDistance: 1500000,
+                            scaleByDistance: new Cesium.NearFarScalar(1000, 1.2, 30000, 0.6),
+                        },
+                        show: true,
+                    });
+                    window._fpFlagEntities.push(pinBillboard);
+
+                    viewer.scene.screenSpaceCameraController.enableRotate = true;
+                    viewer.scene.screenSpaceCameraController.enableTranslate = false;
+                    viewer.scene.screenSpaceCameraController.enableZoom = true;
+                    viewer.scene.screenSpaceCameraController.enableTilt = true;
+                    viewer.scene.screenSpaceCameraController.enableLook = false;
+                    viewer.scene.screenSpaceCameraController.minimumZoomDistance = 500;
+                    viewer.scene.screenSpaceCameraController.maximumZoomDistance = 100000;
+
+                    if (window._fpPitchClamp) { window._fpPitchClamp(); window._fpPitchClamp = null; }
+                    window._fpLookTarget = lookTarget;
+                    window._fpAboveAlt = aboveAlt;
+                    window._fpPitchClamp = viewer.scene.preUpdate.addEventListener(function() {
+                        var targetPos = window._fpLookTarget;
+                        if (!targetPos) return;
+                        var targetCarto = Cesium.Cartographic.fromCartesian(targetPos, Cesium.Ellipsoid.MOON);
+                        var camCarto = Cesium.Cartographic.fromCartesian(viewer.camera.positionWC, Cesium.Ellipsoid.MOON);
+                        if (camCarto && targetCarto && camCarto.height < targetCarto.height + 200) {
+                            viewer.camera.lookAt(
+                                targetPos,
+                                new Cesium.HeadingPitchRange(
+                                    viewer.camera.heading,
+                                    Cesium.Math.toRadians(-5),
+                                    window._fpAboveAlt
+                                )
+                            );
+                        }
+                    });
+
+                    window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'FIRST_PERSON_READY' }));
+                }
+
+                // Cartographic 보간 (달 표면을 따라 이동)
+                var dLon = targetLon - startCarto.longitude;
+                if (dLon > Math.PI) dLon -= 2 * Math.PI;
+                if (dLon < -Math.PI) dLon += 2 * Math.PI;
+                var dLat = targetLat - startCarto.latitude;
+                var dAlt = targetAlt - startCarto.height;
+                var minAlt = safeHeight + 500; // 지형 위 최소 500m (관통 방지)
+
+                // heading 최단 경로 보정 (2π 전체 회전 방지)
+                var dHeading = 0 - startHeading; // target heading = 0
+                if (dHeading > Math.PI) dHeading -= 2 * Math.PI;
+                if (dHeading < -Math.PI) dHeading += 2 * Math.PI;
+
+                function animate(timestamp) {
+                    if (!startTime) startTime = timestamp;
+                    var progress = (timestamp - startTime) / duration;
+                    if (progress >= 1.0) {
+                        var finalPos = Cesium.Cartesian3.fromRadians(targetLon, targetLat, targetAlt, Cesium.Ellipsoid.MOON);
+                        viewer.camera.setView({
+                            destination: finalPos,
+                            orientation: { heading: 0, pitch: targetPitchVal, roll: 0 }
+                        });
+                        window._fpAnimFrame = null;
+                        onArrival();
+                        return;
+                    }
+                    // easeOutCubic
+                    var t = 1 - Math.pow(1 - progress, 3);
+                    var curLon = startCarto.longitude + dLon * t;
+                    var curLat = startCarto.latitude + dLat * t;
+                    var curAlt = Math.max(minAlt, startCarto.height + dAlt * t);
+                    var currentPos = Cesium.Cartesian3.fromRadians(curLon, curLat, curAlt, Cesium.Ellipsoid.MOON);
+                    var currentPitch = startPitch + (targetPitchVal - startPitch) * t;
+                    var currentHeading = startHeading + dHeading * t;
+                    viewer.camera.setView({
+                        destination: currentPos,
+                        orientation: { heading: currentHeading, pitch: currentPitch, roll: 0 }
+                    });
+                    window._fpAnimFrame = requestAnimationFrame(animate);
+                }
+                window._fpAnimFrame = requestAnimationFrame(animate);
+            }
+
+            // 지형 높이 측정 시도
+            if (terrainProvider && typeof Cesium.sampleTerrainMostDetailed === 'function') {
+                Cesium.sampleTerrainMostDetailed(terrainProvider, [carto]).then(function(updatedPositions) {
+                    doFlyToSurface(updatedPositions[0].height);
+                }).catch(function() {
+                    var h = viewer.scene.globe.getHeight(carto);
+                    doFlyToSurface(h);
+                });
+            } else {
+                var h = viewer.scene.globe.getHeight(carto);
+                doFlyToSurface(h);
+            }
+        }
+        if (message.type === 'FOCUS_SATELLITE') {
+            // 위성 전용: lookAt으로 위성 중심 카메라 고정 (줌 자유롭게 가능)
+            var satName = message.payload.name;
+            highlightSatellite(satName);
+
+            // 기존 lookAt 잠금 해제
+            if (_focusSatPos) {
+                viewer.camera.lookAtTransform(Cesium.Matrix4.IDENTITY);
+            }
+
+            // 기존 trackedEntity 정리
+            if (viewer.trackedEntity) {
+                var wasTemp = viewer.trackedEntity._isTempTrack;
+                var tempEnt = viewer.trackedEntity;
+                viewer.trackedEntity = undefined;
+                if (wasTemp) viewer.entities.remove(tempEnt);
+            }
+
+            // 위성 위치 찾기
+            var satPos = null;
+            if (lastSatellitesData) {
+                for (var fi = 0; fi < lastSatellitesData.length; fi++) {
+                    if (lastSatellitesData[fi].name === satName && lastSatellitesData[fi].position) {
+                        var sp = lastSatellitesData[fi].position;
+                        satPos = new Cesium.Cartesian3(sp.x * 1000, sp.y * 1000, sp.z * 1000);
+                        break;
+                    }
+                }
+            }
+
+            if (satPos) {
+                // 위성 위치 저장 + 초기 거리
+                _focusSatPos = satPos;
+                _focusSatRange = 1200;
+
+                // lookAt 타겟을 위성에서 달 중심 방향으로 오프셋 (위성이 화면 상단에 보이도록)
+                var dirToCenter = Cesium.Cartesian3.normalize(
+                    Cesium.Cartesian3.negate(satPos, new Cesium.Cartesian3()),
+                    new Cesium.Cartesian3()
+                );
+                var shiftAmount = _focusSatRange * 0.4;
+                _focusSatLookTarget = Cesium.Cartesian3.add(
+                    satPos,
+                    Cesium.Cartesian3.multiplyByScalar(dirToCenter, shiftAmount, new Cesium.Cartesian3()),
+                    new Cesium.Cartesian3()
+                );
+
+                // flyToBoundingSphere로 매끄럽게 날아감
+                var hpr = new Cesium.HeadingPitchRange(0, Cesium.Math.toRadians(-30), _focusSatRange);
+                viewer.camera.flyToBoundingSphere(
+                    new Cesium.BoundingSphere(_focusSatLookTarget, 0),
+                    {
+                        offset: hpr,
+                        duration: 2.0,
+                        complete: function() {
+                            viewer.camera.lookAt(_focusSatLookTarget, hpr);
+                        }
+                    }
+                );
+            } else {
+                console.warn('[Controls] Satellite position not found for:', satName);
+            }
         }
         if (message.type === 'SET_MODEL_URI') {
             // GLB 모델 URI 동적 주입 (달 로드 후 나중에 도착)
@@ -191,6 +500,13 @@ function handleRNMessage(data) {
         }
         if (message.type === 'TOGGLE_TERRAIN') {
             toggleTerrainFlags(message.enabled);
+        }
+        if (message.type === 'SHOW_FEATURE_AREA') {
+            var p = message.payload;
+            showFeatureArea(p.lat, p.lng, p.diameterKm, p.typeKr);
+        }
+        if (message.type === 'HIDE_FEATURE_AREA') {
+            hideFeatureArea();
         }
         if (message.type === 'RECOMMEND_LAND') {
             const { lat, lng } = message.payload;
@@ -467,25 +783,56 @@ handler.setInputAction((movement) => {
     render();
     flyToCell(cellId);
 }, Cesium.ScreenSpaceEventType.LEFT_CLICK);
+// --- 위성 포커스 상태 ---
+var _focusSatPos = null;           // 포커스된 위성의 Cartesian3 위치
+var _focusSatLookTarget = null;    // lookAt용 오프셋 타겟 (위성보다 약간 달 방향)
+var _focusSatRange = 1200;         // 카메라~위성 거리 (m)
 
 // --- 단순 줌 증감 함수 ---
 function changeZoomLevel(direction) {
+    // 위성 포커스 활성 시: range 스케일링 후 lookAt 재호출
+    if (_focusSatPos) {
+        var scale = direction > 0 ? 0.6 : 1.667;
+        _focusSatRange = Math.max(50, Math.min(100000, _focusSatRange * scale));
+
+        // 오프셋 타겟 재계산 (range에 맞게)
+        var dirToCenter = Cesium.Cartesian3.normalize(
+            Cesium.Cartesian3.negate(_focusSatPos, new Cesium.Cartesian3()),
+            new Cesium.Cartesian3()
+        );
+        var shiftAmount = _focusSatRange * 0.4;
+        _focusSatLookTarget = Cesium.Cartesian3.add(
+            _focusSatPos,
+            Cesium.Cartesian3.multiplyByScalar(dirToCenter, shiftAmount, new Cesium.Cartesian3()),
+            new Cesium.Cartesian3()
+        );
+
+        viewer.camera.lookAt(
+            _focusSatLookTarget,
+            new Cesium.HeadingPitchRange(viewer.camera.heading, viewer.camera.pitch, _focusSatRange)
+        );
+        return;
+    }
+
     var carto = Cesium.Cartographic.fromCartesian(viewer.camera.position, Cesium.Ellipsoid.MOON);
     if (!carto) return;
     var currentHeight = carto.height;
-    // 현재 고도의 40%만큼 이동 (방향 유지, 고도만 변경)
     var moveAmount = currentHeight * 0.4;
     if (direction > 0) {
-        // 줌인: 앞으로 이동
         viewer.camera.moveForward(moveAmount);
     } else {
-        // 줌아웃: 뒤로 이동
         viewer.camera.moveBackward(moveAmount);
     }
 }
 
 // ==== 모드 전환 헬퍼 함수 ====
 function updateAppMode(payload) {
+    // 위성 포커스 해제
+    if (_focusSatPos) {
+        viewer.camera.lookAtTransform(Cesium.Matrix4.IDENTITY);
+        _focusSatPos = null;
+        _focusSatLookTarget = null;
+    }
     const oldMainMode = mainMode;
     mainMode = payload.mainMode;
     subMode = payload.subMode;
@@ -531,11 +878,13 @@ function updateAppMode(payload) {
         firstPersonData.handler = null;
     }
 
-    // 그리드/아이템 표시 여부 초기화
-    if (typeof gridPrimitives !== 'undefined' && gridPrimitives) gridPrimitives.show = true;
-    if (typeof pillarPrimitives !== 'undefined' && pillarPrimitives) pillarPrimitives.show = true;
-    if (typeof parentPrimitives !== 'undefined' && parentPrimitives) parentPrimitives.show = true;
-    if (typeof flashPrimitives !== 'undefined' && flashPrimitives) flashPrimitives.show = true;
+    // 그리드/아이템 표시 여부 초기화 (occupation2/3이면 모드1 그리드 건드리지 않음)
+    if (mainMode === 'occupation') {
+        if (typeof gridPrimitives !== 'undefined' && gridPrimitives) gridPrimitives.show = true;
+        if (typeof pillarPrimitives !== 'undefined' && pillarPrimitives) pillarPrimitives.show = true;
+        if (typeof parentPrimitives !== 'undefined' && parentPrimitives) parentPrimitives.show = true;
+        if (typeof flashPrimitives !== 'undefined' && flashPrimitives) flashPrimitives.show = true;
+    }
 
     // 위성 레이어 플러시 로직 (점유 모드로 가거나 탐사 모드 중 위성이 아닐 때 모두 초기화)
     if (typeof satellitePrimitives !== 'undefined') {
@@ -545,22 +894,32 @@ function updateAppMode(payload) {
     }
 
     if (mainMode === 'occupation') {
-        // 점유 모드(모드1): 오리지널 그리드 활성화, PL 그리드 숨김
+        // 점유 모드(모드1): 오리지널 그리드 활성화, PL/TR 그리드 숨김
         showGrid = true;
         if (typeof gridPrimitives !== 'undefined' && gridPrimitives) gridPrimitives.show = true;
         if (typeof pillarPrimitives !== 'undefined' && pillarPrimitives) pillarPrimitives.show = true;
         if (typeof parentPrimitives !== 'undefined' && parentPrimitives) parentPrimitives.show = true;
         if (typeof flashPrimitives !== 'undefined' && flashPrimitives) flashPrimitives.show = true;
         if (typeof plGridPrimitives !== 'undefined' && plGridPrimitives) plGridPrimitives.show = false;
+        if (typeof trGridPrimitives !== 'undefined' && trGridPrimitives) trGridPrimitives.show = false;
         sendToRN('GRID_VISIBILITY_CHANGED', { visible: true });
         render();
     } else if (mainMode === 'occupation2') {
-        // 점유 모드(모드2): 모드1 그리드 숨기기, PL은 cesiumControlsPL.js가 독립 관리
+        // 점유 모드(모드2): 모드1/TR 그리드 숨기기, PL은 cesiumControlsPL.js가 독립 관리
         if (typeof gridPrimitives !== 'undefined' && gridPrimitives) gridPrimitives.show = false;
         if (typeof pillarPrimitives !== 'undefined' && pillarPrimitives) pillarPrimitives.show = false;
         if (typeof parentPrimitives !== 'undefined' && parentPrimitives) parentPrimitives.show = false;
         if (typeof flashPrimitives !== 'undefined' && flashPrimitives) flashPrimitives.show = false;
         if (typeof plGridPrimitives !== 'undefined' && plGridPrimitives) plGridPrimitives.show = true;
+        if (typeof trGridPrimitives !== 'undefined' && trGridPrimitives) trGridPrimitives.show = false;
+    } else if (mainMode === 'occupation3') {
+        // 점유 모드(모드3): 모드1/2 그리드 숨기기, TR은 cesiumControlsTR.js가 독립 관리
+        if (typeof gridPrimitives !== 'undefined' && gridPrimitives) gridPrimitives.show = false;
+        if (typeof pillarPrimitives !== 'undefined' && pillarPrimitives) pillarPrimitives.show = false;
+        if (typeof parentPrimitives !== 'undefined' && parentPrimitives) parentPrimitives.show = false;
+        if (typeof flashPrimitives !== 'undefined' && flashPrimitives) flashPrimitives.show = false;
+        if (typeof plGridPrimitives !== 'undefined' && plGridPrimitives) plGridPrimitives.show = false;
+        if (typeof trGridPrimitives !== 'undefined' && trGridPrimitives) trGridPrimitives.show = true;
     } else {
         // 탐사 모드: 모든 그리드 숨기기
         if (typeof gridPrimitives !== 'undefined' && gridPrimitives) gridPrimitives.show = false;
@@ -568,6 +927,7 @@ function updateAppMode(payload) {
         if (typeof parentPrimitives !== 'undefined' && parentPrimitives) parentPrimitives.show = false;
         if (typeof flashPrimitives !== 'undefined' && flashPrimitives) flashPrimitives.show = false;
         if (typeof plGridPrimitives !== 'undefined' && plGridPrimitives) plGridPrimitives.show = false;
+        if (typeof trGridPrimitives !== 'undefined' && trGridPrimitives) trGridPrimitives.show = false;
 
         if (subMode === 'satellite') {
             // 위성 뷰: 틸팅 비활성화, 화면에 달이 절반만 찰 정도로 아주 멀리 줌 아웃 (2만 km 고도)
@@ -581,19 +941,8 @@ function updateAppMode(payload) {
             if (typeof drawSatelliteData === 'function' && typeof lastSatellitesData !== 'undefined' && lastSatellitesData) {
                 drawSatelliteData(lastSatellitesData);
             }
-        } else if (subMode === 'space') {
-            // 우주 뷰: 틸팅 비활성화, 줌/회전만 가능
-            viewer.scene.screenSpaceCameraController.enableTilt = true;
-            viewer.scene.screenSpaceCameraController.enableLook = false;
-
-            // 만약 1인칭이었다가 돌아왔다면 고도를 좀 높여줌
-            let carto = viewer.camera.positionCartographic;
-            if (carto.height < 1000) {
-                const newPos = Cesium.Cartesian3.fromRadians(carto.longitude, carto.latitude, 500000, Cesium.Ellipsoid.MOON);
-                viewer.camera.flyTo({ destination: newPos, duration: 1.0 });
-            }
         } else if (subMode === 'firstPerson') {
-            // 1인칭 뷰: 첫 진입 시 카메라를 표면에 배치 (일단 충돌 문제로 임시 높이 띄움)
+            // 1인칭 뷰 로직 (재사용 가능: 지형 줌인, 땅보기, 탐사지점 1인칭 전환 등)
             const carto = viewer.camera.positionCartographic;
             let terrainHeight = 0;
             let fallbackHeight = viewer.scene.globe.getHeight(carto);
@@ -601,7 +950,7 @@ function updateAppMode(payload) {
                 terrainHeight = Math.max(0, fallbackHeight);
             }
 
-            const targetHeight = terrainHeight + 2000.0; // 사용자가 띄우라고 요청함 (2km 고도)
+            const targetHeight = terrainHeight + 2000.0; // 2km 고도
 
             const surfacePos = Cesium.Cartesian3.fromRadians(carto.longitude, carto.latitude, targetHeight, Cesium.Ellipsoid.MOON);
 
@@ -617,7 +966,7 @@ function updateAppMode(payload) {
                     // 제어 제한: 회전, 이동 방지. Look만 허용 (드래그로 시야 변경)
                     viewer.scene.screenSpaceCameraController.enableRotate = false;
                     viewer.scene.screenSpaceCameraController.enableTranslate = false;
-                    viewer.scene.screenSpaceCameraController.enableZoom = false; // 기본 줌 불가 (추후 전진/후진 터치로)
+                    viewer.scene.screenSpaceCameraController.enableZoom = false;
                     viewer.scene.screenSpaceCameraController.enableTilt = true;
                     viewer.scene.screenSpaceCameraController.enableLook = true;
 
@@ -647,6 +996,10 @@ function updateAppMode(payload) {
                     }, Cesium.ScreenSpaceEventType.MOUSE_MOVE); // 드래그 시야 변경
                 }
             });
+        } else {
+            // 기본 뷰 (우주 뷰 = 기본): 틸팅 비활성화, 줌/회전만 가능
+            viewer.scene.screenSpaceCameraController.enableTilt = true;
+            viewer.scene.screenSpaceCameraController.enableLook = false;
         }
     }
 }
@@ -756,7 +1109,13 @@ function drawSatelliteData(satellites) {
 
         // ─── 궤적 (그라데이션 페이드) ───
         if (sat.trajectory && sat.trajectory.length > 1) {
-            var totalPts = sat.trajectory.length;
+            // 현재 위치를 궤적 끝에 추가하여 마커까지 연결
+            var traj = sat.trajectory.slice();
+            if (sat.position) {
+                traj.push({ x: sat.position.x, y: sat.position.y, z: sat.position.z });
+            }
+
+            var totalPts = traj.length;
             // 궤적을 여러 세그먼트로 나눠 각각 다른 투명도
             var segCount = Math.min(totalPts - 1, 40);
             var step = Math.max(1, Math.floor(totalPts / segCount));
@@ -765,7 +1124,7 @@ function drawSatelliteData(satellites) {
                 var ei = Math.min(si + step + 1, totalPts);
                 var segPositions = [];
                 for (var pi = si; pi < ei; pi++) {
-                    var pt = sat.trajectory[pi];
+                    var pt = traj[pi];
                     segPositions.push(new Cesium.Cartesian3(pt.x * 1000, pt.y * 1000, pt.z * 1000));
                 }
                 // 현재위치(끝)에 가까울수록 밝고, 과거(시작)일수록 흐림
@@ -841,8 +1200,14 @@ function drawSatelliteData(satellites) {
     });
 }
 
-// --- 초기 렌더링 ---
-render();
+// --- 초기 렌더링 (occupation3이면 renderTerrain) ---
+if (mainMode === 'occupation3') {
+    renderTerrain();
+} else if (mainMode === 'occupation2') {
+    renderPolyline();
+} else {
+    render();
+}
 
 // --- 초기화 완료: 메시지 큐 리플레이 ---
 window._initComplete = true;

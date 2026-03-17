@@ -15,6 +15,14 @@ export interface Spacecraft {
     apiEnabled?: boolean; // JPL Horizons API 지원 여부
     missionType?: MissionType; // 미션 유형
     orbitHours?: number; // 궤도 1주기 시간 (시간 단위)
+    // 상세 정보
+    launchDate?: string;       // 발사 시점
+    agency?: string;           // 운영 기관
+    agencyCode?: string;       // 기관 코드
+    missionStatus?: string;    // Active / Completed
+    missionObjective?: string; // 임무 목적
+    instruments?: string[];    // 탑재 장비 목록
+    orbitInclination?: number; // 궤도 경사각 (도)
     // 착륙/충돌 미션의 경우 위치 정보
     landingLocation?: {
         lat: number;
@@ -42,19 +50,33 @@ export const LIVE_MISSIONS: Spacecraft[] = [
         description: '2009년 발사, 달 표면 고해상도 매핑 궤도선 (50km 극궤도)',
         apiEnabled: true,
         missionType: 'orbiter',
-        orbitHours: 2 // ~2시간 극궤도
+        orbitHours: 2,
+        launchDate: '2009.06.18',
+        agency: 'NASA 고다드 우주비행센터',
+        agencyCode: 'NASA',
+        missionStatus: 'Active',
+        missionObjective: '달 표면 고해상도 3D 매핑, 방사선 환경 측정, 극지방 영구 음영 지역 탐사, 착륙 후보지 탐색',
+        instruments: ['LROC (카메라)', 'LAMP (자외선 분광기)', 'LEND (중성자 탐지기)', 'CRaTER (우주선 탐지)', 'DLRE (열복사계)', 'Mini-RF (레이더)'],
+        orbitInclination: 90.0,
     },
     {
         id: '-155',
         name: 'KPLO',
-        nameKo: '다누리',
+        nameKo: '다누리호',
         country: 'KOR (KARI)',
         color: '#0D47A1',
         isLive: true,
         description: '2022년 발사, 100km 원형 극궤도',
         apiEnabled: true,
         missionType: 'orbiter',
-        orbitHours: 2 // ~2시간 극궤도
+        orbitHours: 2,
+        launchDate: '2022.08.05',
+        agency: '한국항공우주연구원 (KARI)',
+        agencyCode: 'KARI',
+        missionStatus: 'Active',
+        missionObjective: '달 표면 광물·자원 분포 탐사, 자기장 측정, 달 착륙 후보지 조사 및 우주 인터넷 기술 검증',
+        instruments: ['고해상도 카메라 (LUTI)', '광시야 편광 카메라 (PolCam)', '자기장 측정기 (KMAG)', '감마선 분광기 (KGRS)', '새도우캠 (ShadowCam · NASA)'],
+        orbitInclination: 90.0,
     },
     {
         id: '-152',
@@ -66,7 +88,14 @@ export const LIVE_MISSIONS: Spacecraft[] = [
         description: '2019년 발사, 100km 극궤도, 2026년까지 운영 예정',
         apiEnabled: true,
         missionType: 'orbiter',
-        orbitHours: 2 // ~2시간 극궤도
+        orbitHours: 2,
+        launchDate: '2019.07.22',
+        agency: '인도우주연구기구 (ISRO)',
+        agencyCode: 'ISRO',
+        missionStatus: 'Active',
+        missionObjective: '달 표면 광물학적 매핑, 물 분자 탐지, 달 외기권 연구, 표면 지형 분석',
+        instruments: ['TMC-2 (지형 매핑 카메라)', 'CLASS (X선 분광기)', 'CHACE-2 (질량 분석기)', 'DFSAR (레이더)', 'OHRC (고해상도 카메라)', 'IIRS (적외선 분광기)'],
+        orbitInclination: 90.0,
     },
     {
         id: '-169',
@@ -76,8 +105,15 @@ export const LIVE_MISSIONS: Spacecraft[] = [
         color: '#FFC107',
         isLive: true,
         description: '2023년 발사, 착륙 후 추진 모듈 궤도 운용 중',
-        apiEnabled: false, // 2023년 11월 이후 데이터 끊김
-        missionType: 'orbiter'
+        apiEnabled: false,
+        missionType: 'orbiter',
+        launchDate: '2023.07.14',
+        agency: '인도우주연구기구 (ISRO)',
+        agencyCode: 'ISRO',
+        missionStatus: 'Active',
+        missionObjective: '달 남극 연착륙 기술 실증, 추진 모듈의 궤도 상 지구 분광 관측',
+        instruments: ['SHAPE (지구 분광 편광 관측기)'],
+        orbitInclination: 90.0,
     },
     {
         id: '-1176',
@@ -89,7 +125,13 @@ export const LIVE_MISSIONS: Spacecraft[] = [
         description: '2022년 발사, NRHO (Near-Rectilinear Halo Orbit)',
         apiEnabled: true,
         missionType: 'orbiter',
-        orbitHours: 156 // ~6.5일 NRHO 궤도
+        orbitHours: 156,
+        launchDate: '2022.06.28',
+        agency: 'NASA / Advanced Space',
+        agencyCode: 'NASA',
+        missionStatus: 'Active',
+        missionObjective: 'Gateway 우주정거장용 NRHO 궤도 검증, 궤도 유지 및 항법 기술 실증',
+        instruments: ['CAPS (궤도 결정 시스템)', 'EPS (전력 시스템 모니터)'],
     },
     {
         id: '-192',
@@ -101,7 +143,13 @@ export const LIVE_MISSIONS: Spacecraft[] = [
         description: '달 주변 L1/L2 라그랑주 점 궤도 탐사선 (THEMIS-B)',
         apiEnabled: true,
         missionType: 'orbiter',
-        orbitHours: 26 // ~26시간 타원궤도
+        orbitHours: 26,
+        launchDate: '2007.02.17',
+        agency: 'NASA / UC 버클리',
+        agencyCode: 'NASA',
+        missionStatus: 'Active',
+        missionObjective: '달-태양풍 상호작용 연구, 자기권 꼬리 입자 가속 관측, 달 주변 플라즈마 환경 분석',
+        instruments: ['FGM (플럭스게이트 자력계)', 'ESA (정전 분석기)', 'SST (고에너지 입자 검출기)'],
     },
     {
         id: '-193',
@@ -113,9 +161,14 @@ export const LIVE_MISSIONS: Spacecraft[] = [
         description: 'P1과 함께 달-태양풍 상호작용 연구 (THEMIS-C)',
         apiEnabled: true,
         missionType: 'orbiter',
-        orbitHours: 26 // ~26시간 타원궤도
+        orbitHours: 26,
+        launchDate: '2007.02.17',
+        agency: 'NASA / UC 버클리',
+        agencyCode: 'NASA',
+        missionStatus: 'Active',
+        missionObjective: '달-태양풍 상호작용 2점 관측, 달 후미(wake) 영역 특성 분석',
+        instruments: ['FGM (플럭스게이트 자력계)', 'ESA (정전 분석기)', 'SST (고에너지 입자 검출기)'],
     },
-
     {
         id: 'queqiao2',
         name: 'Queqiao-2',
@@ -124,8 +177,14 @@ export const LIVE_MISSIONS: Spacecraft[] = [
         color: '#E91E63',
         isLive: true,
         description: '2024년 발사, 달 뒷면 통신 중계위성 (헤일로 궤도)',
-        apiEnabled: false, // JPL ID 미확인 (중국 미션)
-        missionType: 'orbiter'
+        apiEnabled: false,
+        missionType: 'orbiter',
+        launchDate: '2024.03.20',
+        agency: '중국국가항천국 (CNSA)',
+        agencyCode: 'CNSA',
+        missionStatus: 'Active',
+        missionObjective: '창어-6/7호 달 뒷면 통신 중계, 저주파 전파 천문 관측',
+        instruments: ['중계 통신 안테나', '저주파 전파 관측기', '레이저 반사경'],
     }
 ];
 

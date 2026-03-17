@@ -1,14 +1,145 @@
 // cesiumMaps.js — 광물/온도/열그리드/중력/중성자 맵 모듈
 // 모든 과학 데이터 시각화 레이어를 관리합니다.
+// ★ 스타일 통일: 모든 히트맵은 thermalGrid 방식 (nearest 샘플링 + 셀 경계선 + HSL 무지개 색상)
 
 export const CESIUM_MAPS = `
-      // --- Mineral Data Functions ---
+      // ==================================================
+      // 공통 셰이더 소스 (thermalGrid 스타일 통일)
+      // nearest 샘플링 + 셀 경계선(border darkening) + translucent
+      // ==================================================
+      var UNIFIED_HEATMAP_SHADER = [
+        'czm_material czm_getMaterial(czm_materialInput materialInput) {',
+        '  czm_material material = czm_getDefaultMaterial(materialInput);',
+        '  vec2 st = materialInput.st;',
+        '  float gw = u_gridW;',
+        '  float gh = u_gridH;',
+        '  float dx = 1.0 / gw;',
+        '  float dy = 1.0 / gh;',
+        '  vec2 st_nearest = vec2(',
+        '    (floor(st.x * gw) + 0.5) * dx,',
+        '    (floor(st.y * gh) + 0.5) * dy',
+        '  );',
+        '  vec4 color = texture(image, st_nearest);',
+        '  float cellX = fract(st.x * gw);',
+        '  float cellY = fract(st.y * gh);',
+        '  float border = 0.015;',
+        '  if (cellX < border || cellX > 1.0 - border || cellY < border || cellY > 1.0 - border) {',
+        '    material.diffuse = color.rgb * 0.7;',
+        '    material.alpha = min(1.0, color.a + 0.2);',
+        '  } else {',
+        '    material.diffuse = color.rgb;',
+        '    material.alpha = color.a;',
+        '  }',
+        '  return material;',
+        '}'
+      ].join('\\n');
+
+      var TEMP_MAP_SHADER = [
+        'czm_material czm_getMaterial(czm_materialInput materialInput) {',
+        '  czm_material material = czm_getDefaultMaterial(materialInput);',
+        '  vec2 st = materialInput.st;',
+        '  st.x = fract(st.x + u_offset);',
+        '  vec4 color = texture(image, st);',
+        '  material.diffuse = color.rgb;',
+        '  material.alpha = u_alpha;',
+        '  return material;',
+        '}'
+      ].join('\\n');
+
+      // 공통 HSL → RGB 변환 함수
+      function hslToRgb(h, s, l) {
+          var r, g, b;
+          if (s === 0) {
+              r = g = b = l;
+          } else {
+              var hue2rgb = function(p, q, t) {
+                  if (t < 0) t += 1;
+                  if (t > 1) t -= 1;
+                  if (t < 1 / 6) return p + (q - p) * 6 * t;
+                  if (t < 1 / 2) return q;
+                  if (t < 2 / 3) return p + (q - p) * (2 / 3 - t) * 6;
+                  return p;
+              };
+              var q = l < 0.5 ? l * (1 + s) : l + s - l * s;
+              var p = 2 * l - q;
+              r = hue2rgb(p, q, h + 1 / 3);
+              g = hue2rgb(p, q, h);
+              b = hue2rgb(p, q, h - 1 / 3);
+          }
+          return [Math.round(r * 255), Math.round(g * 255), Math.round(b * 255)];
+      }
+
+      // 공통: 데이터 → 캔버스 픽셀 변환 (HSL 무지개 색상, 0.0~1.0 정규화)
+      function paintHeatmapPixels(imgData, width, height, parsed, minVal, maxVal) {
+        var data = imgData.data;
+        var range = maxVal - minVal;
+
+        for (var i = 0; i < parsed.length; i++) {
+          var item = parsed[i];
+          var lat = item.lat, lon = item.lon, val = item.val;
+          var y = Math.floor(90 - lat);
+          var x = Math.floor(lon + 180);
+          if (y >= height) y = height - 1;
+          if (x >= width) x = width - 1;
+          if (y < 0) y = 0;
+          if (x < 0) x = 0;
+
+          var t = range > 0 ? (val - minVal) / range : 0.5;
+          t = Math.max(0, Math.min(1, t));
+
+          // HSL 무지개: 파랑(240) → 빨강(0)
+          var hue = 240 * (1 - t);
+          var rgb = hslToRgb(hue / 360, 1.0, 0.5);
+
+          var idx = (y * width + x) * 4;
+          data[idx] = rgb[0];
+          data[idx + 1] = rgb[1];
+          data[idx + 2] = rgb[2];
+          data[idx + 3] = 160;
+        }
+      }
+
+      // 공통: 통일 스타일 구체 생성 (gridW, gridH = 데이터 해상도에 맞는 격자 수)
+      function createUnifiedHeatmapSphere(canvas, offsetRadius, showFlag, gridW, gridH) {
+        var radius = moonEllipsoid.maximumRadius + offsetRadius;
+        
+        var geometry = new Cesium.EllipsoidGeometry({
+          radii: new Cesium.Cartesian3(radius, radius, radius)
+        });
+
+        return new Cesium.Primitive({
+          geometryInstances: new Cesium.GeometryInstance({ geometry: geometry }),
+          appearance: new Cesium.MaterialAppearance({
+            material: new Cesium.Material({
+              fabric: {
+                type: 'UnifiedHeatmap_' + Date.now() + '_' + Math.random().toString(36).substr(2, 5),
+                uniforms: {
+                  image: canvas,
+                  u_gridW: gridW || 360.0,
+                  u_gridH: gridH || 180.0
+                },
+                source: UNIFIED_HEATMAP_SHADER
+              }
+            }),
+            translucent: true,
+            renderState: {
+                depthTest: { enabled: true },
+                cull: { enabled: true, face: Cesium.CullFace.BACK }
+            }
+          }),
+          show: showFlag
+        });
+      }
+
+      // ==================================================
+      // 1. 광물 (Mineral) 히트맵
+      // ==================================================
       
       function loadMineralData(dataArray, isFirst, isLast) {
         if (isFirst) {
           mineralDataArray = [];
         }
-        mineralDataArray.push(...dataArray);
+        mineralDataArray.push.apply(mineralDataArray, dataArray);
         
         if (isLast) {
           console.log('All mineral data loaded:', mineralDataArray.length, 'total entries');
@@ -35,7 +166,7 @@ export const CESIUM_MAPS = `
       }
 
       function updateGridVisibility(visible) {
-        showGrid = visible; // cesiumInit.js의 전역 플래그 업데이트
+        showGrid = visible;
         if (typeof gridPrimitives !== 'undefined' && gridPrimitives) gridPrimitives.show = visible;
         if (typeof parentPrimitives !== 'undefined' && parentPrimitives) parentPrimitives.show = visible;
         if (typeof pillarPrimitives !== 'undefined' && pillarPrimitives) pillarPrimitives.show = visible;
@@ -43,13 +174,17 @@ export const CESIUM_MAPS = `
       }
 
       function calculateMineralStats(filter) {
-        const values = mineralDataArray
-          .map(item => getMineralValue(item, filter))
-          .filter(v => !isNaN(v) && v !== null && v !== undefined);
+        var values = [];
+        for (var i = 0; i < mineralDataArray.length; i++) {
+          var v = getMineralValue(mineralDataArray[i], filter);
+          if (!isNaN(v) && v !== null && v !== undefined) {
+            values.push(v);
+          }
+        }
         
         if (values.length > 0) {
-          mineralStats.min = Math.min(...values);
-          mineralStats.max = Math.max(...values);
+          mineralStats.min = Math.min.apply(null, values);
+          mineralStats.max = Math.max.apply(null, values);
         }
       }
 
@@ -74,39 +209,43 @@ export const CESIUM_MAPS = `
         if (!activeMineralFilter || mineralDataArray.length === 0) {
           return;
         }
-        
-        const canvas = document.createElement('canvas');
-        canvas.width = 2048;
-        canvas.height = 1024;
-        const ctx = canvas.getContext('2d');
-        ctx.imageSmoothingEnabled = true;
 
-        const range = mineralStats.max - mineralStats.min;
+        var range = mineralStats.max - mineralStats.min;
         if (range === 0) {
           return;
         }
 
-        mineralDataArray.forEach(item => {
-          const val = getMineralValue(item, activeMineralFilter);
-          if (isNaN(val) || val === null || val === undefined) return;
+        // 360x180 캔버스 (셰이더 격자와 일치)
+        var width = 360;
+        var height = 180;
+        var canvas = document.createElement('canvas');
+        canvas.width = width;
+        canvas.height = height;
+        var ctx = canvas.getContext('2d');
+        ctx.clearRect(0, 0, width, height);
 
-          const latMax = item.latMax;
-          const latMin = item.latMin;
-          const lonMin = item.lonMin;
-          const lonMax = item.lonMax;
+        // 광물 데이터는 셀 범위(latMin~latMax, lonMin~lonMax)이므로 fillRect 사용
+        for (var i = 0; i < mineralDataArray.length; i++) {
+          var item = mineralDataArray[i];
+          var val = getMineralValue(item, activeMineralFilter);
+          if (isNaN(val) || val === null || val === undefined) continue;
 
-          let normalized = (val - mineralStats.min) / range;
+          var normalized = (val - mineralStats.min) / range;
           normalized = Math.max(0, Math.min(1, normalized));
 
-          const x = (lonMin + 180) * (canvas.width / 360);
-          const y = (90 - latMax) * (canvas.height / 180);
-          const w = (lonMax - lonMin) * (canvas.width / 360);
-          const h = (latMax - latMin) * (canvas.height / 180);
+          var hue = 240 * (1 - normalized);
+          var rgb = hslToRgb(hue / 360, 1.0, 0.5);
 
-          const hue = 240 - (normalized * 240);
-          ctx.fillStyle = \`hsl(\${hue}, 100%, 50%)\`;
-          ctx.fillRect(x, y, w + 0.5, h + 0.5);
-        });
+          // 360x180 캔버스 좌표로 변환
+          var x = (item.lonMin + 180) * (width / 360);
+          var y = (90 - item.latMax) * (height / 180);
+          var w = (item.lonMax - item.lonMin) * (width / 360);
+          var h = (item.latMax - item.latMin) * (height / 180);
+
+          // rgba: alpha 0.63 = 다른 히트맵의 160/255와 동일
+          ctx.fillStyle = 'rgba(' + rgb[0] + ',' + rgb[1] + ',' + rgb[2] + ',0.63)';
+          ctx.fillRect(x, y, Math.max(w, 1), Math.max(h, 1));
+        }
 
         if (geologicPrimitive && geologicPrimitive.appearance && geologicPrimitive.appearance.material) {
           geologicPrimitive.appearance.material.uniforms.image = canvas;
@@ -114,54 +253,28 @@ export const CESIUM_MAPS = `
       }
 
       function createMineralSphere() {
-        const moonEllipsoid = Cesium.Ellipsoid.MOON;
-        const geometry = new Cesium.EllipsoidGeometry({
-          radii: new Cesium.Cartesian3(
-            moonEllipsoid.maximumRadius + 18500,
-            moonEllipsoid.maximumRadius + 18500,
-            moonEllipsoid.maximumRadius + 18500
-          )
-        });
-
-        geologicPrimitive = new Cesium.Primitive({
-          geometryInstances: new Cesium.GeometryInstance({ geometry: geometry }),
-          appearance: new Cesium.MaterialAppearance({
-            material: new Cesium.Material({
-              fabric: {
-                type: 'LunarMineralMaterial',
-                uniforms: {
-                  image: document.createElement('canvas'),
-                  u_offset: 0.5,
-                  u_alpha: mineralOpacity
-                },
-                source: \`
-                  czm_material czm_getMaterial(czm_materialInput materialInput) {
-                    czm_material material = czm_getDefaultMaterial(materialInput);
-                    vec2 st = materialInput.st;
-                    st.x = fract(st.x + u_offset);
-                    vec4 color = texture(image, st);
-                    material.diffuse = color.rgb;
-                    material.alpha = u_alpha;
-                    return material;
-                  }
-                \`
-              }
-            })
-          }),
-          show: false
-        });
+        // 광물 데이터는 2도 해상도 → 격자 180x90
+        geologicPrimitive = createUnifiedHeatmapSphere(
+          document.createElement('canvas'),
+          20000,
+          false,
+          180.0,
+          90.0
+        );
         
         viewer.scene.primitives.add(geologicPrimitive);
       }
 
-      // --- Temperature Map Functions ---
+      // ==================================================
+      // 2. 온도 맵 (이미지 오버레이 — 기존 유지, 자원 스캐너에서는 미사용)
+      // ==================================================
 
       function loadTempMapImage(base64Data) {
         tempMapImageData = base64Data;
         if (!tempMapPrimitive) {
           createTempMapSphere();
         }
-        const img = new Image();
+        var img = new Image();
         img.onload = function() {
           if (tempMapPrimitive && tempMapPrimitive.appearance && tempMapPrimitive.appearance.material) {
             tempMapPrimitive.appearance.material.uniforms.image = img;
@@ -171,12 +284,12 @@ export const CESIUM_MAPS = `
       }
 
       function createTempMapSphere() {
-        const moonEllipsoid = Cesium.Ellipsoid.MOON;
-        const geometry = new Cesium.EllipsoidGeometry({
+        var moonEll = Cesium.Ellipsoid.MOON;
+        var geometry = new Cesium.EllipsoidGeometry({
           radii: new Cesium.Cartesian3(
-            moonEllipsoid.maximumRadius,
-            moonEllipsoid.maximumRadius,
-            moonEllipsoid.maximumRadius
+            moonEll.maximumRadius,
+            moonEll.maximumRadius,
+            moonEll.maximumRadius
           )
         });
 
@@ -191,17 +304,7 @@ export const CESIUM_MAPS = `
                   u_offset: 0.0,
                   u_alpha: 1.0
                 },
-                source: \`
-                  czm_material czm_getMaterial(czm_materialInput materialInput) {
-                    czm_material material = czm_getDefaultMaterial(materialInput);
-                    vec2 st = materialInput.st;
-                    st.x = fract(st.x + u_offset);
-                    vec4 color = texture(image, st);
-                    material.diffuse = color.rgb;
-                    material.alpha = u_alpha;
-                    return material;
-                  }
-                \`
+                source: TEMP_MAP_SHADER
               }
             }),
             renderState: {
@@ -246,7 +349,9 @@ export const CESIUM_MAPS = `
         } catch(e) { console.warn('dat.gui error:', e); }
       }
 
-      // --- Thermal Grid Functions ---
+      // ==================================================
+      // 3. 열 그리드 (Thermal Grid) — ★ 기준 스타일
+      // ==================================================
       
       function processThermalGridData(csvContent) {
         thermalGridCsvContent = csvContent;
@@ -263,149 +368,40 @@ export const CESIUM_MAPS = `
         }
 
         console.log('Rendering thermal grid data... Day Mode:', isDayTempMode);
-        const lines = thermalGridCsvContent.split('\\n');
+        var lines = thermalGridCsvContent.split('\\n');
         
-        const width = 360;
-        const height = 180;
-        const canvas = document.createElement('canvas');
+        var width = 360;
+        var height = 180;
+        var canvas = document.createElement('canvas');
         canvas.width = width;
         canvas.height = height;
-        const ctx = canvas.getContext('2d');
-        
+        var ctx = canvas.getContext('2d');
         ctx.clearRect(0, 0, width, height);
 
-        const minTemp = isDayTempMode ? 200 : 40;
-        const maxTemp = isDayTempMode ? 390 : 100;
-        const tempRange = maxTemp - minTemp;
+        var minTemp = isDayTempMode ? 200 : 40;
+        var maxTemp = isDayTempMode ? 390 : 100;
         
-        const imgData = ctx.createImageData(width, height);
-        const data = imgData.data;
-
-        for (let i = 1; i < lines.length; i++) {
-          const line = lines[i].trim();
+        var parsed = [];
+        for (var i = 1; i < lines.length; i++) {
+          var line = lines[i].trim();
           if (!line) continue;
-          
-          const parts = line.split(',');
+          var parts = line.split(',');
           if (parts.length < 4) continue;
-          
-          const lat = parseFloat(parts[0]);
-          const lon = parseFloat(parts[1]);
-          const dayMax = parseFloat(parts[2]);
-          const nightMin = parseFloat(parts[3]);
-          
+          var lat = parseFloat(parts[0]);
+          var lon = parseFloat(parts[1]);
+          var dayMax = parseFloat(parts[2]);
+          var nightMin = parseFloat(parts[3]);
           if (isNaN(lat) || isNaN(lon)) continue;
-
-          const temp = isDayTempMode ? dayMax : nightMin;
+          var temp = isDayTempMode ? dayMax : nightMin;
           if (isNaN(temp)) continue;
-
-          let y = Math.floor(90 - lat);
-          let x = Math.floor(lon + 180);
-          
-          if (y >= height) y = height - 1;
-          if (x >= width) x = width - 1;
-          
-          const index = (y * width + x) * 4;
-          
-          let t = (temp - minTemp) / tempRange;
-          t = Math.max(0, Math.min(1, t));
-          
-          const hue = 240 * (1 - t);
-          
-          const [r, g, b] = hslToRgb(hue / 360, 1.0, 0.5);
-          
-          data[index] = r;
-          data[index + 1] = g;
-          data[index + 2] = b;
-          data[index + 3] = 160;
+          parsed.push({ lat: lat, lon: lon, val: temp });
         }
-        
+
+        var imgData = ctx.createImageData(width, height);
+        paintHeatmapPixels(imgData, width, height, parsed, minTemp, maxTemp);
         ctx.putImageData(imgData, 0, 0);
-        createThermalGridSphere(canvas);
-      }
 
-      function hslToRgb(h, s, l) {
-          let r, g, b;
-          if (s === 0) {
-              r = g = b = l;
-          } else {
-              const hue2rgb = (p, q, t) => {
-                  if (t < 0) t += 1;
-                  if (t > 1) t -= 1;
-                  if (t < 1 / 6) return p + (q - p) * 6 * t;
-                  if (t < 1 / 2) return q;
-                  if (t < 2 / 3) return p + (q - p) * (2 / 3 - t) * 6;
-                  return p;
-              };
-              const q = l < 0.5 ? l * (1 + s) : l + s - l * s;
-              const p = 2 * l - q;
-              r = hue2rgb(p, q, h + 1 / 3);
-              g = hue2rgb(p, q, h);
-              b = hue2rgb(p, q, h - 1 / 3);
-          }
-          return [Math.round(r * 255), Math.round(g * 255), Math.round(b * 255)];
-      }
-
-      function createThermalGridSphere(canvas) {
-        const moonEllipsoid = Cesium.Ellipsoid.MOON;
-        const radius = moonEllipsoid.maximumRadius + 20000;
-        
-        const geometry = new Cesium.EllipsoidGeometry({
-          radii: new Cesium.Cartesian3(radius, radius, radius)
-        });
-
-        thermalGridPrimitive = new Cesium.Primitive({
-          geometryInstances: new Cesium.GeometryInstance({ geometry: geometry }),
-          appearance: new Cesium.MaterialAppearance({
-            material: new Cesium.Material({
-              fabric: {
-                type: 'LunarThermalGridMaterial',
-                uniforms: {
-                  image: canvas
-                },
-                source: \`
-                  czm_material czm_getMaterial(czm_materialInput materialInput) {
-                    czm_material material = czm_getDefaultMaterial(materialInput);
-                    vec2 st = materialInput.st;
-
-                    float width = 360.0;
-                    float height = 180.0;
-
-                    float dx = 1.0 / width;
-                    float dy = 1.0 / height;
-                    vec2 st_nearest = vec2(
-                      (floor(st.x * width) + 0.5) * dx,
-                      (floor(st.y * height) + 0.5) * dy
-                    );
-                    
-                    vec4 color = texture(image, st_nearest);
-
-                    float cellX = fract(st.x * width);
-                    float cellY = fract(st.y * height);
-
-                    float border = 0.05;
-
-                    if (cellX < border || cellX > 1.0 - border || cellY < border || cellY > 1.0 - border) {
-                      material.diffuse = color.rgb * 0.7;
-                      material.alpha = min(1.0, color.a + 0.2);
-                    } else {
-                      material.diffuse = color.rgb;
-                      material.alpha = color.a;
-                    }
-
-                    return material;
-                  }
-                \`
-              }
-            }),
-            translucent: true,
-            renderState: {
-                depthTest: { enabled: true },
-                cull: { enabled: true, face: Cesium.CullFace.BACK }
-            }
-          }),
-          show: showThermalGrid
-        });
-        
+        thermalGridPrimitive = createUnifiedHeatmapSphere(canvas, 20000, showThermalGrid);
         viewer.scene.primitives.add(thermalGridPrimitive);
       }
 
@@ -416,7 +412,9 @@ export const CESIUM_MAPS = `
         }
       }
 
-      // --- Gravity Anomaly Map Functions ---
+      // ==================================================
+      // 4. 중력 이상 (Gravity Anomaly) — 통일 스타일 적용
+      // ==================================================
 
       function processGravityData(csvContent) {
         gravityCsvContent = csvContent;
@@ -433,126 +431,42 @@ export const CESIUM_MAPS = `
         }
 
         console.log('Rendering gravity anomaly map...');
-        const lines = gravityCsvContent.split('\\n');
+        var lines = gravityCsvContent.split('\\n');
 
-        let minGrav = Infinity, maxGrav = -Infinity;
-        const parsed = [];
-        for (let i = 1; i < lines.length; i++) {
-          const line = lines[i].trim();
+        var minGrav = Infinity, maxGrav = -Infinity;
+        var parsed = [];
+        for (var i = 1; i < lines.length; i++) {
+          var line = lines[i].trim();
           if (!line) continue;
-          const parts = line.split(',');
+          var parts = line.split(',');
           if (parts.length < 3) continue;
-          const lat = parseFloat(parts[0]);
-          const lon = parseFloat(parts[1]);
-          const grav = parseFloat(parts[2]);
+          var lat = parseFloat(parts[0]);
+          var lon = parseFloat(parts[1]);
+          var grav = parseFloat(parts[2]);
           if (isNaN(lat) || isNaN(lon) || isNaN(grav)) continue;
-          parsed.push({ lat, lon, grav });
+          parsed.push({ lat: lat, lon: lon, val: grav });
           if (grav < minGrav) minGrav = grav;
           if (grav > maxGrav) maxGrav = grav;
         }
 
         console.log('Gravity range:', minGrav, 'to', maxGrav, 'mGal,', parsed.length, 'points');
 
-        const width = 360;
-        const height = 180;
-        const canvas = document.createElement('canvas');
+        var width = 360;
+        var height = 180;
+        var canvas = document.createElement('canvas');
         canvas.width = width;
         canvas.height = height;
-        const ctx = canvas.getContext('2d');
+        var ctx = canvas.getContext('2d');
         ctx.clearRect(0, 0, width, height);
 
-        const imgData = ctx.createImageData(width, height);
-        const data = imgData.data;
-
-        for (const { lat, lon, grav } of parsed) {
-          let y = Math.floor(90 - lat);
-          let x = Math.floor(lon + 180);
-          if (y >= height) y = height - 1;
-          if (x >= width) x = width - 1;
-          if (y < 0) y = 0;
-          if (x < 0) x = 0;
-
-          const index = (y * width + x) * 4;
-          let r, g, b;
-
-          if (grav < 0) {
-            const t = Math.min(1, Math.abs(grav) / Math.abs(minGrav));
-            r = Math.round(255 * (1 - t));
-            g = Math.round(255 * (1 - t));
-            b = 255;
-          } else {
-            const t = Math.min(1, grav / maxGrav);
-            r = 255;
-            g = Math.round(255 * (1 - t));
-            b = Math.round(255 * (1 - t));
-          }
-
-          data[index] = r;
-          data[index + 1] = g;
-          data[index + 2] = b;
-          data[index + 3] = 180;
-        }
-
+        var imgData = ctx.createImageData(width, height);
+        paintHeatmapPixels(imgData, width, height, parsed, minGrav, maxGrav);
         ctx.putImageData(imgData, 0, 0);
-        createGravitySphere(canvas);
+
+        gravityPrimitive = createUnifiedHeatmapSphere(canvas, 20000, showGravityMap);
+        viewer.scene.primitives.add(gravityPrimitive);
 
         sendToRN('GRAVITY_RANGE', { min: Math.round(minGrav), max: Math.round(maxGrav) });
-      }
-
-      function createGravitySphere(canvas) {
-        const radius = moonEllipsoid.maximumRadius + 15000;
-
-        const geometry = new Cesium.EllipsoidGeometry({
-          radii: new Cesium.Cartesian3(radius, radius, radius)
-        });
-
-        gravityPrimitive = new Cesium.Primitive({
-          geometryInstances: new Cesium.GeometryInstance({ geometry: geometry }),
-          appearance: new Cesium.MaterialAppearance({
-            material: new Cesium.Material({
-              fabric: {
-                type: 'LunarGravityMaterial_' + Date.now(),
-                uniforms: {
-                  image: canvas,
-                  u_showGrid: gravityGridMode ? 1.0 : 0.0
-                },
-                source: \`
-                  czm_material czm_getMaterial(czm_materialInput materialInput) {
-                    czm_material material = czm_getDefaultMaterial(materialInput);
-                    vec2 st = materialInput.st;
-                    float width = 360.0;
-                    float height = 180.0;
-
-                    if (u_showGrid > 0.5) {
-                      float dx = 1.0 / width;
-                      float dy = 1.0 / height;
-                      vec2 st_nearest = vec2(
-                        (floor(st.x * width) + 0.5) * dx,
-                        (floor(st.y * height) + 0.5) * dy
-                      );
-                      vec4 color = texture(image, st_nearest);
-                      material.diffuse = color.rgb;
-                      material.alpha = color.a;
-                    } else {
-                      vec4 color = texture(image, st);
-                      material.diffuse = color.rgb;
-                      material.alpha = color.a;
-                    }
-                    return material;
-                  }
-                \`
-              }
-            }),
-            translucent: true,
-            renderState: {
-              depthTest: { enabled: true },
-              cull: { enabled: true, face: Cesium.CullFace.BACK }
-            }
-          }),
-          show: showGravityMap
-        });
-
-        viewer.scene.primitives.add(gravityPrimitive);
       }
 
       function toggleGravityMap(enabled) {
@@ -564,12 +478,12 @@ export const CESIUM_MAPS = `
 
       function toggleGravityGridMode(enabled) {
         gravityGridMode = enabled;
-        if (gravityPrimitive && gravityPrimitive.appearance && gravityPrimitive.appearance.material) {
-          gravityPrimitive.appearance.material.uniforms.u_showGrid = enabled ? 1.0 : 0.0;
-        }
+        // 통일 스타일에서는 항상 그리드가 켜져있으므로 이 함수는 호환성 유지용
       }
 
-      // --- Neutron (Hydrogen) Map Functions ---
+      // ==================================================
+      // 5. 중성자/수소 (Neutron) — 통일 스타일 적용
+      // ==================================================
 
       function processNeutronData(csvContent) {
         neutronCsvContent = csvContent;
@@ -585,22 +499,22 @@ export const CESIUM_MAPS = `
           neutronPrimitive = null;
         }
 
-        let minVal = Infinity, maxVal = -Infinity;
-        const parsed = [];
-        const lines = neutronCsvContent.split(String.fromCharCode(10));
+        var minVal = Infinity, maxVal = -Infinity;
+        var parsed = [];
+        var lines = neutronCsvContent.split(String.fromCharCode(10));
 
-        for (let i = 1; i < lines.length; i++) {
-          const line = lines[i].trim();
+        for (var i = 1; i < lines.length; i++) {
+          var line = lines[i].trim();
           if (!line) continue;
-          const parts = line.split(',');
+          var parts = line.split(',');
           if (parts.length < 3) continue;
-          const lat = parseFloat(parts[0]);
-          const lon = parseFloat(parts[1]);
-          const val = parseFloat(parts[2]);
+          var lat = parseFloat(parts[0]);
+          var lon = parseFloat(parts[1]);
+          var val = parseFloat(parts[2]);
           
           if (isNaN(lat) || isNaN(lon) || isNaN(val)) continue;
           
-          parsed.push({ lat, lon, val });
+          parsed.push({ lat: lat, lon: lon, val: val });
           
           if (val < minVal) minVal = val;
           if (val > maxVal) maxVal = val;
@@ -608,99 +522,22 @@ export const CESIUM_MAPS = `
 
         console.log('Neutron range:', minVal, 'to', maxVal, ', Total points:', parsed.length);
 
-        const width = 360;
-        const height = 180;
-        const canvas = document.createElement('canvas');
+        var width = 360;
+        var height = 180;
+        var canvas = document.createElement('canvas');
         canvas.width = width;
         canvas.height = height;
-        const ctx = canvas.getContext('2d');
+        var ctx = canvas.getContext('2d');
         ctx.clearRect(0, 0, width, height);
 
-        const imgData = ctx.createImageData(width, height);
-        const data = imgData.data;
-        const range = maxVal - minVal;
-
-        for (const { lat, lon, val } of parsed) {
-          let y = Math.floor(90 - lat);
-          let x = Math.floor(lon + 180);
-          if (y >= height) y = height - 1;
-          if (x >= width) x = width - 1;
-          if (y < 0) y = 0;
-          if (x < 0) x = 0;
-
-          const t = range > 0 ? (val - minVal) / range : 0.5;
-
-          const r = Math.round(30 + (180 - 30) * t);
-          const g = Math.round(100 + (180 - 100) * t);
-          const b = Math.round(255 + (180 - 255) * t);
-
-          const index = (y * width + x) * 4;
-          data[index] = r;
-          data[index + 1] = g;
-          data[index + 2] = b;
-          data[index + 3] = 180;
-        }
-
+        var imgData = ctx.createImageData(width, height);
+        paintHeatmapPixels(imgData, width, height, parsed, minVal, maxVal);
         ctx.putImageData(imgData, 0, 0);
-        createNeutronSphere(canvas);
+
+        neutronPrimitive = createUnifiedHeatmapSphere(canvas, 20000, showNeutronMap);
+        viewer.scene.primitives.add(neutronPrimitive);
 
         sendToRN('NEUTRON_RANGE', { min: Math.round(minVal), max: Math.round(maxVal) });
-      }
-
-      function createNeutronSphere(canvas) {
-        const radius = moonEllipsoid.maximumRadius + 16000;
-
-        const geometry = new Cesium.EllipsoidGeometry({
-          radii: new Cesium.Cartesian3(radius, radius, radius)
-        });
-
-        neutronPrimitive = new Cesium.Primitive({
-          geometryInstances: new Cesium.GeometryInstance({ geometry: geometry }),
-          appearance: new Cesium.MaterialAppearance({
-            material: new Cesium.Material({
-              fabric: {
-                type: 'LunarNeutronMaterial_' + Date.now(),
-                uniforms: {
-                  image: canvas,
-                  u_showGrid: neutronGridMode ? 1.0 : 0.0
-                },
-                source: \`
-                  czm_material czm_getMaterial(czm_materialInput materialInput) {
-                    czm_material material = czm_getDefaultMaterial(materialInput);
-                    vec2 st = materialInput.st;
-                    float width = 360.0;
-                    float height = 180.0;
-
-                    if (u_showGrid > 0.5) {
-                      float dx = 1.0 / width;
-                      float dy = 1.0 / height;
-                      vec2 st_nearest = vec2(
-                        (floor(st.x * width) + 0.5) * dx,
-                        (floor(st.y * height) + 0.5) * dy
-                      );
-                      vec4 color = texture(image, st_nearest);
-                      material.diffuse = color.rgb;
-                      material.alpha = color.a;
-                    } else {
-                      vec4 color = texture(image, st);
-                      material.diffuse = color.rgb;
-                      material.alpha = color.a;
-                    }
-                    return material;
-                  }
-                \`
-              }
-            }),
-            translucent: true,
-            renderState: {
-              depthTest: { enabled: true },
-              cull: { enabled: true, face: Cesium.CullFace.BACK }
-            }
-          }),
-          show: showNeutronMap
-        });
-
-        viewer.scene.primitives.add(neutronPrimitive);
       }
 
       function toggleNeutronMap(enabled) {
@@ -712,8 +549,6 @@ export const CESIUM_MAPS = `
 
       function toggleNeutronGridMode(enabled) {
         neutronGridMode = enabled;
-        if (neutronPrimitive && neutronPrimitive.appearance && neutronPrimitive.appearance.material) {
-          neutronPrimitive.appearance.material.uniforms.u_showGrid = enabled ? 1.0 : 0.0;
-        }
+        // 통일 스타일에서는 항상 그리드가 켜져있으므로 이 함수는 호환성 유지용
       }
 `;

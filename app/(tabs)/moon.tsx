@@ -9,10 +9,13 @@ import { useLocalSearchParams } from 'expo-router';
 import { createCesiumHtml } from '@/constants/cesium/CesiumHtml';
 import { loadMineralData } from '@/utils/mineralDataLoader';
 import AR2MoonViewer from '@/components/AR2MoonViewer';
+import ResourceScannerPanel from '@/components/ResourceScannerPanel';
 import { Asset } from 'expo-asset';
 import * as FileSystem from 'expo-file-system/legacy';
 import { LIVE_MISSIONS, Spacecraft } from '@/constants/SpacecraftData';
 import { fetchSpacecraftPosition, fetchSpacecraftTrajectory } from '@/services/HorizonsApi';
+import { LANDING_SITES, LandingSite, sortByYear, sortByCountry, findNearbySites, getContactColor, COUNTRY_NAMES } from '@/constants/LandingSiteData';
+import { LUNAR_FEATURES, LunarFeature, sortByType, sortBySize, getFeatureTypeColor, getFeatureTypeEmoji, formatArea, isFarSide } from '@/constants/LunarFeatureData';
 
 export default function MoonScreen() {
   const webviewRef = useRef<WebView>(null);
@@ -20,8 +23,8 @@ export default function MoonScreen() {
   const [showGrid, setShowGrid] = useState(true);
 
   // 모드 상태 추가
-  const [mainMode, setMainMode] = useState<'exploration' | 'occupation' | 'occupation2'>('exploration');
-  const isOccupation = mainMode === 'occupation' || mainMode === 'occupation2';
+  const [mainMode, setMainMode] = useState<'exploration' | 'occupation' | 'occupation2' | 'occupation3'>('exploration');
+  const isOccupation = mainMode === 'occupation' || mainMode === 'occupation2' || mainMode === 'occupation3';
   const [subMode, setSubMode] = useState<'space' | 'firstPerson'>('space');
   const [canGoBack, setCanGoBack] = useState(false);
   const [showFilterModal, setShowFilterModal] = useState(false);
@@ -67,6 +70,27 @@ export default function MoonScreen() {
   ).current;
 
   // 탐사 모드(Exploration) 동적 상태 및 위성 선택 상태
+  const SAT_PANEL_COLLAPSED = Dimensions.get('window').height * 0.60;
+  const SAT_PANEL_EXPANDED = Dimensions.get('window').height * 0.15;
+  const satPanelAnim = useRef(new Animated.Value(SAT_PANEL_COLLAPSED)).current;
+  const satPanelOffsetRef = useRef(SAT_PANEL_COLLAPSED);
+  const satPanelPanResponder = useRef(
+    PanResponder.create({
+      onStartShouldSetPanResponder: () => true,
+      onMoveShouldSetPanResponder: (_, g) => Math.abs(g.dy) > 5,
+      onPanResponderMove: (_, g) => {
+        const newVal = Math.max(SAT_PANEL_EXPANDED, Math.min(SAT_PANEL_COLLAPSED, satPanelOffsetRef.current + g.dy));
+        satPanelAnim.setValue(newVal);
+      },
+      onPanResponderRelease: (_, g) => {
+        const cur = satPanelOffsetRef.current + g.dy;
+        const mid = (SAT_PANEL_COLLAPSED + SAT_PANEL_EXPANDED) / 2;
+        const target = cur > mid ? SAT_PANEL_COLLAPSED : SAT_PANEL_EXPANDED;
+        Animated.spring(satPanelAnim, { toValue: target, useNativeDriver: false, bounciness: 4, speed: 14 }).start();
+        satPanelOffsetRef.current = target;
+      },
+    })
+  ).current;
   const [selectedSatellite, setSelectedSatellite] = useState<any>(null);
   const [showAR2Viewer, setShowAR2Viewer] = useState(false);
   const [showTempMap, setShowTempMap] = useState(false);
@@ -86,12 +110,30 @@ export default function MoonScreen() {
   // 부가기능 패널 상태
   const [showFeaturePanel, setShowFeaturePanel] = useState(false);
   const [featureListView, setFeatureListView] = useState<'none' | 'landing' | 'terrain' | 'satellite'>('none');
+
+  // 자원 스캐너 상태
+  const [showResourceScanner, setShowResourceScanner] = useState(false);
+  const [activeScannedResource, setActiveScannedResource] = useState<string | null>(null);
   const [showLandingSites, setShowLandingSites] = useState(false);
   const [showTerrain, setShowTerrain] = useState(false);
   const [showSatellites, setShowSatellites] = useState(false);
 
   const [landmarkListData, setLandmarkListData] = useState<any>(null);
   const [selectedLandmark, setSelectedLandmark] = useState<any>(null);
+  const [selectedLandingSite, setSelectedLandingSite] = useState<LandingSite | null>(null);
+  const [landingSiteDetailMode, setLandingSiteDetailMode] = useState<'detail' | 'view'>('detail');
+  const [landingSortMode, setLandingSortMode] = useState<'year' | 'country'>('year');
+  const sortedLandingSites = useMemo(() => {
+    return landingSortMode === 'year' ? sortByYear(LANDING_SITES) : sortByCountry(LANDING_SITES);
+  }, [landingSortMode]);
+
+  // ═══ 대표 지형 ═══
+  const [selectedFeature, setSelectedFeature] = useState<LunarFeature | null>(null);
+  const [featureDetailMode, setFeatureDetailMode] = useState<'detail' | 'view'>('detail');
+  const [featureSortMode, setFeatureSortMode] = useState<'type' | 'size'>('type');
+  const sortedFeatures = useMemo(() => {
+    return featureSortMode === 'type' ? sortByType(LUNAR_FEATURES) : sortBySize(LUNAR_FEATURES);
+  }, [featureSortMode]);
 
   // ═══ Phase 2: GLB 모델 (+5초) ═══
   // 달 3D 타일 렌더링 안정화 후 모델 주입
@@ -355,8 +397,8 @@ export default function MoonScreen() {
           setSelectedCell(message.payload);
           setCellExpanded(false);
           setMagCost(message.payload.magCount || message.payload.cellCount || 1);
-          // 점유모드2에서는 시트를 접힌 상태로 시작
-          if (mainMode === 'occupation2') {
+          // 점유모드2/3에서는 시트를 접힌 상태로 시작
+          if (mainMode === 'occupation2' || mainMode === 'occupation3') {
             sheetTranslateY.setValue(SHEET_COLLAPSE);
             sheetOffset.current = SHEET_COLLAPSE;
           } else {
@@ -414,15 +456,27 @@ export default function MoonScreen() {
     }
   };
 
-  // 컨트롤 핸들러
+  // 컨트롤 핸들러 — 탐사/점유 완전 독립
   const handleZoomIn = () => {
-    if (currentZoomLevel >= MAX_ZOOM_LEVEL) return;
-    webviewRef.current?.postMessage(JSON.stringify({ type: 'ZOOM_IN' }));
+    if (mainMode === 'exploration') {
+      // 탐사모드: 레벨 제한 없이 절대값 줌인
+      webviewRef.current?.postMessage(JSON.stringify({ type: 'EXPLORE_ZOOM_IN' }));
+    } else {
+      // 점유모드: 레벨 기반 단계 줌
+      if (currentZoomLevel >= MAX_ZOOM_LEVEL) return;
+      webviewRef.current?.postMessage(JSON.stringify({ type: 'ZOOM_IN' }));
+    }
   };
 
   const handleZoomOut = () => {
-    if (currentZoomLevel <= 0) return;
-    webviewRef.current?.postMessage(JSON.stringify({ type: 'ZOOM_OUT' }));
+    if (mainMode === 'exploration') {
+      // 탐사모드: 레벨 제한 없이 절대값 줌아웃
+      webviewRef.current?.postMessage(JSON.stringify({ type: 'EXPLORE_ZOOM_OUT' }));
+    } else {
+      // 점유모드: 레벨 기반 단계 줌
+      if (currentZoomLevel <= 0) return;
+      webviewRef.current?.postMessage(JSON.stringify({ type: 'ZOOM_OUT' }));
+    }
   };
 
   const handleReset = () => {
@@ -480,10 +534,11 @@ export default function MoonScreen() {
           return newF;
         });
       }
-      // PL 모드 해제
+      // PL/TR 모드 해제
       webviewRef.current?.postMessage(JSON.stringify({ type: 'EXIT_PL_MODE' }));
+      webviewRef.current?.postMessage(JSON.stringify({ type: 'EXIT_TR_MODE' }));
     } else {
-      // 점유 모드(occupation/occupation2)로 전환 시
+      // 점유 모드(occupation/occupation2/occupation3)로 전환 시
       if (showLandingSites || showTerrain) {
         setShowLandingSites(false);
         setShowTerrain(false);
@@ -501,11 +556,16 @@ export default function MoonScreen() {
       setShowGrid(true);
       webviewRef.current?.postMessage(JSON.stringify({ type: 'UPDATE_GRID_VISIBILITY', visible: true }));
 
-      // PL 모드 전환: occupation2일 때만 ENTER_PL_MODE 전송
+      // PL/TR 모드 전환
       if (mainMode === 'occupation2') {
         webviewRef.current?.postMessage(JSON.stringify({ type: 'ENTER_PL_MODE' }));
+        webviewRef.current?.postMessage(JSON.stringify({ type: 'EXIT_TR_MODE' }));
+      } else if (mainMode === 'occupation3') {
+        webviewRef.current?.postMessage(JSON.stringify({ type: 'EXIT_PL_MODE' }));
+        webviewRef.current?.postMessage(JSON.stringify({ type: 'ENTER_TR_MODE' }));
       } else {
         webviewRef.current?.postMessage(JSON.stringify({ type: 'EXIT_PL_MODE' }));
+        webviewRef.current?.postMessage(JSON.stringify({ type: 'EXIT_TR_MODE' }));
       }
     }
   }, [mainMode]);
@@ -650,6 +710,68 @@ export default function MoonScreen() {
       type: 'UPDATE_GRID_VISIBILITY',
       visible: newValue
     }));
+  };
+
+  // 자원 스캐너 — 자원 선택 핸들러 (기존 히트맵 토글 함수 재사용)
+  const handleResourceSelect = (resourceKey: string) => {
+    // 같은 자원 재클릭 = 해제
+    if (activeScannedResource === resourceKey) {
+      // 이전 활성 자원 끄기
+      deactivateResource(resourceKey);
+      setActiveScannedResource(null);
+      return;
+    }
+
+    // 이전 활성 자원 끄기
+    if (activeScannedResource) {
+      deactivateResource(activeScannedResource);
+    }
+
+    // 새 자원 켜기
+    activateResource(resourceKey);
+    setActiveScannedResource(resourceKey);
+  };
+
+  const activateResource = (key: string) => {
+    const mineralKeys = ['feo', 'tio2', 'mgo', 'al2o3', 'sio2', 'cao', 'k', 'th', 'u'];
+    if (mineralKeys.includes(key)) {
+      // 이전 광물 필터 해제
+      if (activeMineralFilter) {
+        webviewRef.current?.postMessage(JSON.stringify({ type: 'UPDATE_MINERAL_FILTER', filter: activeMineralFilter, enabled: false }));
+      }
+      webviewRef.current?.postMessage(JSON.stringify({ type: 'UPDATE_MINERAL_FILTER', filter: key, enabled: true }));
+      setActiveMineralFilter(key);
+    } else if (key === 'thermalGrid') {
+      // 데이터 기반 온도 히트맵
+      if (!showThermalGrid) { setShowThermalGrid(true); webviewRef.current?.postMessage(JSON.stringify({ type: 'TOGGLE_THERMAL_GRID', enabled: true })); }
+    } else if (key === 'gravity') {
+      if (!showGravityMap) { setShowGravityMap(true); webviewRef.current?.postMessage(JSON.stringify({ type: 'TOGGLE_GRAVITY_MAP', enabled: true })); }
+    } else if (key === 'neutron') {
+      if (!showNeutronMap) { setShowNeutronMap(true); webviewRef.current?.postMessage(JSON.stringify({ type: 'TOGGLE_NEUTRON_MAP', enabled: true })); }
+    }
+  };
+
+  const deactivateResource = (key: string) => {
+    const mineralKeys = ['feo', 'tio2', 'mgo', 'al2o3', 'sio2', 'cao', 'k', 'th', 'u'];
+    if (mineralKeys.includes(key)) {
+      webviewRef.current?.postMessage(JSON.stringify({ type: 'UPDATE_MINERAL_FILTER', filter: key, enabled: false }));
+      setActiveMineralFilter(null);
+    } else if (key === 'thermalGrid') {
+      setShowThermalGrid(false); webviewRef.current?.postMessage(JSON.stringify({ type: 'TOGGLE_THERMAL_GRID', enabled: false }));
+    } else if (key === 'gravity') {
+      setShowGravityMap(false); webviewRef.current?.postMessage(JSON.stringify({ type: 'TOGGLE_GRAVITY_MAP', enabled: false }));
+    } else if (key === 'neutron') {
+      setShowNeutronMap(false); webviewRef.current?.postMessage(JSON.stringify({ type: 'TOGGLE_NEUTRON_MAP', enabled: false }));
+    }
+  };
+
+  const closeResourceScanner = () => {
+    // 패널 닫을 때 활성 자원 해제
+    if (activeScannedResource) {
+      deactivateResource(activeScannedResource);
+      setActiveScannedResource(null);
+    }
+    setShowResourceScanner(false);
   };
 
   // 초기 그리드 상태 동기화
@@ -838,21 +960,15 @@ export default function MoonScreen() {
             >
               <Text style={[styles.modeTabText, mainMode === 'occupation2' && styles.modeTabTextActive]}>점유모드2</Text>
             </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.modeTab, mainMode === 'occupation3' && styles.modeTabActive]}
+              onPress={() => setMainMode('occupation3')}
+            >
+              <Text style={[styles.modeTabText, mainMode === 'occupation3' && styles.modeTabTextActive]}>점유모드3</Text>
+            </TouchableOpacity>
 
           </View>
         </View>
-
-        {/* 탐사 모드 서브 토글 (우주 뷰 / 1인칭 뷰) */}
-        {mainMode === 'exploration' && (
-          <View style={styles.subModeToggleContainer}>
-            <TouchableOpacity onPress={() => setSubMode('space')} style={[styles.subModeTab, subMode === 'space' && styles.subModeTabActive]}>
-              <Text style={[styles.subModeTabText, subMode === 'space' && styles.subModeTabTextActive]}>우주 뷰</Text>
-            </TouchableOpacity>
-            <TouchableOpacity onPress={() => setSubMode('firstPerson')} style={[styles.subModeTab, subMode === 'firstPerson' && styles.subModeTabActive]}>
-              <Text style={[styles.subModeTabText, subMode === 'firstPerson' && styles.subModeTabTextActive]}>1인칭 뷰</Text>
-            </TouchableOpacity>
-          </View>
-        )}
 
 
 
@@ -891,6 +1007,24 @@ export default function MoonScreen() {
               <Text style={styles.magBalance}>{magBalance}</Text>
             </View>
           </View>
+        )}
+
+        {/* 좌측 상단: 자원 스캐너 버튼 (탐사 모드 — 항상 표시, 활성 시 반전) */}
+        {mainMode === 'exploration' && (
+          <TouchableOpacity
+            style={[styles.resourceScannerBtn, showResourceScanner && { backgroundColor: 'rgba(59,130,246,0.8)', borderColor: '#60A5FA' }]}
+            onPress={() => {
+              if (showResourceScanner) {
+                setShowResourceScanner(false);
+              } else {
+                setShowResourceScanner(true);
+                setShowFeaturePanel(false);
+              }
+            }}
+            activeOpacity={0.7}
+          >
+            <MaterialCommunityIcons name="radar" size={22} color="#fff" />
+          </TouchableOpacity>
         )}
 
         {/* 우측 상단 컨트롤 버튼 (+, 초기화, -) */}
@@ -954,6 +1088,19 @@ export default function MoonScreen() {
               <Ionicons name="arrow-back" size={24} color="#fff" />
             </TouchableOpacity>
           )}
+
+          {/* 점유모드3 디버그: 지형 재계산 버튼 */}
+          {mainMode === 'occupation3' && (
+            <TouchableOpacity
+              style={[styles.controlBtn, { backgroundColor: 'rgba(234,179,8,0.8)', borderColor: '#EAB308' }]}
+              onPress={() => {
+                webviewRef.current?.postMessage(JSON.stringify({ type: 'RECALC_TERRAIN' }));
+              }}
+              activeOpacity={0.7}
+            >
+              <Ionicons name="reload-circle" size={20} color="#fff" />
+            </TouchableOpacity>
+          )}
         </SafeAreaView>
 
 
@@ -972,28 +1119,7 @@ export default function MoonScreen() {
           </View>
         )}
 
-        {/* 일인칭 모드 가상 조이스틱 */}
-        {mainMode === 'exploration' && subMode === 'firstPerson' && (
-          <SafeAreaView style={styles.joystickContainer} edges={['bottom', 'left']} pointerEvents="box-none">
-            <View style={styles.joystickPad}>
-              <TouchableOpacity style={styles.joyBtnUp} onPressIn={() => handleMove('forward', true)} onPressOut={() => handleMove('forward', false)}>
-                <Ionicons name="caret-up" size={32} color="#fff" />
-              </TouchableOpacity>
-              <View style={styles.joyRow}>
-                <TouchableOpacity style={styles.joyBtnLeft} onPressIn={() => handleMove('left', true)} onPressOut={() => handleMove('left', false)}>
-                  <Ionicons name="caret-back" size={32} color="#fff" />
-                </TouchableOpacity>
-                <View style={styles.joyCenter} />
-                <TouchableOpacity style={styles.joyBtnRight} onPressIn={() => handleMove('right', true)} onPressOut={() => handleMove('right', false)}>
-                  <Ionicons name="caret-forward" size={32} color="#fff" />
-                </TouchableOpacity>
-              </View>
-              <TouchableOpacity style={styles.joyBtnDown} onPressIn={() => handleMove('backward', true)} onPressOut={() => handleMove('backward', false)}>
-                <Ionicons name="caret-down" size={32} color="#fff" />
-              </TouchableOpacity>
-            </View>
-          </SafeAreaView>
-        )}
+        {/* 1인칭 조이스틱 UI — 버튼 제거됨. handleMove 로직은 지형 줌인/땅보기 등에서 재사용 가능 */}
 
         {/* 옵션 메뉴 오버레이 (Control Bar 옆에 표시) */}
         {showOptions && (
@@ -1125,242 +1251,16 @@ export default function MoonScreen() {
           </SafeAreaView>
         )}
 
-        {/* 광물 범례 (활성 필터가 있을 때만 표시) */}
-        {activeMineralFilter && mineralRanges[activeMineralFilter] && (
-          <SafeAreaView style={styles.mapLegendContainer} edges={['right', 'bottom']} pointerEvents="none">
-            <View style={styles.mapLegend}>
-              <Text style={styles.mapLegendTitle}>
-                {mineralRanges[activeMineralFilter].name}
-              </Text>
+        {/* 기존 스펙트럼 범례 제거됨 — 자원 스캐너 패널의 좌측 범례로 통일 */}
 
-              {/* 그라데이션 바 */}
-              <View style={styles.mapGradientBar}>
-                {/* 파란색에서 빨간색으로 그라데이션 */}
-                {[...Array(20)].map((_, i) => {
-                  const hue = 240 - (i / 19) * 240;
-                  return (
-                    <View
-                      key={i}
-                      style={{
-                        flex: 1,
-                        backgroundColor: `hsl(${hue}, 100%, 50%)`,
-                      }}
-                    />
-                  );
-                })}
-              </View>
-
-              {/* 최소/최대 값 레이블 */}
-              <View style={styles.mapLegendLabels}>
-                <Text style={styles.mapLegendValue}>
-                  {mineralRanges[activeMineralFilter].min}
-                </Text>
-                <Text style={styles.mapLegendValue}>
-                  {mineralRanges[activeMineralFilter].max}
-                </Text>
-              </View>
-
-              {/* 단위 */}
-              <Text style={styles.mapLegendUnit}>
-                {mineralRanges[activeMineralFilter].unit}
-              </Text>
-            </View>
-          </SafeAreaView>
-        )}
-
-        {/* 중력 이상 범례 (showGravityMap이 활성일 때만 표시) */}
-        {isOccupation && showGravityMap && gravityGridMode && (
-          <SafeAreaView style={styles.mapLegendContainer} edges={['right', 'bottom']} pointerEvents="none">
-            <View style={styles.mapLegend}>
-              <Text style={styles.mapLegendTitle}>
-                중력 이상 (Gravity Anomaly)
-              </Text>
-
-              {/* Blue → White → Red 그라데이션 바 */}
-              <View style={styles.mapGradientBar}>
-                {[...Array(20)].map((_, i) => {
-                  const t = i / 19; // 0 ~ 1
-                  let r, g, b;
-                  if (t < 0.5) {
-                    // Blue → White (0 ~ 0.5)
-                    const s = t / 0.5;
-                    r = Math.round(255 * s);
-                    g = Math.round(255 * s);
-                    b = 255;
-                  } else {
-                    // White → Red (0.5 ~ 1)
-                    const s = (t - 0.5) / 0.5;
-                    r = 255;
-                    g = Math.round(255 * (1 - s));
-                    b = Math.round(255 * (1 - s));
-                  }
-                  return (
-                    <View
-                      key={i}
-                      style={{
-                        flex: 1,
-                        backgroundColor: `rgb(${r},${g},${b})`,
-                      }}
-                    />
-                  );
-                })}
-              </View>
-
-              {/* min / 0 / max 레이블 */}
-              <View style={[styles.mapLegendLabels, { justifyContent: 'space-between' }]}>
-                <Text style={styles.mapLegendValue}>{gravityRange.min}</Text>
-                <Text style={styles.mapLegendValue}>0</Text>
-                <Text style={styles.mapLegendValue}>{gravityRange.max}</Text>
-              </View>
-
-              {/* 단위 */}
-              <Text style={styles.mapLegendUnit}>mGal</Text>
-            </View>
-          </SafeAreaView>
-        )}
-
-        {/* 수소(중성자) 범례 */}
-        {isOccupation && showNeutronMap && neutronGridMode && (
-          <SafeAreaView style={styles.mapLegendContainer} edges={['right', 'bottom']} pointerEvents="none">
-            <View style={styles.mapLegend}>
-              <Text style={styles.mapLegendTitle}>
-                수소 농도 (Neutron Count)
-              </Text>
-
-              {/* Blue → Gray 그라데이션 바 */}
-              <View style={styles.mapGradientBar}>
-                {[...Array(20)].map((_, i) => {
-                  const t = i / 19;
-                  const r = Math.round(30 + (180 - 30) * t);
-                  const g = Math.round(100 + (180 - 100) * t);
-                  const b = Math.round(255 + (180 - 255) * t);
-                  return (
-                    <View
-                      key={i}
-                      style={{
-                        flex: 1,
-                        backgroundColor: `rgb(${r},${g},${b})`,
-                      }}
-                    />
-                  );
-                })}
-              </View>
-
-              {/* min / max 레이블 */}
-              <View style={styles.mapLegendLabels}>
-                <Text style={styles.mapLegendValue}>{neutronRange.min}</Text>
-                <Text style={styles.mapLegendValue}>{neutronRange.max}</Text>
-              </View>
-
-              <Text style={styles.mapLegendUnit}>Neutron Count (낮을수록 수소↑)</Text>
-            </View>
-          </SafeAreaView>
-        )}
-
-        {/* 온도 맵 범례 */}
-        {isOccupation && showTempMap && (
-          <SafeAreaView style={styles.mapLegendContainer} edges={['right', 'bottom']} pointerEvents="none">
-            <View style={styles.mapLegend}>
-              <Text style={styles.mapLegendTitle}>
-                달 평균 온도
-              </Text>
-
-              {/* 그라데이션 바 */}
-              <View style={styles.mapGradientBar}>
-                {[...Array(20)].map((_, i) => {
-                  const hue = 240 - (i / 19) * 240;
-                  return (
-                    <View
-                      key={i}
-                      style={{
-                        flex: 1,
-                        backgroundColor: `hsl(${hue}, 100%, 50%)`,
-                      }}
-                    />
-                  );
-                })}
-              </View>
-
-              {/* 최소/최대 값 레이블 */}
-              <View style={styles.mapLegendLabels}>
-                <Text style={styles.mapLegendValue}>-40</Text>
-                <Text style={styles.mapLegendValue}>+40</Text>
-              </View>
-
-              {/* 단위 */}
-              <Text style={styles.mapLegendUnit}>K (켈빈)</Text>
-            </View>
-          </SafeAreaView>
-        )}
-
-        {/* 격자 온도 범례 */}
-        {isOccupation && showThermalGrid && (
-          <SafeAreaView style={[styles.mapLegendContainer, { bottom: 180 }]} edges={['right']} pointerEvents="box-none">
-            <View style={styles.mapLegend} pointerEvents="auto">
-              <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 5 }}>
-                <Text style={styles.mapLegendTitle}>
-                  {isDayTemp ? '주간 최고 (Day Max)' : '야간 최저 (Night Min)'}
-                </Text>
-              </View>
-
-              {/* Day/Night Toggle (Pointer events enabled for this container) */}
-              <View style={{ marginBottom: 8, alignItems: 'center' }} pointerEvents="box-none">
-                <TouchableOpacity
-                  onPress={toggleThermalMode}
-                  style={{
-                    flexDirection: 'row',
-                    backgroundColor: 'rgba(0,0,0,0.5)',
-                    borderRadius: 15,
-                    padding: 2,
-                    borderWidth: 1,
-                    borderColor: '#555'
-                  }}
-                >
-                  <View style={{
-                    paddingHorizontal: 10,
-                    paddingVertical: 4,
-                    borderRadius: 12,
-                    backgroundColor: isDayTemp ? '#FDB813' : 'transparent'
-                  }}>
-                    <Text style={{ color: isDayTemp ? '#000' : '#888', fontSize: 10, fontWeight: 'bold' }}>Day</Text>
-                  </View>
-                  <View style={{
-                    paddingHorizontal: 10,
-                    paddingVertical: 4,
-                    borderRadius: 12,
-                    backgroundColor: !isDayTemp ? '#3B82F6' : 'transparent'
-                  }}>
-                    <Text style={{ color: !isDayTemp ? '#fff' : '#888', fontSize: 10, fontWeight: 'bold' }}>Night</Text>
-                  </View>
-                </TouchableOpacity>
-              </View>
-
-              {/* 그라데이션 바 */}
-              <View style={styles.mapGradientBar}>
-                {[...Array(20)].map((_, i) => {
-                  const hue = 240 - (i / 19) * 240;
-                  return (
-                    <View
-                      key={i}
-                      style={{
-                        flex: 1,
-                        backgroundColor: `hsl(${hue}, 100%, 50%)`,
-                      }}
-                    />
-                  );
-                })}
-              </View>
-
-              {/* 최소/최대 값 레이블 */}
-              <View style={styles.mapLegendLabels}>
-                <Text style={styles.mapLegendValue}>{isDayTemp ? '200K' : '40K'}</Text>
-                <Text style={styles.mapLegendValue}>{isDayTemp ? '390K' : '100K'}</Text>
-              </View>
-
-              {/* 단위 */}
-              <Text style={styles.mapLegendUnit}>K (켈빈)</Text>
-            </View>
-          </SafeAreaView>
+        {/* 자원 스캐너 패널 (탐사 모드) */}
+        {mainMode === 'exploration' && (
+          <ResourceScannerPanel
+            visible={showResourceScanner}
+            onClose={closeResourceScanner}
+            onSelectResource={handleResourceSelect}
+            activeResource={activeScannedResource}
+          />
         )}
 
         {/* 필터 모달 (캔버스 영역 내부) */}
@@ -1677,37 +1577,6 @@ export default function MoonScreen() {
           </SafeAreaView>
         )}
 
-        {/* 탐사 모드 (Exploration) 전용 동적 상태정보창 — 상단 전체 너비 */}
-        {mainMode === 'exploration' && (
-          <SafeAreaView style={{ position: 'absolute', top: 0, left: 0, right: 0, zIndex: 100 }} edges={['top']} pointerEvents="box-none">
-            <BlurView intensity={70} style={{ paddingHorizontal: 16, paddingVertical: 10, backgroundColor: 'rgba(10, 20, 40, 0.65)', borderBottomWidth: 1, borderBottomColor: 'rgba(59,130,246,0.4)', flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: 12 }}>
-              {subMode === 'space' && (
-                <>
-                  <Text style={{ color: '#60A5FA', fontSize: 12, fontWeight: 'bold' }}>🚀 우주 관측</Text>
-                  {telemetry && (
-                    <>
-                      <Text style={{ color: '#aaa', fontSize: 11 }}>고도 {Number(telemetry.alt).toLocaleString()} m</Text>
-                      <Text style={{ color: '#aaa', fontSize: 11 }}>{telemetry.lat}°, {telemetry.lon}°</Text>
-                    </>
-                  )}
-                </>
-              )}
-              {subMode === 'firstPerson' && (
-                <>
-                  <Text style={{ color: '#34D399', fontSize: 12, fontWeight: 'bold' }}>🧑‍🚀 1인칭 탐사</Text>
-                  {telemetry && (
-                    <>
-                      <Text style={{ color: '#aaa', fontSize: 11 }}>표면 고도 {Number(telemetry.alt).toLocaleString()} m</Text>
-                      <Text style={{ color: '#aaa', fontSize: 11 }}>{telemetry.lat}°, {telemetry.lon}°</Text>
-                      <Text style={{ color: '#aaa', fontSize: 11 }}>방위 {telemetry.heading}°</Text>
-                    </>
-                  )}
-                </>
-              )}
-            </BlurView>
-          </SafeAreaView>
-        )}
-
         {/* 하단 셀 정보 카드 (와이어프레임 기반) */}
         {isOccupation && selectedCell && (
           <Animated.View style={[styles.bottomCardContainer, { transform: [{ translateY: sheetTranslateY }] }]}>
@@ -1841,12 +1710,12 @@ export default function MoonScreen() {
       >
         <View style={{ flex: 1, justifyContent: 'flex-end' }}>
           <TouchableOpacity style={{ flex: 1 }} activeOpacity={1} onPress={() => { setShowFeaturePanel(false); setFeatureListView('none'); }} />
-          <SafeAreaView style={{ backgroundColor: '#111827', borderTopLeftRadius: 24, borderTopRightRadius: 24, maxHeight: '80%' }} edges={['bottom']}>
+          <SafeAreaView style={{ backgroundColor: '#111827', borderTopLeftRadius: 24, borderTopRightRadius: 24, maxHeight: '50%' }} edges={['bottom']}>
             {/* 헤더 */}
             <View style={{ flexDirection: 'row', alignItems: 'center', padding: 20, borderBottomWidth: 1, borderBottomColor: 'rgba(255,255,255,0.08)' }}>
               <View style={{ width: 40, height: 4, backgroundColor: '#4B5563', borderRadius: 2, position: 'absolute', top: 10, alignSelf: 'center', left: '50%', marginLeft: -20 }} />
               <Text style={{ color: '#F9FAFB', fontSize: 18, fontWeight: '700', flex: 1, marginTop: 8 }}>
-                {featureListView === 'none' ? '🛠 부가기능' : featureListView === 'landing' ? '🚀 주요 착륙지' : featureListView === 'terrain' ? '🌍 유명 지형' : '🛰️ 위성 궤도'}
+                {featureListView === 'none' ? '탐사 목록' : featureListView === 'landing' ? '🚀 주요 착륙지' : featureListView === 'terrain' ? '🌍 유명 지형' : '궤도 위성'}
               </Text>
               {featureListView !== 'none' ? (
                 <TouchableOpacity onPress={() => setFeatureListView('none')} style={{ padding: 4 }}>
@@ -1863,11 +1732,32 @@ export default function MoonScreen() {
               {/* === 토글 뷰 === */}
               {featureListView === 'none' && (
                 <View style={{ gap: 12, paddingVertical: 16 }}>
-                  {/* 주요 착륙지 */}
+
+                  {/* 궤도 위성 */}
+                  <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: 'rgba(252,211,77,0.06)', borderRadius: 14, padding: 16, borderWidth: 1, borderColor: 'rgba(252,211,77,0.15)' }}>
+                    <View style={{ flex: 1 }}>
+                      <Text style={{ color: '#FCD34D', fontSize: 15, fontWeight: '700' }}>궤도 위성</Text>
+                      <Text style={{ color: '#92820C', fontSize: 11, marginTop: 2 }}>달 궤도 인공위성 {satelliteData.length > 0 ? `${satelliteData.length}기` : ''}</Text>
+                    </View>
+                    <TouchableOpacity onPress={() => setFeatureListView('satellite')} style={{ marginRight: 12, padding: 6 }}>
+                      <Ionicons name="list" size={20} color="#FCD34D" />
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      onPress={() => {
+                        const next = !showSatellites;
+                        setShowSatellites(next);
+                        webviewRef.current?.postMessage(JSON.stringify({ type: 'UPDATE_MODE', payload: { mainMode: 'exploration', subMode: next ? 'satellite' : subMode } }));
+                      }}
+                      style={{ width: 48, height: 28, borderRadius: 14, backgroundColor: showSatellites ? '#3B82F6' : '#374151', justifyContent: 'center', paddingHorizontal: 3 }}
+                    >
+                      <View style={{ width: 22, height: 22, borderRadius: 11, backgroundColor: '#fff', alignSelf: showSatellites ? 'flex-end' : 'flex-start' }} />
+                    </TouchableOpacity>
+                  </View>
+                  {/* 착륙 지점 */}
                   <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: 'rgba(59,130,246,0.08)', borderRadius: 14, padding: 16, borderWidth: 1, borderColor: 'rgba(96,165,250,0.2)' }}>
                     <View style={{ flex: 1 }}>
-                      <Text style={{ color: '#60A5FA', fontSize: 15, fontWeight: '700' }}>🚀 주요 착륙지</Text>
-                      <Text style={{ color: '#9CA3AF', fontSize: 11, marginTop: 2 }}>Apollo 착륙지 3D 모델</Text>
+                      <Text style={{ color: '#60A5FA', fontSize: 15, fontWeight: '700' }}>착륙 지점</Text>
+                      <Text style={{ color: '#9CA3AF', fontSize: 11, marginTop: 2 }}>총 {LANDING_SITES.length}개 탐사 지점</Text>
                     </View>
                     <TouchableOpacity onPress={() => setFeatureListView('landing')} style={{ marginRight: 12, padding: 6 }}>
                       <Ionicons name="list" size={20} color="#60A5FA" />
@@ -1884,10 +1774,10 @@ export default function MoonScreen() {
                     </TouchableOpacity>
                   </View>
 
-                  {/* 유명 지형 */}
+                  {/* 대표 지형 */}
                   <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: 'rgba(255,255,255,0.04)', borderRadius: 14, padding: 16, borderWidth: 1, borderColor: 'rgba(255,255,255,0.08)' }}>
                     <View style={{ flex: 1 }}>
-                      <Text style={{ color: '#A3A3A3', fontSize: 15, fontWeight: '700' }}>🌍 유명 지형</Text>
+                      <Text style={{ color: '#A3A3A3', fontSize: 15, fontWeight: '700' }}>대표 지형</Text>
                       <Text style={{ color: '#6B7280', fontSize: 11, marginTop: 2 }}>크레이터 · 바다 · 착륙지 깃발</Text>
                     </View>
                     <TouchableOpacity onPress={() => setFeatureListView('terrain')} style={{ marginRight: 12, padding: 6 }}>
@@ -1905,113 +1795,184 @@ export default function MoonScreen() {
                     </TouchableOpacity>
                   </View>
 
-                  {/* 위성 궤도 */}
-                  <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: 'rgba(252,211,77,0.06)', borderRadius: 14, padding: 16, borderWidth: 1, borderColor: 'rgba(252,211,77,0.15)' }}>
-                    <View style={{ flex: 1 }}>
-                      <Text style={{ color: '#FCD34D', fontSize: 15, fontWeight: '700' }}>🛰️ 위성 궤도</Text>
-                      <Text style={{ color: '#92820C', fontSize: 11, marginTop: 2 }}>달 궤도 인공위성 {satelliteData.length > 0 ? `${satelliteData.length}기` : ''}</Text>
-                    </View>
-                    <TouchableOpacity onPress={() => setFeatureListView('satellite')} style={{ marginRight: 12, padding: 6 }}>
-                      <Ionicons name="list" size={20} color="#FCD34D" />
-                    </TouchableOpacity>
-                    <TouchableOpacity
-                      onPress={() => {
-                        const next = !showSatellites;
-                        setShowSatellites(next);
-                        webviewRef.current?.postMessage(JSON.stringify({ type: 'UPDATE_MODE', payload: { mainMode: 'exploration', subMode: next ? 'satellite' : subMode } }));
-                      }}
-                      style={{ width: 48, height: 28, borderRadius: 14, backgroundColor: showSatellites ? '#3B82F6' : '#374151', justifyContent: 'center', paddingHorizontal: 3 }}
-                    >
-                      <View style={{ width: 22, height: 22, borderRadius: 11, backgroundColor: '#fff', alignSelf: showSatellites ? 'flex-end' : 'flex-start' }} />
-                    </TouchableOpacity>
-                  </View>
-
                 </View>
               )}
 
               {/* === 착륙지 리스트 === */}
               {featureListView === 'landing' && (
                 <View style={{ paddingVertical: 12 }}>
-                  {(landmarkListData?.apollo || []).map((site: any) => (
+                  {/* 카운트 + 필터 */}
+                  <View style={{ marginBottom: 12 }}>
+                    <Text style={{ color: '#9CA3AF', fontSize: 13, marginBottom: 10 }}>총 {LANDING_SITES.length}개 지점</Text>
+                    <View style={{ flexDirection: 'row', gap: 8 }}>
+                      <TouchableOpacity
+                        onPress={() => setLandingSortMode('year')}
+                        style={{ paddingHorizontal: 14, paddingVertical: 6, borderRadius: 8, backgroundColor: landingSortMode === 'year' ? '#1F2937' : 'transparent', borderWidth: 1, borderColor: landingSortMode === 'year' ? '#374151' : '#374151' }}
+                      >
+                        <Text style={{ color: landingSortMode === 'year' ? '#F9FAFB' : '#6B7280', fontSize: 13, fontWeight: '600' }}>연도순 ▾</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        onPress={() => setLandingSortMode('country')}
+                        style={{ paddingHorizontal: 14, paddingVertical: 6, borderRadius: 8, backgroundColor: landingSortMode === 'country' ? '#1F2937' : 'transparent', borderWidth: 1, borderColor: landingSortMode === 'country' ? '#374151' : '#374151' }}
+                      >
+                        <Text style={{ color: landingSortMode === 'country' ? '#F9FAFB' : '#6B7280', fontSize: 13, fontWeight: '600' }}>국가순 ▾</Text>
+                      </TouchableOpacity>
+                    </View>
+                  </View>
+                  {/* 카드 리스트 */}
+                  {sortedLandingSites.map((site, idx) => (
                     <TouchableOpacity
-                      key={site.id}
-                      style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 12, paddingHorizontal: 16, backgroundColor: 'rgba(59,130,246,0.08)', borderRadius: 12, marginBottom: 8, borderWidth: 1, borderColor: 'rgba(96,165,250,0.2)' }}
+                      key={`${site.officialName}-${idx}`}
+                      style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 14, paddingHorizontal: 16, backgroundColor: 'rgba(59,130,246,0.06)', borderRadius: 12, marginBottom: 8, borderWidth: 1, borderColor: 'rgba(96,165,250,0.12)' }}
                       onPress={() => {
                         setShowFeaturePanel(false);
                         setFeatureListView('none');
+                        setSelectedLandingSite(site);
+                        setLandingSiteDetailMode('detail');
                         webviewRef.current?.postMessage(JSON.stringify({ type: 'GO_TO_LOCATION', payload: { lat: site.lat, lng: site.lng } }));
-                        setSelectedLandmark(site);
                       }}
                       activeOpacity={0.7}
                     >
                       <View style={{ flex: 1 }}>
-                        <Text style={{ color: '#F9FAFB', fontSize: 15, fontWeight: '600' }}>{site.name}</Text>
-                        <Text style={{ color: '#9CA3AF', fontSize: 12, marginTop: 2 }}>{site.date} · {site.crew}</Text>
+                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                          <Text style={{ color: '#F9FAFB', fontSize: 15, fontWeight: '700' }}>{site.nameKr}</Text>
+                          <Text style={{ color: '#9CA3AF', fontSize: 13 }}>{site.officialName}</Text>
+                        </View>
+                        <Text style={{ color: '#6B7280', fontSize: 12, marginTop: 3 }}>{site.missionType}</Text>
+                        <Text style={{ color: '#6B7280', fontSize: 12, marginTop: 1 }}>{site.year} · {site.country} {site.agency}</Text>
                       </View>
                       <Ionicons name="chevron-forward" size={18} color="#60A5FA" />
                     </TouchableOpacity>
                   ))}
-                  {(!landmarkListData?.apollo || landmarkListData.apollo.length === 0) && (
-                    <Text style={{ color: '#6B7280', fontSize: 13, textAlign: 'center', paddingVertical: 30 }}>착륙지 토글을 ON하면 목록이 표시됩니다</Text>
-                  )}
                 </View>
               )}
 
               {/* === 지형 리스트 === */}
               {featureListView === 'terrain' && (
                 <View style={{ paddingVertical: 12 }}>
-                  {(landmarkListData?.landmarks || []).map((site: any) => (
+                  {/* 카운트 + 필터 */}
+                  <View style={{ marginBottom: 12 }}>
+                    <Text style={{ color: '#9CA3AF', fontSize: 13, marginBottom: 10 }}>총 {LUNAR_FEATURES.length}개 지형</Text>
+                    <View style={{ flexDirection: 'row', gap: 8 }}>
+                      <TouchableOpacity
+                        onPress={() => setFeatureSortMode('type')}
+                        style={{ paddingHorizontal: 14, paddingVertical: 6, borderRadius: 8, backgroundColor: featureSortMode === 'type' ? '#1F2937' : 'transparent', borderWidth: 1, borderColor: '#374151' }}
+                      >
+                        <Text style={{ color: featureSortMode === 'type' ? '#F9FAFB' : '#6B7280', fontSize: 13, fontWeight: '600' }}>유형순 ▾</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        onPress={() => setFeatureSortMode('size')}
+                        style={{ paddingHorizontal: 14, paddingVertical: 6, borderRadius: 8, backgroundColor: featureSortMode === 'size' ? '#1F2937' : 'transparent', borderWidth: 1, borderColor: '#374151' }}
+                      >
+                        <Text style={{ color: featureSortMode === 'size' ? '#F9FAFB' : '#6B7280', fontSize: 13, fontWeight: '600' }}>크기순 ▾</Text>
+                      </TouchableOpacity>
+                    </View>
+                  </View>
+                  {/* 카드 리스트 */}
+                  {sortedFeatures.map((feat, idx) => (
                     <TouchableOpacity
-                      key={site.id}
-                      style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 12, paddingHorizontal: 16, backgroundColor: 'rgba(255,255,255,0.04)', borderRadius: 12, marginBottom: 8, borderWidth: 1, borderColor: 'rgba(255,255,255,0.08)' }}
+                      key={feat.id}
+                      style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 14, paddingHorizontal: 16, backgroundColor: `${getFeatureTypeColor(feat.typeKr)}10`, borderRadius: 12, marginBottom: 8, borderWidth: 1, borderColor: `${getFeatureTypeColor(feat.typeKr)}20` }}
                       onPress={() => {
                         setShowFeaturePanel(false);
                         setFeatureListView('none');
-                        webviewRef.current?.postMessage(JSON.stringify({ type: 'GO_TO_LOCATION', payload: { lat: site.lat, lng: site.lng } }));
-                        setSelectedLandmark(site);
+                        setSelectedFeature(feat);
+                        setFeatureDetailMode('detail');
+                        webviewRef.current?.postMessage(JSON.stringify({ type: 'GO_TO_LOCATION', payload: { lat: feat.lat, lng: feat.lng } }));
+                        webviewRef.current?.postMessage(JSON.stringify({ type: 'SHOW_FEATURE_AREA', payload: { lat: feat.lat, lng: feat.lng, diameterKm: feat.diameterKm, typeKr: feat.typeKr } }));
                       }}
                       activeOpacity={0.7}
                     >
+                      <Text style={{ fontSize: 22, marginRight: 12 }}>{getFeatureTypeEmoji(feat.typeKr)}</Text>
                       <View style={{ flex: 1 }}>
-                        <Text style={{ color: '#F9FAFB', fontSize: 15, fontWeight: '600' }}>{site.name}</Text>
-                        <Text style={{ color: '#9CA3AF', fontSize: 12, marginTop: 2 }} numberOfLines={1}>{site.desc}</Text>
+                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                          <Text style={{ color: '#F9FAFB', fontSize: 15, fontWeight: '700' }}>{feat.nameKr}</Text>
+                          <Text style={{ color: '#9CA3AF', fontSize: 13 }}>{feat.nameEn}</Text>
+                        </View>
+                        <Text style={{ color: '#6B7280', fontSize: 12, marginTop: 3 }}>{feat.typeKr} · {feat.diameterKm}km{feat.areaKm2 ? ` · ${formatArea(feat.areaKm2)}` : ''}</Text>
+                        <Text style={{ color: '#6B7280', fontSize: 11, marginTop: 1 }}>{isFarSide(feat) ? '🔙 뒷면' : '🌕 앞면'}</Text>
                       </View>
-                      <Ionicons name="chevron-forward" size={18} color="#6B7280" />
+                      <Ionicons name="chevron-forward" size={18} color={getFeatureTypeColor(feat.typeKr)} />
                     </TouchableOpacity>
                   ))}
-                  {(!landmarkListData?.landmarks || landmarkListData.landmarks.length === 0) && (
-                    <Text style={{ color: '#6B7280', fontSize: 13, textAlign: 'center', paddingVertical: 30 }}>지형 토글을 ON하면 목록이 표시됩니다</Text>
-                  )}
                 </View>
               )}
 
               {/* === 위성 리스트 === */}
               {featureListView === 'satellite' && (
                 <View style={{ paddingVertical: 12 }}>
+                  {/* 헤더: 총 위성 수 */}
+                  <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 12, paddingHorizontal: 4 }}>
+                    <Text style={{ color: '#FCD34D', fontSize: 15, fontWeight: '700' }}>궤도 위성</Text>
+                    <Text style={{ color: '#6B7280', fontSize: 13, marginLeft: 8 }}>총 {satelliteData.length}개 위성</Text>
+                  </View>
+
+                  {/* 정렬 버튼 */}
+                  <View style={{ flexDirection: 'row', gap: 8, marginBottom: 16, paddingHorizontal: 4 }}>
+                    <TouchableOpacity
+                      style={{ paddingHorizontal: 14, paddingVertical: 6, borderRadius: 8, backgroundColor: 'rgba(252,211,77,0.15)', borderWidth: 1, borderColor: 'rgba(252,211,77,0.3)' }}
+                      onPress={() => {
+                        const sorted = [...satelliteData].sort((a, b) => (a.position?.altitude || 9999) - (b.position?.altitude || 9999));
+                        // Note: sorting is visual only
+                      }}
+                    >
+                      <Text style={{ color: '#FCD34D', fontSize: 12, fontWeight: '600' }}>고도순</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={{ paddingHorizontal: 14, paddingVertical: 6, borderRadius: 8, backgroundColor: 'rgba(255,255,255,0.06)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)' }}
+                    >
+                      <Text style={{ color: '#9CA3AF', fontSize: 12, fontWeight: '600' }}>기관순</Text>
+                    </TouchableOpacity>
+                  </View>
+
                   {isLoadingSatellite && (
                     <Text style={{ color: '#FCD34D', fontSize: 13, textAlign: 'center', paddingVertical: 20 }}>위성 데이터 로딩 중...</Text>
                   )}
+
+                  {/* 위성 리스트 */}
                   {satelliteData.map((sat: any, idx: number) => (
                     <TouchableOpacity
                       key={sat.id || idx}
-                      style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 12, paddingHorizontal: 16, backgroundColor: 'rgba(252,211,77,0.06)', borderRadius: 12, marginBottom: 8, borderWidth: 1, borderColor: 'rgba(252,211,77,0.15)' }}
+                      style={{
+                        paddingVertical: 14,
+                        paddingHorizontal: 16,
+                        borderBottomWidth: 1,
+                        borderBottomColor: 'rgba(255,255,255,0.06)',
+                      }}
                       onPress={() => {
                         setShowFeaturePanel(false);
                         setFeatureListView('none');
+                        satPanelAnim.setValue(SAT_PANEL_COLLAPSED);
+                        satPanelOffsetRef.current = SAT_PANEL_COLLAPSED;
                         setSelectedSatellite(sat);
-                        if (sat.position) {
-                          webviewRef.current?.postMessage(JSON.stringify({ type: 'GO_TO_LOCATION', payload: { lat: sat.position.lat || sat.lat, lng: sat.position.lng || sat.lng } }));
-                        }
+                        // 위성 전용: 이름으로 해당 위성 엔티티에 줌인
+                        webviewRef.current?.postMessage(JSON.stringify({
+                          type: 'FOCUS_SATELLITE',
+                          payload: { name: sat.name, id: sat.id }
+                        }));
                       }}
                       activeOpacity={0.7}
                     >
-                      <View style={{ flex: 1 }}>
-                        <Text style={{ color: '#FCD34D', fontSize: 15, fontWeight: '600' }}>{sat.name}</Text>
-                        <Text style={{ color: '#92820C', fontSize: 12, marginTop: 2 }} numberOfLines={1}>{sat.description || sat.agency || ''}</Text>
+                      <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                        {/* 색상 인디케이터 */}
+                        <View style={{ width: 4, height: 36, borderRadius: 2, backgroundColor: sat.color || '#FCD34D', marginRight: 12 }} />
+                        <View style={{ flex: 1 }}>
+                          {/* 이름 */}
+                          <Text style={{ color: '#F9FAFB', fontSize: 15, fontWeight: '600' }}>
+                            {sat.nameKo !== sat.name ? `${sat.nameKo} (${sat.name})` : sat.name}
+                          </Text>
+                          {/* 고도 */}
+                          <Text style={{ color: '#9CA3AF', fontSize: 12, marginTop: 3 }}>
+                            고도 {sat.position?.altitude ? `${sat.position.altitude.toFixed(1)} km` : sat.description?.match(/(\d+)km/) ? sat.description.match(/(\d+)km/)[0] : '정보 없음'}
+                          </Text>
+                          {/* 기관 */}
+                          <Text style={{ color: '#6B7280', fontSize: 11, marginTop: 1 }}>{sat.country}</Text>
+                        </View>
+                        <Ionicons name="chevron-forward" size={16} color="#4B5563" />
                       </View>
-                      <Ionicons name="chevron-forward" size={18} color="#FCD34D" />
                     </TouchableOpacity>
                   ))}
+
                   {!isLoadingSatellite && satelliteData.length === 0 && (
                     <Text style={{ color: '#6B7280', fontSize: 13, textAlign: 'center', paddingVertical: 30 }}>위성 토글을 ON하면 데이터가 로드됩니다</Text>
                   )}
@@ -2023,7 +1984,459 @@ export default function MoonScreen() {
         </View>
       </Modal>
 
-      {/* 랜드마크 정보 모달 */}
+      {/* 위성 상세 정보 패널 */}
+      {selectedSatellite && mainMode === 'exploration' && (
+          <View style={{
+            position: 'absolute',
+            bottom: 0,
+            left: 0,
+            right: 0,
+            top: '40%',
+            backgroundColor: '#111827',
+            borderTopLeftRadius: 24,
+            borderTopRightRadius: 24,
+            overflow: 'hidden',
+          }}>
+
+            {/* 헤더 - 뒤로가기만 */}
+            <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 20, paddingBottom: 10 }}>
+              <TouchableOpacity
+                onPress={() => {
+                  setSelectedSatellite(null);
+                  webviewRef.current?.postMessage(JSON.stringify({ type: 'RESET_VIEW' }));
+                  setShowFeaturePanel(true);
+                  setFeatureListView('satellite');
+                }}
+                style={{ padding: 4 }}
+              >
+                <Text style={{ color: '#9CA3AF', fontSize: 22 }}>←</Text>
+              </TouchableOpacity>
+            </View>
+
+            <ScrollView style={{ paddingHorizontal: 20 }} showsVerticalScrollIndicator={false}>
+              {/* 위성 이름 */}
+              <View style={{ paddingTop: 16, paddingBottom: 4 }}>
+                <Text style={{ color: 'white', fontSize: 22, fontWeight: '800' }}>
+                  {selectedSatellite.nameKo !== selectedSatellite.name
+                    ? `${selectedSatellite.nameKo} (${selectedSatellite.name})`
+                    : selectedSatellite.name}
+                </Text>
+              </View>
+              {/* 기관 + 발사 시점 */}
+              <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 4 }}>
+                <Text style={{ color: '#9CA3AF', fontSize: 13 }}>
+                  {selectedSatellite.agency || selectedSatellite.country}
+                </Text>
+                {selectedSatellite.launchDate && (
+                  <Text style={{ color: '#9CA3AF', fontSize: 13, marginLeft: 16 }}>
+                    발사 시점: {selectedSatellite.launchDate}
+                  </Text>
+                )}
+              </View>
+              {/* status + agency_code */}
+              <Text style={{ color: '#6B7280', fontSize: 12, marginBottom: 16 }}>
+                mission_status: {selectedSatellite.missionStatus || 'Active'} · agency_code: {selectedSatellite.agencyCode || '-'}
+              </Text>
+
+              {/* 실시간 궤도 정보 */}
+              <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+                <Text style={{ fontSize: 15, fontWeight: '700', color: '#D1D5DB' }}>실시간 궤도 정보</Text>
+                <View style={{ backgroundColor: '#065F46', paddingHorizontal: 12, paddingVertical: 4, borderRadius: 14, flexDirection: 'row', alignItems: 'center' }}>
+                  <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: '#34D399', marginRight: 5 }} />
+                  <Text style={{ color: '#34D399', fontSize: 11, fontWeight: '600' }}>Live</Text>
+                </View>
+              </View>
+
+              {/* 2x3 정보 카드 그리드 */}
+              {(() => {
+                const MOON_R = 1737.4;
+                const pos = selectedSatellite.position;
+                let latStr = '-', lonStr = '-';
+                if (pos) {
+                  const dist = Math.sqrt(pos.x * pos.x + pos.y * pos.y + pos.z * pos.z);
+                  if (dist > 0) {
+                    const lat = Math.asin(pos.z / dist) * (180 / Math.PI);
+                    const lon = Math.atan2(pos.y, pos.x) * (180 / Math.PI);
+                    latStr = `${Math.abs(lat).toFixed(2)}° ${lat >= 0 ? 'N' : 'S'}`;
+                    lonStr = `${Math.abs(lon).toFixed(2)}° ${lon >= 0 ? 'E' : 'W'}`;
+                  }
+                }
+                const speed = pos && pos.vx !== undefined
+                  ? Math.sqrt(pos.vx * pos.vx + pos.vy * pos.vy + pos.vz * pos.vz).toFixed(2)
+                  : null;
+                const periodMin = selectedSatellite.orbitHours
+                  ? (selectedSatellite.orbitHours * 60).toFixed(1)
+                  : null;
+                const cardStyle = { flex: 1, minWidth: '47%', backgroundColor: '#1F2937', borderRadius: 12, padding: 14, borderWidth: 1, borderColor: 'rgba(255,255,255,0.08)' } as any;
+                const labelStyle = { color: '#6B7280', fontSize: 11, marginBottom: 4 };
+                const valStyle = { color: 'white', fontSize: 18, fontWeight: '700' as const };
+
+                return (
+                  <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 20 }}>
+                    <View style={cardStyle}>
+                      <Text style={labelStyle}>현재 위도</Text>
+                      <Text style={valStyle}>{latStr}</Text>
+                    </View>
+                    <View style={cardStyle}>
+                      <Text style={labelStyle}>현재 경도</Text>
+                      <Text style={valStyle}>{lonStr}</Text>
+                    </View>
+                    <View style={cardStyle}>
+                      <Text style={labelStyle}>현재 고도</Text>
+                      <Text style={valStyle}>{pos?.altitude ? `${pos.altitude.toFixed(1)} km` : '-'}</Text>
+                    </View>
+                    <View style={cardStyle}>
+                      <Text style={labelStyle}>공전 속도</Text>
+                      <Text style={valStyle}>{speed ? `${speed} km/s` : '-'}</Text>
+                    </View>
+                    <View style={cardStyle}>
+                      <Text style={labelStyle}>공전 주기</Text>
+                      <Text style={valStyle}>{periodMin ? `${periodMin} 분` : '-'}</Text>
+                    </View>
+                    <View style={cardStyle}>
+                      <Text style={labelStyle}>궤도 경사각</Text>
+                      <Text style={valStyle}>{selectedSatellite.orbitInclination != null ? `${selectedSatellite.orbitInclination.toFixed(1)}°` : '-'}</Text>
+                    </View>
+                  </View>
+                );
+              })()}
+
+              {/* 임무 목적 */}
+              {selectedSatellite.missionObjective && (
+                <View style={{ marginBottom: 20, borderTopWidth: 1, borderTopColor: 'rgba(255,255,255,0.06)', paddingTop: 16 }}>
+                  <Text style={{ color: '#D1D5DB', fontSize: 15, fontWeight: '700', marginBottom: 8 }}>임무 목적</Text>
+                  <Text style={{ color: '#9CA3AF', fontSize: 13, lineHeight: 20 }}>
+                    {selectedSatellite.missionObjective}
+                  </Text>
+                </View>
+              )}
+
+              {/* 탑재 장비 */}
+              {selectedSatellite.instruments && selectedSatellite.instruments.length > 0 && (
+                <View style={{ marginBottom: 20, borderTopWidth: 1, borderTopColor: 'rgba(255,255,255,0.06)', paddingTop: 16 }}>
+                  <Text style={{ color: '#D1D5DB', fontSize: 15, fontWeight: '700', marginBottom: 10 }}>탑재 장비</Text>
+                  {selectedSatellite.instruments.map((inst: string, idx: number) => (
+                    <View key={idx} style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 6 }}>
+                      <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: '#4B5563', marginRight: 10 }} />
+                      <Text style={{ color: '#9CA3AF', fontSize: 13 }}>{inst}</Text>
+                    </View>
+                  ))}
+                </View>
+              )}
+
+              <View style={{ height: 40 }} />
+            </ScrollView>
+          </View>
+      )}
+
+      {/* ═══ 착륙지점 상세 패널 (50%, 풀 정보) ═══ */}
+      {selectedLandingSite && mainMode === 'exploration' && landingSiteDetailMode === 'detail' && (
+        <View style={{
+          position: 'absolute',
+          bottom: 0,
+          left: 0,
+          right: 0,
+          top: '50%',
+          backgroundColor: '#111827',
+          borderTopLeftRadius: 24,
+          borderTopRightRadius: 24,
+          overflow: 'hidden',
+        }}>
+          {/* 헤더: 뒤로가기 + 상세보기 */}
+          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 20, paddingTop: 16, paddingBottom: 10 }}>
+            <TouchableOpacity
+              onPress={() => {
+                setSelectedLandingSite(null);
+                setFeatureListView('landing');
+                setShowFeaturePanel(true);
+                webviewRef.current?.postMessage(JSON.stringify({ type: 'RESET_VIEW' }));
+              }}
+              style={{ flexDirection: 'row', alignItems: 'center', gap: 4, padding: 4 }}
+            >
+              <Ionicons name="chevron-back" size={20} color="#9CA3AF" />
+              <Text style={{ color: '#9CA3AF', fontSize: 13 }}>목록</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              onPress={() => {
+                setLandingSiteDetailMode('view');
+                webviewRef.current?.postMessage(JSON.stringify({
+                  type: 'FIRST_PERSON_AT',
+                  payload: { lat: selectedLandingSite.lat, lng: selectedLandingSite.lng }
+                }));
+              }}
+              style={{ flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: 'rgba(96,165,250,0.15)', paddingHorizontal: 14, paddingVertical: 7, borderRadius: 10 }}
+              activeOpacity={0.7}
+            >
+              <Ionicons name="eye-outline" size={16} color="#60A5FA" />
+              <Text style={{ color: '#60A5FA', fontSize: 13, fontWeight: '700' }}>상세 보기</Text>
+            </TouchableOpacity>
+          </View>
+
+          <ScrollView style={{ paddingHorizontal: 20 }} showsVerticalScrollIndicator={false}>
+            {/* 미션명 */}
+            <Text style={{ color: 'white', fontSize: 22, fontWeight: '800', marginBottom: 4 }}>
+              {selectedLandingSite.nameKr}  <Text style={{ fontSize: 16, fontWeight: '500', color: '#9CA3AF' }}>{selectedLandingSite.officialName}</Text>
+            </Text>
+            <Text style={{ color: '#9CA3AF', fontSize: 13, marginBottom: 2 }}>
+              {selectedLandingSite.country} {selectedLandingSite.agency} · {COUNTRY_NAMES[selectedLandingSite.country] || selectedLandingSite.country}
+            </Text>
+            <Text style={{ color: '#6B7280', fontSize: 12, marginBottom: 8 }}>
+              {selectedLandingSite.lat.toFixed(3)}°{selectedLandingSite.lat >= 0 ? 'N' : 'S'}, {Math.abs(selectedLandingSite.lng).toFixed(3)}°{selectedLandingSite.lng >= 0 ? 'E' : 'W'}
+            </Text>
+
+            {/* 상태 배지 */}
+            <View style={{ flexDirection: 'row', gap: 8, marginBottom: 16 }}>
+              <View style={{ paddingHorizontal: 10, paddingVertical: 4, borderRadius: 12, backgroundColor: getContactColor(selectedLandingSite.contactType) + '20' }}>
+                <Text style={{ color: getContactColor(selectedLandingSite.contactType), fontSize: 12, fontWeight: '600' }}>{selectedLandingSite.contactType}</Text>
+              </View>
+              {selectedLandingSite.mode === 'Manned' && (
+                <View style={{ paddingHorizontal: 10, paddingVertical: 4, borderRadius: 12, backgroundColor: 'rgba(252,211,77,0.2)' }}>
+                  <Text style={{ color: '#FCD34D', fontSize: 12, fontWeight: '600' }}>유인 미션</Text>
+                </View>
+              )}
+            </View>
+
+            {/* 정보 카드 */}
+            <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 16 }}>
+              <View style={{ flex: 1, minWidth: '45%', backgroundColor: '#1F2937', borderRadius: 12, padding: 14, borderWidth: 1, borderColor: 'rgba(255,255,255,0.08)' }}>
+                <Text style={{ color: '#6B7280', fontSize: 11, marginBottom: 4 }}>착륙 시점</Text>
+                <Text style={{ color: 'white', fontSize: 16, fontWeight: '700' }}>{selectedLandingSite.landingDate}</Text>
+              </View>
+              <View style={{ flex: 1, minWidth: '45%', backgroundColor: '#1F2937', borderRadius: 12, padding: 14, borderWidth: 1, borderColor: 'rgba(255,255,255,0.08)' }}>
+                <Text style={{ color: '#6B7280', fontSize: 11, marginBottom: 4 }}>착륙 지역</Text>
+                <Text style={{ color: 'white', fontSize: 16, fontWeight: '700' }}>{selectedLandingSite.regionName}</Text>
+              </View>
+              <View style={{ flex: 1, minWidth: '45%', backgroundColor: '#1F2937', borderRadius: 12, padding: 14, borderWidth: 1, borderColor: 'rgba(255,255,255,0.08)' }}>
+                <Text style={{ color: '#6B7280', fontSize: 11, marginBottom: 4 }}>미션 유형</Text>
+                <Text style={{ color: 'white', fontSize: 16, fontWeight: '700' }}>{selectedLandingSite.missionType}</Text>
+              </View>
+              <View style={{ flex: 1, minWidth: '45%', backgroundColor: '#1F2937', borderRadius: 12, padding: 14, borderWidth: 1, borderColor: 'rgba(255,255,255,0.08)' }}>
+                <Text style={{ color: '#6B7280', fontSize: 11, marginBottom: 4 }}>운용 방식</Text>
+                <Text style={{ color: 'white', fontSize: 16, fontWeight: '700' }}>{selectedLandingSite.mode === 'Manned' ? '유인' : '무인'}</Text>
+              </View>
+            </View>
+
+            {/* 설명 */}
+            <View style={{ marginBottom: 20, borderTopWidth: 1, borderTopColor: 'rgba(255,255,255,0.06)', paddingTop: 16 }}>
+              <Text style={{ color: '#D1D5DB', fontSize: 15, fontWeight: '700', marginBottom: 8 }}>설명</Text>
+              <Text style={{ color: '#9CA3AF', fontSize: 13, lineHeight: 20 }}>{selectedLandingSite.description}</Text>
+            </View>
+
+            {/* 인근 탐사 지점 */}
+            <View style={{ marginBottom: 20, borderTopWidth: 1, borderTopColor: 'rgba(255,255,255,0.06)', paddingTop: 16 }}>
+              <Text style={{ color: '#D1D5DB', fontSize: 15, fontWeight: '700', marginBottom: 10 }}>인근 탐사 지점</Text>
+              <View style={{ flexDirection: 'row', gap: 10 }}>
+                {findNearbySites(selectedLandingSite, 2).map((nearby, idx) => (
+                  <TouchableOpacity
+                    key={idx}
+                    style={{ flex: 1, backgroundColor: '#1F2937', borderRadius: 12, padding: 12, borderWidth: 1, borderColor: 'rgba(255,255,255,0.06)' }}
+                    onPress={() => {
+                      setSelectedLandingSite(nearby);
+                      setLandingSiteDetailMode('detail');
+                      webviewRef.current?.postMessage(JSON.stringify({ type: 'RESET_VIEW' }));
+                      setTimeout(() => {
+                        webviewRef.current?.postMessage(JSON.stringify({ type: 'GO_TO_LOCATION', payload: { lat: nearby.lat, lng: nearby.lng } }));
+                      }, 300);
+                    }}
+                    activeOpacity={0.7}
+                  >
+                    <Text style={{ color: '#F9FAFB', fontSize: 13, fontWeight: '600' }}>{nearby.nameKr}</Text>
+                    <Text style={{ color: '#6B7280', fontSize: 11, marginTop: 2 }}>{nearby.country} · {nearby.year}</Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            </View>
+
+            <View style={{ height: 40 }} />
+          </ScrollView>
+        </View>
+      )}
+
+      {/* ═══ 착륙지점 뷰 모드 (하단 20%, 타이틀만 + 화면 크게 보기) ═══ */}
+      {selectedLandingSite && mainMode === 'exploration' && landingSiteDetailMode === 'view' && (
+        <View style={{
+          position: 'absolute',
+          bottom: 0,
+          left: 0,
+          right: 0,
+          backgroundColor: '#111827',
+          borderTopLeftRadius: 20,
+          borderTopRightRadius: 20,
+          paddingTop: 14,
+          paddingBottom: 28,
+          paddingHorizontal: 20,
+        }}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+            <TouchableOpacity
+              onPress={() => {
+                setLandingSiteDetailMode('detail');
+                webviewRef.current?.postMessage(JSON.stringify({ type: 'RESET_VIEW' }));
+                setTimeout(() => {
+                  webviewRef.current?.postMessage(JSON.stringify({ type: 'GO_TO_LOCATION', payload: { lat: selectedLandingSite.lat, lng: selectedLandingSite.lng } }));
+                }, 300);
+              }}
+              style={{ padding: 4 }}
+            >
+              <Ionicons name="chevron-back" size={22} color="#9CA3AF" />
+            </TouchableOpacity>
+            <View style={{ flex: 1, marginLeft: 10 }}>
+              <View style={{ flexDirection: 'row', alignItems: 'baseline', gap: 8 }}>
+                <Text style={{ color: 'white', fontSize: 17, fontWeight: '800' }}>{selectedLandingSite.nameKr}</Text>
+                <Text style={{ color: '#6B7280', fontSize: 13 }}>{selectedLandingSite.officialName}</Text>
+              </View>
+            </View>
+            <TouchableOpacity
+              onPress={() => {
+                setSelectedLandingSite(null);
+                webviewRef.current?.postMessage(JSON.stringify({ type: 'RESET_VIEW' }));
+              }}
+              style={{ padding: 4 }}
+            >
+              <Ionicons name="close" size={20} color="#6B7280" />
+            </TouchableOpacity>
+          </View>
+        </View>
+      )}
+
+      {/* ═══ 대표 지형 상세 패널 (50%, 풀 정보) ═══ */}
+      {selectedFeature && mainMode === 'exploration' && featureDetailMode === 'detail' && (
+        <View style={{
+          position: 'absolute',
+          bottom: 0,
+          left: 0,
+          right: 0,
+          top: '50%',
+          backgroundColor: '#111827',
+          borderTopLeftRadius: 24,
+          borderTopRightRadius: 24,
+          overflow: 'hidden',
+        }}>
+          {/* 헤더: 뒤로가기 + 상세보기 */}
+          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 20, paddingTop: 16, paddingBottom: 10 }}>
+            <TouchableOpacity
+              onPress={() => {
+                setSelectedFeature(null);
+                setFeatureListView('terrain');
+                setShowFeaturePanel(true);
+                webviewRef.current?.postMessage(JSON.stringify({ type: 'HIDE_FEATURE_AREA' }));
+                webviewRef.current?.postMessage(JSON.stringify({ type: 'RESET_VIEW' }));
+              }}
+              style={{ flexDirection: 'row', alignItems: 'center', gap: 4, padding: 4 }}
+            >
+              <Ionicons name="chevron-back" size={20} color="#9CA3AF" />
+              <Text style={{ color: '#9CA3AF', fontSize: 13 }}>목록</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              onPress={() => {
+                setFeatureDetailMode('view');
+                webviewRef.current?.postMessage(JSON.stringify({
+                  type: 'FIRST_PERSON_AT',
+                  payload: { lat: selectedFeature.lat, lng: selectedFeature.lng }
+                }));
+              }}
+              style={{ flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 14, paddingVertical: 8, borderRadius: 12, backgroundColor: `${getFeatureTypeColor(selectedFeature.typeKr)}20`, borderWidth: 1, borderColor: `${getFeatureTypeColor(selectedFeature.typeKr)}40` }}
+            >
+              <Ionicons name="eye" size={16} color={getFeatureTypeColor(selectedFeature.typeKr)} />
+              <Text style={{ color: getFeatureTypeColor(selectedFeature.typeKr), fontSize: 13, fontWeight: '600' }}>상세 보기</Text>
+            </TouchableOpacity>
+          </View>
+          <ScrollView style={{ flex: 1, paddingHorizontal: 20 }} showsVerticalScrollIndicator={false}>
+            {/* 이름 */}
+            <Text style={{ color: 'white', fontSize: 22, fontWeight: '800', marginTop: 6 }}>
+              {getFeatureTypeEmoji(selectedFeature.typeKr)} {selectedFeature.nameKr}  <Text style={{ fontSize: 16, fontWeight: '500', color: '#9CA3AF' }}>{selectedFeature.nameEn}</Text>
+            </Text>
+            {/* 유형 + 위치 */}
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 8 }}>
+              <View style={{ paddingHorizontal: 10, paddingVertical: 4, borderRadius: 12, backgroundColor: `${getFeatureTypeColor(selectedFeature.typeKr)}20` }}>
+                <Text style={{ color: getFeatureTypeColor(selectedFeature.typeKr), fontSize: 12, fontWeight: '600' }}>{selectedFeature.typeKr}</Text>
+              </View>
+              <Text style={{ color: '#6B7280', fontSize: 12 }}>{isFarSide(selectedFeature) ? '🔙 뒷면' : '🌕 앞면'}</Text>
+            </View>
+            <Text style={{ color: '#6B7280', fontSize: 13, marginTop: 6 }}>
+              {selectedFeature.lat.toFixed(3)}°{selectedFeature.lat >= 0 ? 'N' : 'S'}, {Math.abs(selectedFeature.lng).toFixed(3)}°{selectedFeature.lng >= 0 ? 'E' : 'W'}
+            </Text>
+
+            {/* 주요 제원 */}
+            <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 12, marginTop: 16, paddingTop: 16, borderTopWidth: 1, borderTopColor: '#1F2937' }}>
+              <View style={{ minWidth: '40%' }}>
+                <Text style={{ color: '#6B7280', fontSize: 11 }}>직경</Text>
+                <Text style={{ color: 'white', fontSize: 16, fontWeight: '700' }}>{selectedFeature.diameterKm} km</Text>
+              </View>
+              {selectedFeature.areaKm2 && (
+                <View style={{ minWidth: '40%' }}>
+                  <Text style={{ color: '#6B7280', fontSize: 11 }}>면적</Text>
+                  <Text style={{ color: 'white', fontSize: 16, fontWeight: '700' }}>{formatArea(selectedFeature.areaKm2)}</Text>
+                </View>
+              )}
+              {selectedFeature.depthKm && (
+                <View style={{ minWidth: '40%' }}>
+                  <Text style={{ color: '#6B7280', fontSize: 11 }}>깊이</Text>
+                  <Text style={{ color: 'white', fontSize: 16, fontWeight: '700' }}>{selectedFeature.depthKm} km</Text>
+                </View>
+              )}
+              {selectedFeature.widthKm !== selectedFeature.diameterKm && (
+                <View style={{ minWidth: '40%' }}>
+                  <Text style={{ color: '#6B7280', fontSize: 11 }}>폭</Text>
+                  <Text style={{ color: 'white', fontSize: 16, fontWeight: '700' }}>{selectedFeature.widthKm} km</Text>
+                </View>
+              )}
+            </View>
+
+            {/* 설명 */}
+            <View style={{ marginTop: 16, paddingTop: 16, borderTopWidth: 1, borderTopColor: '#1F2937' }}>
+              <Text style={{ color: '#9CA3AF', fontSize: 13, lineHeight: 20 }}>{selectedFeature.description}</Text>
+            </View>
+            <View style={{ height: 30 }} />
+          </ScrollView>
+        </View>
+      )}
+
+      {/* ═══ 대표 지형 전체화면 뷰 (하단 20% 타이틀바) ═══ */}
+      {selectedFeature && mainMode === 'exploration' && featureDetailMode === 'view' && (
+        <View style={{
+          position: 'absolute',
+          bottom: 0,
+          left: 0,
+          right: 0,
+          backgroundColor: '#111827',
+          borderTopLeftRadius: 20,
+          borderTopRightRadius: 20,
+          paddingTop: 14,
+          paddingBottom: 28,
+          paddingHorizontal: 20,
+        }}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+            <TouchableOpacity
+              onPress={() => {
+                setFeatureDetailMode('detail');
+                webviewRef.current?.postMessage(JSON.stringify({ type: 'RESET_VIEW' }));
+                setTimeout(() => {
+                  webviewRef.current?.postMessage(JSON.stringify({ type: 'GO_TO_LOCATION', payload: { lat: selectedFeature.lat, lng: selectedFeature.lng } }));
+                }, 300);
+              }}
+              style={{ padding: 4 }}
+            >
+              <Ionicons name="chevron-back" size={22} color="#9CA3AF" />
+            </TouchableOpacity>
+            <View style={{ flex: 1, marginLeft: 10 }}>
+              <View style={{ flexDirection: 'row', alignItems: 'baseline', gap: 8 }}>
+                <Text style={{ color: 'white', fontSize: 17, fontWeight: '800' }}>{getFeatureTypeEmoji(selectedFeature.typeKr)} {selectedFeature.nameKr}</Text>
+                <Text style={{ color: '#6B7280', fontSize: 13 }}>{selectedFeature.nameEn}</Text>
+              </View>
+            </View>
+            <TouchableOpacity
+              onPress={() => {
+                setSelectedFeature(null);
+                webviewRef.current?.postMessage(JSON.stringify({ type: 'HIDE_FEATURE_AREA' }));
+                webviewRef.current?.postMessage(JSON.stringify({ type: 'RESET_VIEW' }));
+              }}
+              style={{ padding: 4 }}
+            >
+              <Ionicons name="close" size={20} color="#6B7280" />
+            </TouchableOpacity>
+          </View>
+        </View>
+      )}
       <Modal
         visible={!!selectedLandmark}
         transparent={true}
@@ -2386,6 +2799,19 @@ const styles = StyleSheet.create({
   webview: {
     flex: 1,
     backgroundColor: '#000',
+  },
+  resourceScannerBtn: {
+    position: 'absolute',
+    top: 12,
+    left: 12,
+    width: 42,
+    height: 42,
+    borderRadius: 21,
+    backgroundColor: 'rgba(0,0,0,0.6)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.15)',
+    justifyContent: 'center',
+    alignItems: 'center',
   },
 
   // 우측 컨트롤 버튼
