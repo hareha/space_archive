@@ -1,16 +1,41 @@
 import { useLocalSearchParams, useRouter, Stack } from 'expo-router';
+import { useState, useEffect } from 'react';
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity, SafeAreaView, StatusBar } from 'react-native';
 import { Image } from 'expo-image';
 import { Ionicons } from '@expo/vector-icons';
 import { NEWS_DATA, SCRAPPED_NEWS, NewsItem } from '@/constants/MockData';
+import { addScrapContent, removeScrapContent, isContentScrapped } from '@/constants/scrapStore';
 
 export default function NewsDetailScreen() {
     const { id } = useLocalSearchParams();
     const router = useRouter();
+    const [isScrapped, setIsScrapped] = useState(false);
 
     const newsItem: NewsItem | undefined =
         NEWS_DATA.find(item => item.id.toString() === id) ||
         SCRAPPED_NEWS.find(item => item.id.toString() === id);
+
+    useEffect(() => {
+        if (newsItem) {
+            isContentScrapped(newsItem.id).then(setIsScrapped);
+        }
+    }, [newsItem?.id]);
+
+    const toggleScrap = async () => {
+        if (!newsItem) return;
+        if (isScrapped) {
+            await removeScrapContent(newsItem.id);
+            setIsScrapped(false);
+        } else {
+            await addScrapContent({
+                newsId: newsItem.id,
+                title: newsItem.title,
+                summary: newsItem.summary,
+                savedAt: Date.now(),
+            });
+            setIsScrapped(true);
+        }
+    };
 
     if (!newsItem) {
         return (
@@ -29,7 +54,6 @@ export default function NewsDetailScreen() {
 
     const handleExplore = () => {
         if (!newsItem.location) return;
-        // Moon 3D 탭으로 이동하면서 위경도 정보를 전달
         router.push({
             pathname: '/moon',
             params: {
@@ -52,8 +76,8 @@ export default function NewsDetailScreen() {
                 </TouchableOpacity>
                 <Text style={styles.headerTitle}>인사이트</Text>
                 <View style={styles.headerActions}>
-                    <TouchableOpacity style={styles.actionButton}>
-                        <Ionicons name="bookmark-outline" size={22} color="#1A1A1A" />
+                    <TouchableOpacity style={styles.actionButton} onPress={toggleScrap}>
+                        <Ionicons name={isScrapped ? 'bookmark' : 'bookmark-outline'} size={22} color={isScrapped ? '#3B82F6' : '#1A1A1A'} />
                     </TouchableOpacity>
                     <TouchableOpacity style={styles.actionButton}>
                         <Ionicons name="share-outline" size={22} color="#1A1A1A" />

@@ -1,21 +1,29 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import {
     StyleSheet, ScrollView, SafeAreaView, TouchableOpacity,
     StatusBar, View, Text, TextInput, FlatList
 } from 'react-native';
 import NewsCard from '@/components/NewsCard';
 import { FontAwesome, Ionicons } from '@expo/vector-icons';
-import { router } from 'expo-router';
+import { router, useLocalSearchParams } from 'expo-router';
 import { NEWS_DATA } from '@/constants/MockData';
 
 const CATEGORIES = ['전체', '탐사', '자원', '기술', '분석'];
 
 export default function TabOneScreen() {
 
+    const { search } = useLocalSearchParams<{ search?: string }>();
     const [selectedCategory, setSelectedCategory] = useState<string>('전체');
     const [searchText, setSearchText] = useState('');
     const [sortOrder, setSortOrder] = useState<'최신순' | '인기순'>('최신순');
     const [viewMode, setViewMode] = useState<'card' | 'list'>('card');
+
+    // route param으로 검색어 전달 시 자동 설정
+    useEffect(() => {
+        if (search) {
+            setSearchText(search);
+        }
+    }, [search]);
 
     const filteredNews = NEWS_DATA.filter(item => {
         const matchesCategory = selectedCategory === '전체' || item.category === selectedCategory;

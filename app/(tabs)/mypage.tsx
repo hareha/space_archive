@@ -108,7 +108,7 @@ export default function MyPageScreen() {
                     <Text style={styles.sectionTitle}>내 활동</Text>
                     <View style={styles.menuGroup}>
                         <MenuRow icon="grid-outline" label="내 구역 관리" onPress={() => router.push('/profile/my-territories')} />
-                        <MenuRow icon="bookmark-outline" label="스크랩북" />
+                        <MenuRow icon="bookmark-outline" label="스크랩북" onPress={() => router.push('/profile/scrapbook')} />
                         <MenuRow icon="cube-outline" label="AR 모드" onPress={() => setShowAR(true)} />
                     </View>
                 </View>

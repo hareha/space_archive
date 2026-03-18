@@ -5,10 +5,12 @@ import { StatusBar } from 'expo-status-bar';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { BlurView } from 'expo-blur';
-import { useLocalSearchParams } from 'expo-router';
+import { useLocalSearchParams, router } from 'expo-router';
 import { createCesiumHtml } from '@/constants/cesium/CesiumHtml';
 import { loadMineralData } from '@/utils/mineralDataLoader';
 import AR2MoonViewer from '@/components/AR2MoonViewer';
+import OccupationStatusPanel from '@/components/OccupationStatusPanel';
+import AIZoneRecommendModal from '@/components/AIZoneRecommendModal';
 import ResourceScannerPanel from '@/components/ResourceScannerPanel';
 import { Asset } from 'expo-asset';
 import * as FileSystem from 'expo-file-system/legacy';
@@ -16,6 +18,7 @@ import { LIVE_MISSIONS, Spacecraft } from '@/constants/SpacecraftData';
 import { fetchSpacecraftPosition, fetchSpacecraftTrajectory } from '@/services/HorizonsApi';
 import { LANDING_SITES, LandingSite, sortByYear, sortByCountry, findNearbySites, getContactColor, COUNTRY_NAMES } from '@/constants/LandingSiteData';
 import { LUNAR_FEATURES, LunarFeature, sortByType, sortBySize, getFeatureTypeColor, getFeatureTypeEmoji, formatArea, isFarSide } from '@/constants/LunarFeatureData';
+import { addScrapArea, removeScrapArea, isAreaScrapped } from '@/constants/scrapStore';
 
 export default function MoonScreen() {
   const webviewRef = useRef<WebView>(null);
@@ -34,8 +37,6 @@ export default function MoonScreen() {
 
   // AI 땅 추천 상태
   const [showAIModal, setShowAIModal] = useState(false);
-  const [aiStep, setAiStep] = useState(0);
-  const [aiAnswers, setAiAnswers] = useState<Record<number, string>>({});
   const [selectedCell, setSelectedCell] = useState<any>(null);
   const [cellExpanded, setCellExpanded] = useState(false);
   const [showOccupyConfirm, setShowOccupyConfirm] = useState(false);
@@ -121,7 +122,7 @@ export default function MoonScreen() {
   const [landmarkListData, setLandmarkListData] = useState<any>(null);
   const [selectedLandmark, setSelectedLandmark] = useState<any>(null);
   const [selectedLandingSite, setSelectedLandingSite] = useState<LandingSite | null>(null);
-  const [landingSiteDetailMode, setLandingSiteDetailMode] = useState<'detail' | 'view'>('detail');
+  const [landingSiteDetailMode, setLandingSiteDetailMode] = useState<'detail' | 'view' | 'occupation'>('detail');
   const [landingSortMode, setLandingSortMode] = useState<'year' | 'country'>('year');
   const sortedLandingSites = useMemo(() => {
     return landingSortMode === 'year' ? sortByYear(LANDING_SITES) : sortByCountry(LANDING_SITES);
@@ -129,11 +130,13 @@ export default function MoonScreen() {
 
   // ═══ 대표 지형 ═══
   const [selectedFeature, setSelectedFeature] = useState<LunarFeature | null>(null);
-  const [featureDetailMode, setFeatureDetailMode] = useState<'detail' | 'view'>('detail');
+  const [featureDetailMode, setFeatureDetailMode] = useState<'detail' | 'view' | 'occupation'>('detail');
   const [featureSortMode, setFeatureSortMode] = useState<'type' | 'size'>('type');
   const sortedFeatures = useMemo(() => {
     return featureSortMode === 'type' ? sortByType(LUNAR_FEATURES) : sortBySize(LUNAR_FEATURES);
   }, [featureSortMode]);
+
+
 
   // ═══ Phase 2: GLB 모델 (+5초) ═══
   // 달 3D 타일 렌더링 안정화 후 모델 주입
@@ -418,7 +421,19 @@ export default function MoonScreen() {
           break;
         case 'SATELLITE_SELECTED':
           console.log('[WebView] SATELLITE_SELECTED:', message.payload);
-          setSelectedSatellite(message.payload);
+          // satelliteData에서 전체 정보 찾아서 설정
+          const satName = message.payload?.name;
+          if (satName && satelliteData.length > 0) {
+            const fullSatData = satelliteData.find(s => s.name === satName);
+            if (fullSatData) {
+              setSelectedSatellite(fullSatData);
+            } else {
+              // fallback: payload 그대로 사용
+              setSelectedSatellite(message.payload);
+            }
+          } else {
+            setSelectedSatellite(message.payload);
+          }
           break;
         case 'SATELLITE_DESELECTED':
           setSelectedSatellite(null);
@@ -462,9 +477,9 @@ export default function MoonScreen() {
       // 탐사모드: 레벨 제한 없이 절대값 줌인
       webviewRef.current?.postMessage(JSON.stringify({ type: 'EXPLORE_ZOOM_IN' }));
     } else {
-      // 점유모드: 레벨 기반 단계 줌
-      if (currentZoomLevel >= MAX_ZOOM_LEVEL) return;
-      webviewRef.current?.postMessage(JSON.stringify({ type: 'ZOOM_IN' }));
+      // 점유모드: 화면 중앙 셀을 선택하여 뎁스 진입 (최대 3단계까지)
+      if (selectionDepth >= 3) return; // 3단계 이상이면 + 무시
+      webviewRef.current?.postMessage(JSON.stringify({ type: 'SELECT_CENTER_CELL' }));
     }
   };
 
@@ -473,9 +488,9 @@ export default function MoonScreen() {
       // 탐사모드: 레벨 제한 없이 절대값 줌아웃
       webviewRef.current?.postMessage(JSON.stringify({ type: 'EXPLORE_ZOOM_OUT' }));
     } else {
-      // 점유모드: 레벨 기반 단계 줌
-      if (currentZoomLevel <= 0) return;
-      webviewRef.current?.postMessage(JSON.stringify({ type: 'ZOOM_OUT' }));
+      // 점유모드: 이전 단계로 돌아감 (selectionStack pop)
+      if (selectionDepth <= 0) return; // 초기화면이면 - 무시
+      webviewRef.current?.postMessage(JSON.stringify({ type: 'GO_BACK' }));
     }
   };
 
@@ -888,47 +903,13 @@ export default function MoonScreen() {
 
   const handleCloseAIModal = () => {
     setShowAIModal(false);
-    setAiStep(0);
-    setAiAnswers({});
   };
 
-  const aiQuestions = [
-    { title: '목표 (설립 목적)', options: ['거주 기지 (안정성 중시)', '자원 채굴 (광물 중시)', '우주 관측 (시야/고도 중시)', '임시 전초기지 (접근성 중시)'] },
-    { title: '위치 선호도', options: ['항구적 음영지역 (수자원 기대, 극지방)', '적도 부근 (태양광 에너지 유리)', '고요의 바다 등 광활한 평지', '크레이터 내부 (특수 지형)'] },
-    { title: '필수 자원 우선순위', options: ['수자원 (얼음 형태)', '풍부한 티타늄/철 (구조물 자재)', '헬륨-3 (희귀 에너지원)', '적당한 일조량 (태양광 발전)'] },
-    { title: '지형 특성', options: ['크고 평탄한 분지', '복잡하지만 자원이 밀집된 협곡', '높은 산맥 위', '적당한 구릉지대'] }
-  ];
-
-  const handleAIAnswer = (answer: string) => {
-    const newAnswers = { ...aiAnswers, [aiStep]: answer };
-    setAiAnswers(newAnswers);
-
-    if (aiStep < aiQuestions.length - 1) {
-      setAiStep(aiStep + 1);
-    } else {
-      // 분석(가짜 딜레이 후 결과 전송) 시작
-      setAiStep(99); // 99는 분석 중 상태
-      setTimeout(() => {
-        // 응답에 따른 위경도 추론 (모의 로직)
-        let targetLat = 0; // 기본 적도
-        let targetLng = 0; // 기본 본초 자오선
-
-        const locPref = newAnswers[1];
-        if (locPref.includes('극지방')) targetLat = -85 + Math.random() * 5; // 남극 근처
-        else if (locPref.includes('적도')) targetLat = -5 + Math.random() * 10;
-        else if (locPref.includes('평지')) { targetLat = 20; targetLng = 30; } // 고요의 바다 인근
-        else targetLat = 45; // 임의 위치
-
-        // WebView에 전송
-        setMainMode('occupation');
-        webviewRef.current?.postMessage(JSON.stringify({
-          type: 'RECOMMEND_LAND',
-          payload: { lat: targetLat, lng: targetLng }
-        }));
-
-        handleCloseAIModal();
-      }, 2000);
-    }
+  const handleAISelectZone = (lat: number, lng: number, name: string) => {
+    webviewRef.current?.postMessage(JSON.stringify({
+      type: 'FLY_TO_LOCATION',
+      payload: { lat, lng, name }
+    }));
   };
 
 
@@ -1054,9 +1035,10 @@ export default function MoonScreen() {
 
           {/* 확대 버튼 (+) */}
           <TouchableOpacity
-            style={styles.controlBtn}
+            style={[styles.controlBtn, isOccupation && selectionDepth >= 3 && { opacity: 0.3 }]}
             onPress={handleZoomIn}
             activeOpacity={0.7}
+            disabled={isOccupation && selectionDepth >= 3}
           >
             <Ionicons name="add" size={28} color="#fff" />
           </TouchableOpacity>
@@ -1072,14 +1054,15 @@ export default function MoonScreen() {
 
           {/* 축소 버튼 (-) */}
           <TouchableOpacity
-            style={styles.controlBtn}
+            style={[styles.controlBtn, isOccupation && selectionDepth <= 0 && { opacity: 0.3 }]}
             onPress={handleZoomOut}
             activeOpacity={0.7}
+            disabled={isOccupation && selectionDepth <= 0}
           >
             <Ionicons name="remove" size={28} color="#fff" />
           </TouchableOpacity>
 
-          {canGoBack && (
+          {canGoBack && !isOccupation && (
             <TouchableOpacity
               style={styles.controlBtn}
               onPress={handleBack}
@@ -1111,7 +1094,7 @@ export default function MoonScreen() {
           <View style={styles.aiRecommendContainer}>
             <TouchableOpacity
               style={[styles.controlBtn, { backgroundColor: 'rgba(59, 130, 246, 0.8)', borderColor: '#60A5FA', width: 48, height: 48, borderRadius: 24 }]}
-              onPress={() => { setShowAIModal(true); setAiStep(0); setAiAnswers({}); }}
+              onPress={() => { setShowAIModal(true); }}
               activeOpacity={0.7}
             >
               <Ionicons name="sparkles" size={22} color="#fff" />
@@ -1641,8 +1624,8 @@ export default function MoonScreen() {
                 {/* 구분선 */}
                 <View style={styles.cellDivider} />
 
-                {/* 주요 착륙지점 */}
-                <Text style={styles.sectionLabel}>주요 착륙지점</Text>
+                {/* 착륙 지점 */}
+                <Text style={styles.sectionLabel}>착륙 지점</Text>
                 <View style={styles.poiRow}>
                   <View style={styles.poiThumb}>
                     <Ionicons name="location" size={20} color="#999" />
@@ -1715,7 +1698,7 @@ export default function MoonScreen() {
             <View style={{ flexDirection: 'row', alignItems: 'center', padding: 20, borderBottomWidth: 1, borderBottomColor: 'rgba(255,255,255,0.08)' }}>
               <View style={{ width: 40, height: 4, backgroundColor: '#4B5563', borderRadius: 2, position: 'absolute', top: 10, alignSelf: 'center', left: '50%', marginLeft: -20 }} />
               <Text style={{ color: '#F9FAFB', fontSize: 18, fontWeight: '700', flex: 1, marginTop: 8 }}>
-                {featureListView === 'none' ? '탐사 목록' : featureListView === 'landing' ? '🚀 주요 착륙지' : featureListView === 'terrain' ? '🌍 유명 지형' : '궤도 위성'}
+                {featureListView === 'none' ? '탐사 목록' : featureListView === 'landing' ? '🚀 착륙 지점' : featureListView === 'terrain' ? '🌍 대표 지형' : '궤도 위성'}
               </Text>
               {featureListView !== 'none' ? (
                 <TouchableOpacity onPress={() => setFeatureListView('none')} style={{ padding: 4 }}>
@@ -1879,7 +1862,7 @@ export default function MoonScreen() {
                         setSelectedFeature(feat);
                         setFeatureDetailMode('detail');
                         webviewRef.current?.postMessage(JSON.stringify({ type: 'GO_TO_LOCATION', payload: { lat: feat.lat, lng: feat.lng } }));
-                        webviewRef.current?.postMessage(JSON.stringify({ type: 'SHOW_FEATURE_AREA', payload: { lat: feat.lat, lng: feat.lng, diameterKm: feat.diameterKm, typeKr: feat.typeKr } }));
+                        webviewRef.current?.postMessage(JSON.stringify({ type: 'SHOW_FEATURE_AREA', payload: { lat: feat.lat, lng: feat.lng, diameterKm: feat.diameterKm, widthKm: feat.widthKm, angle: feat.angle, typeKr: feat.typeKr } }));
                       }}
                       activeOpacity={0.7}
                     >
@@ -1998,8 +1981,8 @@ export default function MoonScreen() {
             overflow: 'hidden',
           }}>
 
-            {/* 헤더 - 뒤로가기만 */}
-            <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 20, paddingBottom: 10 }}>
+            {/* 헤더 - 뒤로가기 + 위성명 */}
+            <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingTop: 18, paddingBottom: 6, gap: 6 }}>
               <TouchableOpacity
                 onPress={() => {
                   setSelectedSatellite(null);
@@ -2009,19 +1992,22 @@ export default function MoonScreen() {
                 }}
                 style={{ padding: 4 }}
               >
-                <Text style={{ color: '#9CA3AF', fontSize: 22 }}>←</Text>
+                <Ionicons name="chevron-back" size={22} color="#9CA3AF" />
               </TouchableOpacity>
+              <Text style={{ color: '#F9FAFB', fontSize: 18, fontWeight: '700' }}>
+                {selectedSatellite.nameKo !== selectedSatellite.name
+                  ? selectedSatellite.nameKo
+                  : selectedSatellite.name}
+              </Text>
             </View>
 
             <ScrollView style={{ paddingHorizontal: 20 }} showsVerticalScrollIndicator={false}>
-              {/* 위성 이름 */}
-              <View style={{ paddingTop: 16, paddingBottom: 4 }}>
-                <Text style={{ color: 'white', fontSize: 22, fontWeight: '800' }}>
-                  {selectedSatellite.nameKo !== selectedSatellite.name
-                    ? `${selectedSatellite.nameKo} (${selectedSatellite.name})`
-                    : selectedSatellite.name}
-                </Text>
-              </View>
+              {/* 위성 풀네임 (영어명 다르면 표시) */}
+              {selectedSatellite.nameKo !== selectedSatellite.name && (
+              <Text style={{ color: '#6B7280', fontSize: 13, marginBottom: 4 }}>
+                {selectedSatellite.name}
+              </Text>
+              )}
               {/* 기관 + 발사 시점 */}
               <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 4 }}>
                 <Text style={{ color: '#9CA3AF', fontSize: 13 }}>
@@ -2130,18 +2116,20 @@ export default function MoonScreen() {
       )}
 
       {/* ═══ 착륙지점 상세 패널 (50%, 풀 정보) ═══ */}
-      {selectedLandingSite && mainMode === 'exploration' && landingSiteDetailMode === 'detail' && (
+      {selectedLandingSite && mainMode === 'exploration' && (landingSiteDetailMode === 'detail' || landingSiteDetailMode === 'occupation') && (
         <View style={{
           position: 'absolute',
           bottom: 0,
           left: 0,
           right: 0,
-          top: '50%',
+          top: landingSiteDetailMode === 'occupation' ? 0 : '50%',
           backgroundColor: '#111827',
-          borderTopLeftRadius: 24,
-          borderTopRightRadius: 24,
+          borderTopLeftRadius: landingSiteDetailMode === 'occupation' ? 0 : 24,
+          borderTopRightRadius: landingSiteDetailMode === 'occupation' ? 0 : 24,
           overflow: 'hidden',
         }}>
+          {landingSiteDetailMode === 'detail' ? (
+          <>
           {/* 헤더: 뒤로가기 + 상세보기 */}
           <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 20, paddingTop: 16, paddingBottom: 10 }}>
             <TouchableOpacity
@@ -2155,6 +2143,25 @@ export default function MoonScreen() {
             >
               <Ionicons name="chevron-back" size={20} color="#9CA3AF" />
               <Text style={{ color: '#9CA3AF', fontSize: 13 }}>목록</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              onPress={async () => {
+                const id = `landing-${selectedLandingSite.officialName}`;
+                const scrapped = await isAreaScrapped(id);
+                if (scrapped) {
+                  await removeScrapArea(id);
+                } else {
+                  await addScrapArea({
+                    id, type: 'landing', name: selectedLandingSite.nameKr,
+                    lat: selectedLandingSite.lat, lng: selectedLandingSite.lng,
+                    extra: `${selectedLandingSite.country} · ${selectedLandingSite.year}`,
+                    savedAt: Date.now(),
+                  });
+                }
+              }}
+              style={{ padding: 6, marginRight: 8 }}
+            >
+              <Ionicons name="bookmark-outline" size={20} color="#60A5FA" />
             </TouchableOpacity>
             <TouchableOpacity
               onPress={() => {
@@ -2222,6 +2229,26 @@ export default function MoonScreen() {
               <Text style={{ color: '#9CA3AF', fontSize: 13, lineHeight: 20 }}>{selectedLandingSite.description}</Text>
             </View>
 
+            {/* 관련 뉴스 + 점유 현황 버튼 */}
+            <View style={{ flexDirection: 'row', gap: 10, marginBottom: 20 }}>
+              <TouchableOpacity
+                style={{ flex: 1, backgroundColor: '#1F2937', borderRadius: 12, paddingVertical: 14, alignItems: 'center', borderWidth: 1, borderColor: 'rgba(255,255,255,0.08)' }}
+                onPress={() => router.push(`/(tabs)?search=${encodeURIComponent(selectedLandingSite.nameKr)}`)}
+                activeOpacity={0.7}
+              >
+                <Ionicons name="newspaper-outline" size={18} color="#60A5FA" style={{ marginBottom: 4 }} />
+                <Text style={{ color: '#D1D5DB', fontSize: 13, fontWeight: '600' }}>관련 뉴스 →</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={{ flex: 1, backgroundColor: '#1F2937', borderRadius: 12, paddingVertical: 14, alignItems: 'center', borderWidth: 1, borderColor: 'rgba(255,255,255,0.08)' }}
+                onPress={() => setLandingSiteDetailMode('occupation')}
+                activeOpacity={0.7}
+              >
+                <Ionicons name="grid-outline" size={18} color="#34D399" style={{ marginBottom: 4 }} />
+                <Text style={{ color: '#D1D5DB', fontSize: 13, fontWeight: '600' }}>점유 현황 →</Text>
+              </TouchableOpacity>
+            </View>
+
             {/* 인근 탐사 지점 */}
             <View style={{ marginBottom: 20, borderTopWidth: 1, borderTopColor: 'rgba(255,255,255,0.06)', paddingTop: 16 }}>
               <Text style={{ color: '#D1D5DB', fontSize: 15, fontWeight: '700', marginBottom: 10 }}>인근 탐사 지점</Text>
@@ -2249,6 +2276,23 @@ export default function MoonScreen() {
 
             <View style={{ height: 40 }} />
           </ScrollView>
+          </>
+          ) : (
+            <OccupationStatusPanel
+              onBack={() => setLandingSiteDetailMode('detail')}
+              onGoToOccupation={() => {
+                const lat = selectedLandingSite.lat;
+                const lng = selectedLandingSite.lng;
+                setSelectedLandingSite(null);
+                setLandingSiteDetailMode('detail');
+                setMainMode('occupation');
+                setTimeout(() => {
+                  webviewRef.current?.postMessage(JSON.stringify({ type: 'GO_TO_LOCATION', payload: { lat, lng } }));
+                }, 300);
+              }}
+              target={{ name: selectedLandingSite.nameKr, lat: selectedLandingSite.lat, lng: selectedLandingSite.lng, radiusKm: 5 }}
+            />
+          )}
         </View>
       )}
 
@@ -2326,6 +2370,26 @@ export default function MoonScreen() {
               <Ionicons name="chevron-back" size={20} color="#9CA3AF" />
               <Text style={{ color: '#9CA3AF', fontSize: 13 }}>목록</Text>
             </TouchableOpacity>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+            <TouchableOpacity
+              onPress={async () => {
+                const id = `feature-${selectedFeature.id}`;
+                const scrapped = await isAreaScrapped(id);
+                if (scrapped) {
+                  await removeScrapArea(id);
+                } else {
+                  await addScrapArea({
+                    id, type: 'feature', name: selectedFeature.nameKr,
+                    lat: selectedFeature.lat, lng: selectedFeature.lng,
+                    extra: selectedFeature.typeKr,
+                    savedAt: Date.now(),
+                  });
+                }
+              }}
+              style={{ padding: 6 }}
+            >
+              <Ionicons name="bookmark-outline" size={20} color={getFeatureTypeColor(selectedFeature.typeKr)} />
+            </TouchableOpacity>
             <TouchableOpacity
               onPress={() => {
                 setFeatureDetailMode('view');
@@ -2339,6 +2403,7 @@ export default function MoonScreen() {
               <Ionicons name="eye" size={16} color={getFeatureTypeColor(selectedFeature.typeKr)} />
               <Text style={{ color: getFeatureTypeColor(selectedFeature.typeKr), fontSize: 13, fontWeight: '600' }}>상세 보기</Text>
             </TouchableOpacity>
+            </View>
           </View>
           <ScrollView style={{ flex: 1, paddingHorizontal: 20 }} showsVerticalScrollIndicator={false}>
             {/* 이름 */}
@@ -2386,8 +2451,56 @@ export default function MoonScreen() {
             <View style={{ marginTop: 16, paddingTop: 16, borderTopWidth: 1, borderTopColor: '#1F2937' }}>
               <Text style={{ color: '#9CA3AF', fontSize: 13, lineHeight: 20 }}>{selectedFeature.description}</Text>
             </View>
+
+            {/* 관련 뉴스 + 점유 현황 버튼 */}
+            <View style={{ flexDirection: 'row', gap: 10, marginTop: 16, marginBottom: 20 }}>
+              <TouchableOpacity
+                style={{ flex: 1, backgroundColor: '#1F2937', borderRadius: 12, paddingVertical: 14, alignItems: 'center', borderWidth: 1, borderColor: 'rgba(255,255,255,0.08)' }}
+                onPress={() => router.push(`/(tabs)?search=${encodeURIComponent(selectedFeature.nameKr)}`)}
+                activeOpacity={0.7}
+              >
+                <Ionicons name="newspaper-outline" size={18} color="#60A5FA" style={{ marginBottom: 4 }} />
+                <Text style={{ color: '#D1D5DB', fontSize: 13, fontWeight: '600' }}>관련 뉴스 →</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={{ flex: 1, backgroundColor: '#1F2937', borderRadius: 12, paddingVertical: 14, alignItems: 'center', borderWidth: 1, borderColor: 'rgba(255,255,255,0.08)' }}
+                onPress={() => setFeatureDetailMode('occupation')}
+                activeOpacity={0.7}
+              >
+                <Ionicons name="grid-outline" size={18} color="#34D399" style={{ marginBottom: 4 }} />
+                <Text style={{ color: '#D1D5DB', fontSize: 13, fontWeight: '600' }}>점유 현황 →</Text>
+              </TouchableOpacity>
+            </View>
             <View style={{ height: 30 }} />
           </ScrollView>
+        </View>
+      )}
+
+      {/* ═══ 대표 지형 점유 현황 ═══ */}
+      {selectedFeature && mainMode === 'exploration' && featureDetailMode === 'occupation' && (
+        <View style={{
+          position: 'absolute',
+          bottom: 0,
+          left: 0,
+          right: 0,
+          top: 0,
+          backgroundColor: '#111827',
+          overflow: 'hidden',
+        }}>
+          <OccupationStatusPanel
+            onBack={() => setFeatureDetailMode('detail')}
+            onGoToOccupation={() => {
+              const lat = selectedFeature.lat;
+              const lng = selectedFeature.lng;
+              setSelectedFeature(null);
+              setFeatureDetailMode('detail');
+              setMainMode('occupation');
+              setTimeout(() => {
+                webviewRef.current?.postMessage(JSON.stringify({ type: 'GO_TO_LOCATION', payload: { lat, lng } }));
+              }, 300);
+            }}
+            target={{ name: selectedFeature.nameKr, lat: selectedFeature.lat, lng: selectedFeature.lng, diameterKm: selectedFeature.diameterKm, widthKm: selectedFeature.widthKm, angle: selectedFeature.angle }}
+          />
         </View>
       )}
 
@@ -2501,6 +2614,9 @@ export default function MoonScreen() {
         </TouchableOpacity>
       </Modal>
 
+
+
+
       {/* 점유 확정 모달 (풀스크린) */}
       <Modal
         visible={showOccupyConfirm}
@@ -2593,66 +2709,12 @@ export default function MoonScreen() {
         </View>
       </Modal>
 
-      {/* AI 추천 모달 (모던 풀스크린 UI) */}
-      <Modal
+      {/* AI 추천 모달 (새 컴포넌트) */}
+      <AIZoneRecommendModal
         visible={showAIModal}
-        transparent={true}
-        animationType="slide"
-        onRequestClose={handleCloseAIModal}
-      >
-        <SafeAreaView style={{ flex: 1, backgroundColor: '#111827' }} edges={['top', 'bottom', 'left', 'right']}>
-          {aiStep < 99 ? (
-            <View style={{ flex: 1, paddingHorizontal: 28, paddingTop: 40, paddingBottom: 60, justifyContent: 'space-between' }}>
-              <View>
-                <TouchableOpacity onPress={handleCloseAIModal} style={{ alignSelf: 'flex-start', marginBottom: 30, padding: 8, marginLeft: -8 }}>
-                  <Ionicons name="close" size={32} color="#9CA3AF" />
-                </TouchableOpacity>
-                <Text style={{ color: '#3B82F6', fontSize: 15, fontWeight: 'bold', marginBottom: 12, letterSpacing: 1 }}>
-                  AI 개척지 추천 · {aiStep + 1}/{aiQuestions.length}
-                </Text>
-                <Text style={{ color: '#F9FAFB', fontSize: 26, fontWeight: '800', lineHeight: 38, marginBottom: 40 }}>
-                  {aiQuestions[aiStep].title}
-                </Text>
-
-                <View style={{ gap: 16 }}>
-                  {aiQuestions[aiStep].options.map((option, idx) => (
-                    <TouchableOpacity
-                      key={idx}
-                      style={{
-                        backgroundColor: 'rgba(255, 255, 255, 0.05)',
-                        paddingVertical: 20,
-                        paddingHorizontal: 24,
-                        borderRadius: 16,
-                        borderWidth: 1,
-                        borderColor: 'rgba(255, 255, 255, 0.1)',
-                        flexDirection: 'row',
-                        alignItems: 'center',
-                        justifyContent: 'space-between'
-                      }}
-                      onPress={() => handleAIAnswer(option)}
-                      activeOpacity={0.7}
-                    >
-                      <Text style={{ color: '#F3F4F6', fontSize: 17, fontWeight: '600' }}>{option}</Text>
-                      <Ionicons name="chevron-forward" size={20} color="#6B7280" />
-                    </TouchableOpacity>
-                  ))}
-                </View>
-              </View>
-            </View>
-          ) : (
-            <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', padding: 30 }}>
-              <Ionicons name="planet" size={80} color="#3B82F6" style={{ marginBottom: 40 }} />
-              <ActivityIndicator size="large" color="#60A5FA" style={{ marginBottom: 24 }} />
-              <Text style={{ color: '#F9FAFB', fontSize: 24, fontWeight: 'bold', marginBottom: 16, textAlign: 'center' }}>
-                최적의 개척지를 찾는 중...
-              </Text>
-              <Text style={{ color: '#9CA3AF', fontSize: 16, textAlign: 'center', lineHeight: 26 }}>
-                요청하신 조건을 바탕으로 달의 지형, 온도,{'\n'}자원 데이터를 실시간 분석하고 있습니다.
-              </Text>
-            </View>
-          )}
-        </SafeAreaView>
-      </Modal>
+        onClose={handleCloseAIModal}
+        onSelectZone={handleAISelectZone}
+      />
 
     </View >
   );

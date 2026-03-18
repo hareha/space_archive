@@ -72,12 +72,12 @@ export const CESIUM_LANDMARKS = `
         { id:'FS-01', name:'무지개 만', nameEn:'Sinus Iridum', type:'만', lat:44.1, lng:-31.5, diameter:236, area:43736 },
         { id:'FM-01', name:'고요의 바다', nameEn:'Mare Tranquillitatis', type:'바다', lat:8.5, lng:31.4, diameter:873, area:598000 },
         { id:'FC-05', name:'클라비우스', nameEn:'Clavius', type:'충돌구', lat:-58.4, lng:-14.4, diameter:231, area:41900 },
-        { id:'FM-02', name:'아펜닌 산맥', nameEn:'Montes Apenninus', type:'산맥', lat:18.9, lng:3.7, diameter:600, area:0 },
-        { id:'FR-01', name:'직선의 벽', nameEn:'Rupes Recta', type:'단층', lat:-22.1, lng:-7.8, diameter:134, area:0 },
+        { id:'FM-02', name:'아펜닌 산맥', nameEn:'Montes Apenninus', type:'산맥', lat:18.9, lng:-3.7, diameter:600, area:0 },
+        { id:'FR-01', name:'직선의 벽', nameEn:'Rupes Recta', type:'단층', lat:-21.67, lng:-7.70, diameter:134, area:0 },
         { id:'FC-06', name:'가상디', nameEn:'Gassendi', type:'충돌구', lat:-17.5, lng:-39.9, diameter:110, area:9503 },
         { id:'FC-07', name:'메시에', nameEn:'Messier', type:'충돌구', lat:-1.9, lng:47.6, diameter:11, area:95 },
         { id:'FS-02', name:'라이너 감마', nameEn:'Reiner Gamma', type:'소용돌이', lat:7.5, lng:-59.0, diameter:70, area:3848 },
-        { id:'FV-01', name:'알프스 계곡', nameEn:'Vallis Alpes', type:'계곡', lat:48.5, lng:3.2, diameter:166, area:0 },
+        { id:'FV-01', name:'알프스 계곡', nameEn:'Vallis Alpes', type:'계곡', lat:49.21, lng:3.63, diameter:166, area:0 },
         { id:'FC-08', name:'그리말디', nameEn:'Grimaldi', type:'충돌구', lat:-5.2, lng:-68.6, diameter:173, area:23500 },
         { id:'FC-09', name:'테오필루스', nameEn:'Theophilus', type:'충돌구', lat:-11.4, lng:26.4, diameter:100, area:7854 },
         { id:'FV-02', name:'슈뢰터 계곡', nameEn:'Vallis Schröteri', type:'계곡', lat:26.2, lng:-50.8, diameter:168, area:0 },
@@ -85,7 +85,7 @@ export const CESIUM_LANDMARKS = `
         { id:'FC-10', name:'페타비우스', nameEn:'Petavius', type:'충돌구', lat:-25.3, lng:60.4, diameter:182, area:26012 },
         { id:'FC-11', name:'케플러', nameEn:'Kepler', type:'충돌구', lat:8.1, lng:-38.0, diameter:31, area:754 },
         { id:'FS-03', name:'중앙 만', nameEn:'Sinus Medii', type:'만', lat:2.4, lng:1.7, diameter:335, area:88125 },
-        { id:'FR-02', name:'아리아데우스 열구', nameEn:'Rima Ariadaeus', type:'열구', lat:6.4, lng:17.3, diameter:250, area:0 },
+        { id:'FR-02', name:'아리아데우스 열구', nameEn:'Rima Ariadaeus', type:'열구', lat:6.4, lng:14.0, diameter:250, area:0 },
         { id:'FC-12', name:'프톨레마이오스', nameEn:'Ptolemaeus', type:'충돌구', lat:-9.2, lng:-1.8, diameter:153, area:18380 },
         { id:'FC-13', name:'모레투스', nameEn:'Moretus', type:'충돌구', lat:-70.6, lng:-5.8, diameter:111, area:9676 },
         { id:'FM-04', name:'륌케르 산', nameEn:'Mons Rümker', type:'산', lat:40.8, lng:-58.1, diameter:70, area:3848 },
@@ -134,18 +134,29 @@ export const CESIUM_LANDMARKS = `
           return colors[type] || '#9CA3AF';
       }
 
-      // ── 원형 폴리곤 좌표 생성 (달 표면 위) ──
-      function generateCirclePositions(latDeg, lngDeg, radiusKm, segments) {
+      // ── 면적 좌표 생성 (타원형: lengthKm=장축, widthKm=단축, angleDeg=방위각) ──
+      function generateAreaPositions(latDeg, lngDeg, lengthKm, widthKm, angleDeg, segments) {
           segments = segments || 64;
           var moonRadiusKm = 1737.4;
-          var angularRadius = radiusKm / moonRadiusKm; // 라디안
+          var aRad = (lengthKm / 2) / moonRadiusKm; // 장축 반경(라디안)
+          var bRad = (widthKm / 2) / moonRadiusKm;  // 단축 반경(라디안)
           var latRad = Cesium.Math.toRadians(latDeg);
           var lngRad = Cesium.Math.toRadians(lngDeg);
+          var rotRad = Cesium.Math.toRadians(angleDeg || 0);
           var positions = [];
           for (var i = 0; i <= segments; i++) {
-              var bearing = (2 * Math.PI * i) / segments;
-              var lat2 = Math.asin(Math.sin(latRad) * Math.cos(angularRadius) + Math.cos(latRad) * Math.sin(angularRadius) * Math.cos(bearing));
-              var lng2 = lngRad + Math.atan2(Math.sin(bearing) * Math.sin(angularRadius) * Math.cos(latRad), Math.cos(angularRadius) - Math.sin(latRad) * Math.sin(lat2));
+              var t = (2 * Math.PI * i) / segments;
+              // 타원 로컬 좌표 (장축=a, 단축=b)
+              var ex = aRad * Math.cos(t);
+              var ey = bRad * Math.sin(t);
+              // 방위각 회전 적용
+              var rx = ex * Math.cos(rotRad) - ey * Math.sin(rotRad);
+              var ry = ex * Math.sin(rotRad) + ey * Math.cos(rotRad);
+              // rx=북쪽 방향 거리, ry=동쪽 방향 거리 → bearing+distance
+              var dist = Math.sqrt(rx * rx + ry * ry);
+              var bearing = Math.atan2(ry, rx);
+              var lat2 = Math.asin(Math.sin(latRad) * Math.cos(dist) + Math.cos(latRad) * Math.sin(dist) * Math.cos(bearing));
+              var lng2 = lngRad + Math.atan2(Math.sin(bearing) * Math.sin(dist) * Math.cos(latRad), Math.cos(dist) - Math.sin(latRad) * Math.sin(lat2));
               positions.push(Cesium.Cartesian3.fromRadians(lng2, lat2, 0, Cesium.Ellipsoid.MOON));
           }
           return positions;
@@ -306,15 +317,15 @@ export const CESIUM_LANDMARKS = `
       var _featureAreaPrimitives = new Cesium.PrimitiveCollection();
       viewer.scene.primitives.add(_featureAreaPrimitives);
 
-      function showFeatureArea(lat, lng, diameterKm, typeKr) {
+      function showFeatureArea(lat, lng, diameterKm, widthKm, angle, typeKr) {
           hideFeatureArea();
           var color = Cesium.Color.fromCssColorString(getTerrainTypeColor(typeKr));
-          var radiusKm = diameterKm / 2;
-          var circlePositions = generateCirclePositions(lat, lng, radiusKm, 64);
+          var w = widthKm || diameterKm; // 폭 없으면 원형
+          var positions = generateAreaPositions(lat, lng, diameterKm, w, angle || 0, 64);
           _featureAreaPrimitives.add(new Cesium.ClassificationPrimitive({
               geometryInstances: new Cesium.GeometryInstance({
                   geometry: new Cesium.PolygonGeometry({
-                      polygonHierarchy: new Cesium.PolygonHierarchy(circlePositions),
+                      polygonHierarchy: new Cesium.PolygonHierarchy(positions),
                       ellipsoid: Cesium.Ellipsoid.MOON,
                       height: -20000,
                       extrudedHeight: 20000,

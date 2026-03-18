@@ -402,30 +402,59 @@ export const CESIUM_INIT = `
         selectionStack.pop();
         lastRenderedDepth = 0;
         parentPrimitives.removeAll();
-        if (mainMode === 'occupation3') {
-            renderTerrain();
-        } else if (mainMode === 'occupation2') {
-            renderPolyline();
-        } else {
-            render();
-        }
-        updateUI();
-        if (wasBlockLevel) {
-            sendToRN('CELL_DESELECTED', {});
-        }
+
         if (selectionStack.length > 0) {
-            if (mainMode === 'occupation3') {
-                var backLevel = s2.cellid.level(selectionStack[selectionStack.length - 1]);
-                flyToCellTR(selectionStack[selectionStack.length - 1], backLevel >= 8);
-            } else if (mainMode === 'occupation2') {
-                flyToCellPL(selectionStack[selectionStack.length - 1]);
-            } else {
-                flyToCell(selectionStack[selectionStack.length - 1]);
-            }
+          // 아직 뎁스가 남아있으면 해당 모드별 렌더링
+          if (mainMode === 'occupation3') {
+              renderTerrain();
+          } else if (mainMode === 'occupation2') {
+              renderPolyline();
+          } else {
+              render();
+          }
+          updateUI();
+          if (wasBlockLevel) {
+              sendToRN('CELL_DESELECTED', {});
+          }
+          if (mainMode === 'occupation3') {
+              var backLevel = s2.cellid.level(selectionStack[selectionStack.length - 1]);
+              flyToCellTR(selectionStack[selectionStack.length - 1], backLevel >= 8);
+          } else if (mainMode === 'occupation2') {
+              flyToCellPL(selectionStack[selectionStack.length - 1]);
+          } else {
+              flyToCell(selectionStack[selectionStack.length - 1]);
+          }
         } else {
-            sendToRN('CELL_DESELECTED', {});
-            if (currentAnimFrame) { cancelAnimationFrame(currentAnimFrame); currentAnimFrame = null; }
-            if(moonTileset) viewer.camera.flyToBoundingSphere(moonTileset.boundingSphere, { duration: 1.0 });
+          // 스택이 완전히 비었 → 초기화면으로 복귀
+          // terrain/polyline 애니메이션 정리
+          if (currentAnimFrame) { cancelAnimationFrame(currentAnimFrame); currentAnimFrame = null; }
+          // 일반 그리드로 초기화
+          render();
+          updateUI();
+          sendToRN('CELL_DESELECTED', {});
+          // lookAt 해제 후 현재 방향 유지하면서 줌아웃
+          try { viewer.camera.lookAtTransform(Cesium.Matrix4.IDENTITY); } catch(e) {}
+          // 현재 카메라가 바라보는 지점 기준으로 높이만 올림
+          var camPos = viewer.camera.positionCartographic;
+          if (camPos) {
+            var _mr = Cesium.Ellipsoid.MOON.maximumRadius;
+            var dest = Cesium.Cartesian3.fromRadians(
+              camPos.longitude, camPos.latitude,
+              _mr * 2.5,
+              Cesium.Ellipsoid.MOON
+            );
+            viewer.camera.flyTo({
+              destination: dest,
+              orientation: {
+                heading: viewer.camera.heading,
+                pitch: Cesium.Math.toRadians(-90),
+                roll: 0
+              },
+              duration: 1.2
+            });
+          } else if (moonTileset) {
+            viewer.camera.flyToBoundingSphere(moonTileset.boundingSphere, { duration: 1.0 });
+          }
         }
       }
 `;

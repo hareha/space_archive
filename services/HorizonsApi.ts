@@ -41,9 +41,13 @@ export interface SpacecraftPosition {
 // 궤적 데이터 인터페이스
 export interface TrajectoryPoint {
     timestamp: string;
+    epochMs: number; // Unix timestamp (ms)
     x: number;
     y: number;
     z: number;
+    vx: number;
+    vy: number;
+    vz: number;
 }
 
 const MOON_RADIUS_KM = 1737.4; // 달 평균 반지름
@@ -129,16 +133,16 @@ export const fetchSpacecraftPosition = async (designator: string): Promise<Space
 };
 
 /**
- * 탐사선의 미래/과거 궤적 데이터를 가져옵니다. (현재 기준 ±durationHours, 1시간 간격)
+ * 탐사선의 과거+미래 궤적 데이터를 가져옵니다. (현재 기준 ±durationHours)
  * @param designator 탐사선 ID
- * @param durationHours 조회할 시간 범위 (기본값 24시간). 저궤도 위성은 짧게, 고궤도 위성은 길게 설정 권장.
+ * @param durationHours 조회할 시간 범위 (기본값 24시간). 과거 durationHours + 미래 durationHours
  */
 export const fetchSpacecraftTrajectory = async (designator: string, durationHours: number = 24, stepMinutes: number = 5): Promise<TrajectoryPoint[]> => {
     try {
         const now = new Date();
-        // 과거 durationHours 전부터 → 현재까지 (현재위치가 궤적의 끝)
+        // 과거 durationHours ~ 미래 durationHours/2
         const startTime = new Date(now.getTime() - durationHours * 60 * 60 * 1000).toISOString();
-        const stopTime = now.toISOString();
+        const stopTime = new Date(now.getTime() + (durationHours / 2) * 60 * 60 * 1000).toISOString();
 
         const params = {
             format: 'text',
@@ -170,12 +174,21 @@ export const fetchSpacecraftTrajectory = async (designator: string, durationHour
 
         return lines.map(line => {
             const parts = line.split(',').map(s => s.trim());
-            if (parts.length < 5) return null;
+            if (parts.length < 8) return null;
+
+            // JD -> epoch ms 변환
+            const jd = parseFloat(parts[0]);
+            const epochMs = (jd - 2440587.5) * 86400000; // JD to Unix ms
+
             return {
                 timestamp: parts[1],
+                epochMs,
                 x: parseFloat(parts[2]),
                 y: parseFloat(parts[3]),
-                z: parseFloat(parts[4])
+                z: parseFloat(parts[4]),
+                vx: parseFloat(parts[5]),
+                vy: parseFloat(parts[6]),
+                vz: parseFloat(parts[7]),
             };
         }).filter((p): p is TrajectoryPoint => p !== null);
 

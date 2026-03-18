@@ -12,6 +12,7 @@ export default function ProfileLayout() {
             <Stack.Screen name="notices" />
             <Stack.Screen name="my-territories" />
             <Stack.Screen name="territory-detail" />
+            <Stack.Screen name="scrapbook" />
         </Stack>
     );
 }
