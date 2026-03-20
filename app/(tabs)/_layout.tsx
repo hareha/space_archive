@@ -23,14 +23,14 @@ export default function TabLayout() {
                 headerShown: false,
             }}>
             <Tabs.Screen
-                name="index"
+                name="moon"
                 options={{
                     title: '인사이트',
                     tabBarIcon: ({ color, size }) => <Ionicons name="document-text-outline" size={22} color={color} />,
                 }}
             />
             <Tabs.Screen
-                name="moon"
+                name="index"
                 options={{
                     title: '홈',
                     tabBarIcon: ({ color, size }) => <Ionicons name="home-outline" size={22} color={color} />,

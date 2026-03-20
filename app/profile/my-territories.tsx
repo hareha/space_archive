@@ -341,7 +341,7 @@ export default function MyTerritoriesScreen() {
                 )}
 
                 {/* ── 새 구역 점유 ── */}
-                <TouchableOpacity style={styles.addCard} onPress={() => router.push('/(tabs)/moon')} activeOpacity={0.7}>
+                <TouchableOpacity style={styles.addCard} onPress={() => router.push('/(tabs)')} activeOpacity={0.7}>
                     <Ionicons name="add-circle-outline" size={18} color="#4A90D9" />
                     <Text style={styles.addCardText}>새 구역 점유하기</Text>
                 </TouchableOpacity>

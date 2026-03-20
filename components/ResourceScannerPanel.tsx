@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, ScrollView, Dimensions } from 'react-native';
+import { View, Text, TouchableOpacity, StyleSheet, ScrollView, Dimensions, ActivityIndicator } from 'react-native';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { BlurView } from 'expo-blur';
 
@@ -54,14 +54,6 @@ const LEGEND_SCALES: Record<string, { values: number[]; unit: string }> = {
   gravity: { values: [600, 0, -600], unit: 'mGal' },
 };
 
-function findResourceLabel(key: string): string {
-  for (const cat of Object.values(RESOURCE_CATEGORIES)) {
-    const r = cat.resources.find((res) => res.key === key);
-    if (r) return r.label;
-  }
-  return key;
-}
-
 function findResourceColor(key: string): string {
   for (const cat of Object.values(RESOURCE_CATEGORIES)) {
     const r = cat.resources.find((res) => res.key === key);
@@ -74,141 +66,187 @@ type CategoryKey = 'general' | 'special' | 'environment';
 
 interface ResourceScannerPanelProps {
   visible: boolean;
-  onClose: () => void;
+  onToggle: () => void;
   onSelectResource: (resourceKey: string) => void;
   activeResource: string | null;
+  mineralStats?: { filter: string; min: number; max: number; unit: string } | null;
+  mineralDataLoaded?: boolean;
 }
 
 export default function ResourceScannerPanel({
   visible,
-  onClose,
+  onToggle,
   onSelectResource,
   activeResource,
+  mineralStats,
+  mineralDataLoaded = false,
 }: ResourceScannerPanelProps) {
   const [activeTab, setActiveTab] = useState<CategoryKey>('general');
 
-  if (!visible) return null;
-
   const category = RESOURCE_CATEGORIES[activeTab];
-  const legendData = activeResource ? LEGEND_SCALES[activeResource] : null;
   const activeColor = activeResource ? findResourceColor(activeResource) : '#3B82F6';
+
+  // 동적 범례
+  let legendData: { values: number[]; unit: string } | null = null;
+  if (activeResource) {
+    if (mineralStats && mineralStats.filter === activeResource) {
+      const min = mineralStats.min;
+      const max = mineralStats.max;
+      const mid = (min + max) / 2;
+      const fmt = (v: number) => {
+        if (Math.abs(v) >= 100) return Math.round(v);
+        if (Math.abs(v) >= 1) return Math.round(v * 10) / 10;
+        return Math.round(v * 100) / 100;
+      };
+      legendData = { values: [fmt(max), fmt(mid), fmt(min)], unit: mineralStats.unit };
+    } else if (LEGEND_SCALES[activeResource]) {
+      legendData = LEGEND_SCALES[activeResource];
+    }
+  }
 
   return (
     <View style={styles.container} pointerEvents="box-none">
 
-      {/* ════ 좌측: 세로 범례 (자원 선택 시만) ════ */}
-      {activeResource && legendData && (
-        <View style={styles.legendFloat}>
-          {/* 세로 그라데이션 바 */}
-          <View style={styles.gradientBarV}>
-            {[...Array(24)].map((_, i) => {
-              const hue = (i / 23) * 240;
-              return (
-                <View
-                  key={i}
-                  style={{ flex: 1, backgroundColor: `hsl(${hue}, 100%, 50%)` }}
-                />
-              );
-            })}
-          </View>
-          {/* 값 라벨 */}
-          <View style={styles.legendLabels}>
-            {legendData.values.map((val, i) => (
-              <Text key={i} style={styles.legendVal}>{val}</Text>
-            ))}
-          </View>
-          {/* 단위 */}
-          <Text style={styles.legendUnitText}>{legendData.unit}</Text>
-        </View>
-      )}
+      {/* ════ 접힌 상태: 토글 버튼만 ════ */}
+      {!visible ? (
+        <TouchableOpacity
+          style={styles.toggleBtn}
+          onPress={onToggle}
+          activeOpacity={0.7}
+        >
+          <MaterialCommunityIcons name="radar" size={22} color="#fff" />
+        </TouchableOpacity>
+      ) : (
+        <>
+          {/* ════ 펼쳐진 상태: 버튼+패널 통합 ════ */}
+          <View style={styles.expandedPanel}>
+            <BlurView intensity={80} tint="dark" style={styles.panelBlur}>
 
-      {/* ════ 하단 플로팅 패널 ════ */}
-      <View style={styles.bottomPanel}>
-        <BlurView intensity={80} tint="dark" style={styles.panelBlur}>
-
-          {/* Row 1: 타이틀 + 탭 + 닫기 */}
-          <View style={styles.topRow}>
-            {/* 아이콘 + 제목 */}
-            <View style={styles.titleGroup}>
-              <View style={[styles.titleIcon, { backgroundColor: activeColor + '25' }]}>
-                <MaterialCommunityIcons name="radar" size={14} color={activeColor} />
-              </View>
-              <Text style={styles.titleText}>자원 스캐너</Text>
-            </View>
-
-            {/* 미니 탭 */}
-            <View style={styles.miniTabs}>
-              {(Object.keys(RESOURCE_CATEGORIES) as CategoryKey[]).map((key) => {
-                const isActive = activeTab === key;
-                return (
-                  <TouchableOpacity
-                    key={key}
-                    style={[styles.miniTab, isActive && styles.miniTabActive]}
-                    onPress={() => setActiveTab(key)}
-                    activeOpacity={0.7}
-                  >
-                    <Text style={[styles.miniTabText, isActive && styles.miniTabTextActive]}>
-                      {RESOURCE_CATEGORIES[key].label}
-                    </Text>
-                  </TouchableOpacity>
-                );
-              })}
-            </View>
-
-            {/* 닫기 */}
-            <TouchableOpacity
-              onPress={onClose}
-              style={styles.closeBtn}
-              hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
-            >
-              <Ionicons name="close-circle" size={22} color="rgba(255,255,255,0.3)" />
-            </TouchableOpacity>
-          </View>
-
-          {/* Row 2: 자원 칩 (가로 스크롤) */}
-          <ScrollView
-            horizontal
-            showsHorizontalScrollIndicator={false}
-            contentContainerStyle={styles.chipScroll}
-          >
-            {category.resources.map((resource) => {
-              const isActive = activeResource === resource.key;
-              return (
+              {/* Row 1: 레이더 아이콘 + 제목 + 탭 + 닫기 */}
+              <View style={styles.topRow}>
                 <TouchableOpacity
-                  key={resource.key}
-                  style={[
-                    styles.chip,
-                    isActive && {
-                      backgroundColor: resource.color + '20',
-                      borderColor: resource.color + '80',
-                    },
-                  ]}
-                  onPress={() => onSelectResource(resource.key)}
+                  style={[styles.headerIcon, { backgroundColor: activeColor + '25' }]}
+                  onPress={onToggle}
                   activeOpacity={0.7}
                 >
-                  <MaterialCommunityIcons
-                    name={resource.icon as any}
-                    size={14}
-                    color={isActive ? resource.color : '#666'}
-                  />
-                  <Text
-                    style={[
-                      styles.chipLabel,
-                      isActive && { color: resource.color, fontWeight: '700' },
-                    ]}
-                  >
-                    {resource.label}
-                  </Text>
-                  {isActive && (
-                    <View style={[styles.chipDot, { backgroundColor: resource.color }]} />
-                  )}
+                  <MaterialCommunityIcons name="radar" size={16} color={activeColor} />
                 </TouchableOpacity>
-              );
-            })}
-          </ScrollView>
+                <Text style={styles.titleText}>자원 스캐너</Text>
 
-        </BlurView>
-      </View>
+                <View style={styles.miniTabs}>
+                  {(Object.keys(RESOURCE_CATEGORIES) as CategoryKey[]).map((key) => {
+                    const isActive = activeTab === key;
+                    return (
+                      <TouchableOpacity
+                        key={key}
+                        style={[styles.miniTab, isActive && styles.miniTabActive]}
+                        onPress={() => setActiveTab(key)}
+                        activeOpacity={0.7}
+                      >
+                        <Text style={[styles.miniTabText, isActive && styles.miniTabTextActive]}>
+                          {RESOURCE_CATEGORIES[key].label}
+                        </Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
+
+                <TouchableOpacity
+                  onPress={onToggle}
+                  hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+                >
+                  <Ionicons name="close-circle" size={20} color="rgba(255,255,255,0.3)" />
+                </TouchableOpacity>
+              </View>
+
+              {/* Row 2: 자원 칩 */}
+              {!mineralDataLoaded && (activeTab === 'general' || activeTab === 'special') ? (
+                <View style={styles.loadingRow}>
+                  <ActivityIndicator size="small" color="#60A5FA" />
+                  <Text style={styles.loadingText}>자원 데이터 로드중...</Text>
+                </View>
+              ) : (
+                <ScrollView
+                  horizontal
+                  showsHorizontalScrollIndicator={false}
+                  contentContainerStyle={styles.chipScroll}
+                >
+                  {category.resources.map((resource) => {
+                    const isActive = activeResource === resource.key;
+                    return (
+                      <TouchableOpacity
+                        key={resource.key}
+                        style={[
+                          styles.chip,
+                          isActive && {
+                            backgroundColor: resource.color + '20',
+                            borderColor: resource.color + '60',
+                          },
+                        ]}
+                        onPress={() => onSelectResource(resource.key)}
+                        activeOpacity={0.6}
+                      >
+                        <MaterialCommunityIcons
+                          name={resource.icon as any}
+                          size={14}
+                          color={isActive ? resource.color : '#666'}
+                        />
+                        <Text style={[styles.chipLabel, isActive && { color: resource.color, fontWeight: '700' }]}>
+                          {resource.label}{resource.key === 'u' ? ' ≈0.27×Th' : ''}
+                        </Text>
+                        {isActive && (
+                          <View style={[styles.chipDot, { backgroundColor: resource.color }]} />
+                        )}
+                      </TouchableOpacity>
+                    );
+                  })}
+                </ScrollView>
+              )}
+
+            </BlurView>
+          </View>
+
+          {/* ════ 하단 중앙: 가로 스펙트럼 범례 ════ */}
+          {activeResource && legendData && (
+            <View style={styles.legendFloat}>
+              <View style={styles.legendHRow}>
+                {/* 값 라벨: min */}
+                <Text style={styles.legendVal}>{legendData.values[2]}</Text>
+                {/* 가로 그라데이션 바 — 각 광물 실제 HSL 공식 사용 */}
+                <View style={styles.gradientBarH}>
+                  {[...Array(40)].map((_, i) => {
+                    const n = i / 39; // normalized 0→1 (min→max)
+                    let hue: number, sat: number, light: number;
+                    switch (activeResource) {
+                      case 'u':
+                        hue = (260 - 200 * n); sat = 90; light = 50; break;
+                      case 'th':
+                        hue = 240 * (1 - n); sat = 100; light = 50; break;
+                      case 'k':
+                        hue = 120 * (1 - n); sat = 100; light = 45; break;
+                      case 'feo':
+                        hue = 180 * (1 - n); sat = 100; light = 45; break;
+                      case 'tio2':
+                        hue = 180 + 120 * n; sat = 90; light = 50; break;
+                      default:
+                        hue = 240 * (1 - n); sat = 100; light = 50; break;
+                    }
+                    return (
+                      <View
+                        key={i}
+                        style={{ flex: 1, backgroundColor: `hsl(${hue}, ${sat}%, ${light}%)` }}
+                      />
+                    );
+                  })}
+                </View>
+                {/* 값 라벨: max */}
+                <Text style={styles.legendVal}>{legendData.values[0]}</Text>
+              </View>
+              <Text style={styles.legendUnitText}>{legendData.unit}</Text>
+            </View>
+          )}
+        </>
+      )}
     </View>
   );
 }
@@ -224,28 +262,42 @@ const styles = StyleSheet.create({
     zIndex: 8,
   },
 
-  /* ── 하단 플로팅 패널 ── */
-  bottomPanel: {
+  /* ── 접힌 상태: 토글 버튼 ── */
+  toggleBtn: {
     position: 'absolute',
-    bottom: 24,
+    top: 12,
     left: 12,
-    right: 12,
-    borderRadius: 16,
+    width: 42,
+    height: 42,
+    borderRadius: 21,
+    backgroundColor: 'rgba(0,0,0,0.6)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.15)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+
+  /* ── 펼쳐진 상태: 통합 패널 ── */
+  expandedPanel: {
+    position: 'absolute',
+    top: 12,
+    left: 12,
+    maxWidth: SCREEN_W - 82,
+    borderRadius: 21,
     overflow: 'hidden',
-    // 그림자
     shadowColor: '#000',
-    shadowOffset: { width: 0, height: -4 },
+    shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.4,
     shadowRadius: 12,
     elevation: 10,
   },
   panelBlur: {
-    paddingTop: 12,
-    paddingBottom: 10,
-    paddingHorizontal: 14,
+    paddingTop: 10,
+    paddingBottom: 8,
+    paddingHorizontal: 12,
     borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.06)',
-    borderRadius: 16,
+    borderColor: 'rgba(255,255,255,0.15)',
+    borderRadius: 21,
     overflow: 'hidden',
   },
 
@@ -253,18 +305,13 @@ const styles = StyleSheet.create({
   topRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginBottom: 10,
-    gap: 8,
+    marginBottom: 8,
+    gap: 6,
   },
-  titleGroup: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 5,
-  },
-  titleIcon: {
-    width: 24,
-    height: 24,
-    borderRadius: 12,
+  headerIcon: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
     justifyContent: 'center',
     alignItems: 'center',
   },
@@ -273,6 +320,7 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '700',
     letterSpacing: 0.2,
+    marginRight: 2,
   },
   miniTabs: {
     flexDirection: 'row',
@@ -281,9 +329,9 @@ const styles = StyleSheet.create({
     gap: 3,
   },
   miniTab: {
-    paddingHorizontal: 12,
-    paddingVertical: 5,
-    borderRadius: 14,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 12,
     backgroundColor: 'rgba(255,255,255,0.06)',
   },
   miniTabActive: {
@@ -297,9 +345,6 @@ const styles = StyleSheet.create({
   miniTabTextActive: {
     color: '#93C5FD',
   },
-  closeBtn: {
-    paddingLeft: 4,
-  },
 
   /* Row 2: 칩 */
   chipScroll: {
@@ -310,60 +355,74 @@ const styles = StyleSheet.create({
   chip: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 20,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 16,
     backgroundColor: 'rgba(255,255,255,0.04)',
     borderWidth: 1,
     borderColor: 'rgba(255,255,255,0.08)',
-    gap: 5,
+    gap: 4,
   },
   chipLabel: {
     color: '#999',
-    fontSize: 12,
+    fontSize: 11,
     fontWeight: '500',
   },
   chipDot: {
     width: 5,
     height: 5,
     borderRadius: 3,
-    marginLeft: 2,
+    marginLeft: 1,
+  },
+  loadingRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    paddingVertical: 8,
+  },
+  loadingText: {
+    color: '#60A5FA',
+    fontSize: 12,
+    fontWeight: '600',
   },
 
-  /* ── 좌측 세로 범례 (플로팅) ── */
+  /* ── 하단 중앙: 가로 스펙트럼 범례 ── */
   legendFloat: {
     position: 'absolute',
-    left: 14,
-    bottom: 130,
+    bottom: 28,
+    left: 40,
+    right: 40,
     alignItems: 'center',
-    gap: 4,
+    gap: 3,
     backgroundColor: 'rgba(8,12,24,0.85)',
-    borderRadius: 10,
-    padding: 8,
-    paddingVertical: 10,
+    borderRadius: 16,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
     borderWidth: 1,
     borderColor: 'rgba(255,255,255,0.08)',
   },
-  gradientBarV: {
-    width: 10,
-    height: 70,
+  legendHRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    width: '100%' as any,
+  },
+  gradientBarH: {
+    flex: 1,
+    height: 10,
     borderRadius: 5,
     overflow: 'hidden',
-    flexDirection: 'column',
-  },
-  legendLabels: {
-    marginTop: 2,
-    gap: 0,
-    alignItems: 'center',
+    flexDirection: 'row',
   },
   legendVal: {
     color: '#bbb',
-    fontSize: 9,
-    lineHeight: 13,
+    fontSize: 10,
+    fontWeight: '600',
   },
   legendUnitText: {
     color: '#666',
-    fontSize: 8,
+    fontSize: 9,
     marginTop: 1,
   },
 });

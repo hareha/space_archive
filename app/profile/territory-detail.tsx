@@ -377,7 +377,7 @@ export default function TerritoryDetailScreen() {
                         style={styles.actionCard}
                         onPress={() => {
                             router.back();
-                            setTimeout(() => router.push({ pathname: '/(tabs)/moon', params: { lat: territory.lat, lng: territory.lng } }), 300);
+                            setTimeout(() => router.push({ pathname: '/(tabs)', params: { lat: territory.lat, lng: territory.lng } }), 300);
                         }}
                         activeOpacity={0.7}
                     >

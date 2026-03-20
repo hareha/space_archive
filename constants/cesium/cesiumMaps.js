@@ -205,6 +205,41 @@ export const CESIUM_MAPS = `
         }
       }
 
+      // 자원별 고유 색상 계열 (normalized: 0=최솟값, 1=최댓값)
+      // 각 자원마다 구분이 명확한 HSL 범위를 사용
+      function getMineralColor(filter, normalized) {
+        var t = Math.max(0, Math.min(1, normalized));
+        switch (filter) {
+          // ── 일반 자원 ──
+          case 'feo':   // 철: 초록(120) → 빨강(0)
+            return hslToRgb((120 * (1 - t)) / 360, 1.0, 0.45);
+          case 'tio2':  // 티타늄: 파랑(240) → 주황(30)
+            return hslToRgb((240 - 210 * t) / 360, 0.9, 0.5);
+          case 'mgo':   // 마그네슘: 청록(180) → 노랑(60)
+            return hslToRgb((180 - 120 * t) / 360, 0.85, 0.45);
+          case 'al2o3': // 알루미늄: 파랑(220) → 빨강(0)
+            return hslToRgb((220 * (1 - t)) / 360, 0.9, 0.5);
+          case 'sio2':  // 규소: 남색(250) → 초록(90)
+            return hslToRgb((250 - 160 * t) / 360, 0.8, 0.48);
+          case 'cao':   // 칼슘: 자주(300) → 노랑(50)
+            return hslToRgb((300 - 250 * t) / 360, 0.85, 0.5);
+          // ── 특수 자원 (토륨/우라늄은 완전 다른 색 계열) ──
+          case 'k':     // 칼륨: 연두(90) → 빨강(0)
+            return hslToRgb((90 * (1 - t)) / 360, 1.0, 0.42);
+          case 'th':    // 토륨: 보라(270) → 노랑(50) — 보라→핑크→주황→노랑
+            return hslToRgb((270 - 220 * t) / 360, 0.9, 0.5);
+          case 'u':     // 우라늄: 청록(180) → 분홍(330) — 청록→파랑→보라→분홍
+            return hslToRgb(((180 + 150 * t) % 360) / 360, 0.85, 0.5);
+          // ── 기타 ──
+          case 'am':    // 원자질량: 파랑(240) → 빨강(0)
+            return hslToRgb((240 * (1 - t)) / 360, 1.0, 0.5);
+          case 'neutron': // 중성자: 파랑(240) → 빨강(0)
+            return hslToRgb((240 * (1 - t)) / 360, 1.0, 0.5);
+          default:
+            return hslToRgb((240 * (1 - t)) / 360, 1.0, 0.5);
+        }
+      }
+
       function updateMineralTexture() {
         if (!activeMineralFilter || mineralDataArray.length === 0) {
           return;
@@ -233,8 +268,7 @@ export const CESIUM_MAPS = `
           var normalized = (val - mineralStats.min) / range;
           normalized = Math.max(0, Math.min(1, normalized));
 
-          var hue = 240 * (1 - normalized);
-          var rgb = hslToRgb(hue / 360, 1.0, 0.5);
+          var rgb = getMineralColor(activeMineralFilter, normalized);
 
           // 360x180 캔버스 좌표로 변환
           var x = (item.lonMin + 180) * (width / 360);

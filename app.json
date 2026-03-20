@@ -1,11 +1,11 @@
 {
   "expo": {
-    "name": "moon-news-app",
+    "name": "plusultra-app",
     "slug": "moon-news-app",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
-    "scheme": "moonnewsapp",
+    "scheme": "plusultraapp",
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
     "splash": {
@@ -15,9 +15,11 @@
     },
     "ios": {
       "supportsTablet": true,
+      "bundleIdentifier": "com.harehare31.plusultra",
       "infoPlist": {
         "NSCameraUsageDescription": "달 탐사선 AR 시각화를 위해 카메라 접근이 필요합니다",
-        "NSLocationWhenInUseUsageDescription": "정확한 달 위치 계산을 위해 위치 정보가 필요합니다"
+        "NSLocationWhenInUseUsageDescription": "정확한 달 위치 계산을 위해 위치 정보가 필요합니다",
+        "ITSAppUsesNonExemptEncryption": false
       }
     },
     "android": {
@@ -28,12 +30,6 @@
       "edgeToEdgeEnabled": true,
       "predictiveBackGestureEnabled": false,
       "permissions": [
-        "CAMERA",
-        "ACCESS_FINE_LOCATION",
-        "android.permission.CAMERA",
-        "android.permission.RECORD_AUDIO",
-        "android.permission.ACCESS_COARSE_LOCATION",
-        "android.permission.ACCESS_FINE_LOCATION",
         "CAMERA",
         "ACCESS_FINE_LOCATION",
         "android.permission.CAMERA",

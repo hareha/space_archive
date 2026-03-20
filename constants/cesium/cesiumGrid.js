@@ -127,7 +127,7 @@ export const CESIUM_GRID = `
       }
 
       // 화면에 보이는 셀만 반환 (프러스텀+백페이스, MAX 안전장치)
-      var MAX_VISIBLE = 20;
+      var MAX_VISIBLE = 9;
 
 
       function getVisibleCellsAtLevel(level) {

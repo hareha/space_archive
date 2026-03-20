@@ -298,6 +298,19 @@ export const CESIUM_INIT = `
       ];
       let currentZoomLevel = 0;
 
+      // _getCamHPR: 현재 카메라의 heading/pitch/range를 계산하여 반환
+      // changeZoomLevel (cesiumControls.js)에서 사용
+      window._getCamHPR = function() {
+        var cam = viewer.camera;
+        var pos = cam.positionWC;
+        var range = Cesium.Cartesian3.magnitude(pos);
+        return {
+          heading: cam.heading,
+          pitch: cam.pitch,
+          range: range
+        };
+      };
+
       // =====================================================
       // 좌표 변환 헬퍼 함수 (직접 스케일링 기반 통일)
       // =====================================================

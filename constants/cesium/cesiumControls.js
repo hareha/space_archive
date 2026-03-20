@@ -17,6 +17,7 @@ function handleRNMessage(data) {
             }
         }
         if (!message || !message.type) return;
+
         if (message.type === 'GO_BACK') goBack();
         if (message.type === 'RESET') resetExplorer();
         if (message.type === 'TOGGLE_GRID') {
@@ -48,12 +49,10 @@ function handleRNMessage(data) {
             changeZoomLevel(-1);
         }
         if (message.type === 'EXPLORE_ZOOM_IN') {
-            // 탐사모드 전용: 절대값 줌인 (레벨 무관)
-            changeZoomLevel(1);
+            exploreZoom(1);
         }
         if (message.type === 'EXPLORE_ZOOM_OUT') {
-            // 탐사모드 전용: 절대값 줌아웃 (레벨 무관)
-            changeZoomLevel(-1);
+            exploreZoom(-1);
         }
         if (message.type === 'SELECT_CENTER_CELL') {
             // 점유모드 전용: 화면 중앙의 셀을 선택하여 뎁스를 깊이 들어감
@@ -185,14 +184,15 @@ function handleRNMessage(data) {
                 window._fpFlagEntities.forEach(function(e) { viewer.entities.remove(e); });
                 window._fpFlagEntities = null;
             }
-            // 컨트롤러 기본값 복원
+            // 탐사모드로 복귀: 빌트인 컨트롤러 기본값 복원
             viewer.scene.screenSpaceCameraController.enableRotate = true;
-            viewer.scene.screenSpaceCameraController.enableTranslate = true;
+            viewer.scene.screenSpaceCameraController.enableTranslate = false;
             viewer.scene.screenSpaceCameraController.enableZoom = true;
-            viewer.scene.screenSpaceCameraController.enableTilt = true;
-            viewer.scene.screenSpaceCameraController.enableLook = true;
-            viewer.scene.screenSpaceCameraController.minimumZoomDistance = 1;
-            viewer.scene.screenSpaceCameraController.maximumZoomDistance = Infinity;
+            viewer.scene.screenSpaceCameraController.enableTilt = false;
+            viewer.scene.screenSpaceCameraController.enableLook = false;
+            viewer.scene.screenSpaceCameraController.minimumZoomDistance = 1000;
+            viewer.scene.screenSpaceCameraController.maximumZoomDistance = 10000000;
+
             resetExplorer();
         }
         if (message.type === 'GO_TO_LOCATION') {
@@ -783,40 +783,148 @@ var _focusSatLookTarget = null;
 var _focusSatRange = 1200;
 var _focusSatName = null;
 
-// --- 단순 줌 증감 함수 ---
+// --- 줌 증감 함수 (누적 목표 + lookAtTransform 애니메이션) ---
+// 연타 시 목표가 누적되어 최종 위치까지 하나의 부드러운 애니메이션으로 이동
+var _zoomAnimFrame = null;
+var _zoomTargetRange = null;   // 누적 목표 range (일반/위성 공용)
+
+// --- 탐사모드 전용 줌 (카메라 방향 100% 보존, 거리만 변경) ---
+var _exploreZoomAnim = null;
+var _exploreZoomTarget = null;
+
+function exploreZoom(direction) {
+    var cam = viewer.camera;
+    var pos = cam.positionWC;
+    var currentRange = Cesium.Cartesian3.magnitude(pos);
+    
+    var scale = direction > 0 ? 0.6 : 1.667;
+    // 누적 목표 계산 (빠르게 연타해도 부드럽게)
+    var base = (_exploreZoomTarget !== null) ? _exploreZoomTarget : currentRange;
+    _exploreZoomTarget = Math.max(1800000, Math.min(20000000, base * scale));
+
+    if (_exploreZoomAnim) { cancelAnimationFrame(_exploreZoomAnim); _exploreZoomAnim = null; }
+
+    var startRange = currentRange;
+    var targetRange = _exploreZoomTarget;
+    // 현재 카메라 방향 단위벡터 (원점→카메라)
+    var dir = Cesium.Cartesian3.normalize(pos, new Cesium.Cartesian3());
+    var duration = 400;
+    var startTime = null;
+    var finalTarget = _exploreZoomTarget;
+
+    function animate(timestamp) {
+        if (!startTime) startTime = timestamp;
+        var progress = Math.min((timestamp - startTime) / duration, 1.0);
+        var t = 1 - Math.pow(1 - progress, 3); // ease-out cubic
+        var curRange = startRange + (targetRange - startRange) * t;
+
+        // 방향 벡터 * 새 거리 = 새 위치 (방향 완벽 보존)
+        var newPos = Cesium.Cartesian3.multiplyByScalar(dir, curRange, new Cesium.Cartesian3());
+        cam.position = newPos;
+
+        if (progress >= 1.0) {
+            _exploreZoomAnim = null;
+            if (_exploreZoomTarget === finalTarget) {
+                _exploreZoomTarget = null;
+            }
+            return;
+        }
+        _exploreZoomAnim = requestAnimationFrame(animate);
+    }
+    _exploreZoomAnim = requestAnimationFrame(animate);
+}
+
 function changeZoomLevel(direction) {
-    // 위성 포커스 활성 시: range 스케일링 후 lookAt 재호출
+
+    // 위성 포커스 활성 시: range 누적 스케일링
     if (_focusSatPos) {
         var scale = direction > 0 ? 0.6 : 1.667;
-        _focusSatRange = Math.max(50, Math.min(100000, _focusSatRange * scale));
+        // 이전 애니메이션 진행 중이면 누적 목표에서 계속 줌
+        var baseRange = (_zoomTargetRange !== null) ? _zoomTargetRange : _focusSatRange;
+        _zoomTargetRange = Math.max(50, Math.min(100000, baseRange * scale));
 
         var dirToCenter = Cesium.Cartesian3.normalize(
             Cesium.Cartesian3.negate(_focusSatPos, new Cesium.Cartesian3()),
             new Cesium.Cartesian3()
         );
-        var shiftAmount = _focusSatRange * 0.4;
-        _focusSatLookTarget = Cesium.Cartesian3.add(
+        var shiftAmount = _zoomTargetRange * 0.4;
+        var newLookTarget = Cesium.Cartesian3.add(
             _focusSatPos,
             Cesium.Cartesian3.multiplyByScalar(dirToCenter, shiftAmount, new Cesium.Cartesian3()),
             new Cesium.Cartesian3()
         );
 
-        viewer.camera.lookAt(
-            _focusSatLookTarget,
-            new Cesium.HeadingPitchRange(viewer.camera.heading, viewer.camera.pitch, _focusSatRange)
-        );
+        // 진행 중이던 애니메이션 취소
+        if (_zoomAnimFrame) { cancelAnimationFrame(_zoomAnimFrame); _zoomAnimFrame = null; }
+
+        // 현재 카메라 상태에서 새 목표로 애니메이션 시작
+        var startRange = _focusSatRange;
+        var targetRange = _zoomTargetRange;
+        var startHeadingSat = viewer.camera.heading;
+        var startPitchSat = viewer.camera.pitch;
+        var duration = 500;
+        var startTime = null;
+
+        function animateSat(timestamp) {
+            if (!startTime) startTime = timestamp;
+            var progress = Math.min((timestamp - startTime) / duration, 1.0);
+            var t = 1 - Math.pow(1 - progress, 3);
+            var currentRange = startRange + (targetRange - startRange) * t;
+            var hpr = new Cesium.HeadingPitchRange(startHeadingSat, startPitchSat, currentRange);
+            viewer.camera.lookAt(newLookTarget, hpr);
+
+            if (progress >= 1.0) {
+                _focusSatRange = targetRange;
+                _focusSatLookTarget = newLookTarget;
+                _zoomAnimFrame = null;
+                _zoomTargetRange = null;
+                return;
+            }
+            _zoomAnimFrame = requestAnimationFrame(animateSat);
+        }
+        _zoomAnimFrame = requestAnimationFrame(animateSat);
         return;
     }
+    // 일반 줌: lookAtTransform(IDENTITY) range 보간
+    var hpr = window._getCamHPR();
+    var currentRange = hpr.range;
 
-    var carto = Cesium.Cartographic.fromCartesian(viewer.camera.position, Cesium.Ellipsoid.MOON);
-    if (!carto) return;
-    var currentHeight = carto.height;
-    var moveAmount = currentHeight * 0.4;
-    if (direction > 0) {
-        viewer.camera.moveForward(moveAmount);
-    } else {
-        viewer.camera.moveBackward(moveAmount);
+    // 누적 목표 range 계산
+    var baseRange = (_zoomTargetRange !== null) ? _zoomTargetRange : currentRange;
+    var scale = direction > 0 ? 0.6 : 1.667;
+    _zoomTargetRange = Math.max(1800000, Math.min(20000000, baseRange * scale));
+
+    // 진행 중이던 애니메이션 취소
+    if (_zoomAnimFrame) { cancelAnimationFrame(_zoomAnimFrame); _zoomAnimFrame = null; }
+
+    var startRange = currentRange;
+    var targetRange = _zoomTargetRange;
+    var fixedHeading = hpr.heading;
+    var fixedPitch = hpr.pitch;
+    var duration = 500;
+    var startTime = null;
+    var finalTarget = _zoomTargetRange;
+
+    function animateZoom(timestamp) {
+        if (!startTime) startTime = timestamp;
+        var progress = Math.min((timestamp - startTime) / duration, 1.0);
+        var t = 1 - Math.pow(1 - progress, 3);
+        var curRange = startRange + (targetRange - startRange) * t;
+        viewer.camera.lookAtTransform(
+            Cesium.Matrix4.IDENTITY,
+            new Cesium.HeadingPitchRange(fixedHeading, fixedPitch, curRange)
+        );
+
+        if (progress >= 1.0) {
+            _zoomAnimFrame = null;
+            if (_zoomTargetRange === finalTarget) {
+                _zoomTargetRange = null;
+            }
+            return;
+        }
+        _zoomAnimFrame = requestAnimationFrame(animateZoom);
     }
+    _zoomAnimFrame = requestAnimationFrame(animateZoom);
 }
 
 // ==== 모드 전환 헬퍼 함수 ====
@@ -849,23 +957,23 @@ function updateAppMode(payload) {
             window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'SATELLITE_DESELECTED' }));
         }
 
-        const defaultPos = Cesium.Cartesian3.fromRadians(0, 0, 6105648, Cesium.Ellipsoid.MOON);
-        viewer.camera.flyTo({
-            destination: defaultPos,
-            orientation: {
-                heading: 0.0,
-                pitch: Cesium.Math.toRadians(-90),
-                roll: 0.0
-            },
-            duration: 1.5
-        });
+        // lookAtTransform(IDENTITY)로 초기 위치 복귀
+        viewer.camera.lookAtTransform(
+            Cesium.Matrix4.IDENTITY,
+            new Cesium.HeadingPitchRange(0, Cesium.Math.toRadians(-35), 8000000)
+        );
+
     }
 
+    // 탐사모드로 복귀: 빌트인 컨트롤러 최소 설정
     viewer.scene.screenSpaceCameraController.enableRotate = true;
-    viewer.scene.screenSpaceCameraController.enableTranslate = true;
+    viewer.scene.screenSpaceCameraController.enableTranslate = false;
     viewer.scene.screenSpaceCameraController.enableZoom = true;
-    viewer.scene.screenSpaceCameraController.enableTilt = true; // 틸트 잠금 해제
-    viewer.scene.screenSpaceCameraController.enableLook = true;
+    viewer.scene.screenSpaceCameraController.enableTilt = false;
+    viewer.scene.screenSpaceCameraController.enableLook = false;
+    viewer.scene.screenSpaceCameraController.minimumZoomDistance = 1000;
+    viewer.scene.screenSpaceCameraController.maximumZoomDistance = 10000000;
+
 
     // 일인칭 컨트롤러 이벤트 제거
     if (firstPersonData.handler) {
@@ -890,6 +998,8 @@ function updateAppMode(payload) {
 
     if (mainMode === 'occupation') {
         // 점유 모드(모드1): 오리지널 그리드 활성화, PL/TR 그리드 숨김
+        // 점유모드에서는 내장 rotation 활성화 (셀 선택/드래그 필요)
+        viewer.scene.screenSpaceCameraController.enableRotate = true;
         showGrid = true;
         if (typeof gridPrimitives !== 'undefined' && gridPrimitives) gridPrimitives.show = true;
         if (typeof pillarPrimitives !== 'undefined' && pillarPrimitives) pillarPrimitives.show = true;
@@ -900,6 +1010,8 @@ function updateAppMode(payload) {
         sendToRN('GRID_VISIBILITY_CHANGED', { visible: true });
         render();
     } else if (mainMode === 'occupation2') {
+        // 점유 모드(모드2): 내장 rotation 활성화
+        viewer.scene.screenSpaceCameraController.enableRotate = true;
         // 점유 모드(모드2): 모드1/TR 그리드 숨기기, PL은 cesiumControlsPL.js가 독립 관리
         if (typeof gridPrimitives !== 'undefined' && gridPrimitives) gridPrimitives.show = false;
         if (typeof pillarPrimitives !== 'undefined' && pillarPrimitives) pillarPrimitives.show = false;
@@ -908,6 +1020,8 @@ function updateAppMode(payload) {
         if (typeof plGridPrimitives !== 'undefined' && plGridPrimitives) plGridPrimitives.show = true;
         if (typeof trGridPrimitives !== 'undefined' && trGridPrimitives) trGridPrimitives.show = false;
     } else if (mainMode === 'occupation3') {
+        // 점유 모드(모드3): 내장 rotation 활성화
+        viewer.scene.screenSpaceCameraController.enableRotate = true;
         // 점유 모드(모드3): 모드1/2 그리드 숨기기, TR은 cesiumControlsTR.js가 독립 관리
         if (typeof gridPrimitives !== 'undefined' && gridPrimitives) gridPrimitives.show = false;
         if (typeof pillarPrimitives !== 'undefined' && pillarPrimitives) pillarPrimitives.show = false;
@@ -925,7 +1039,8 @@ function updateAppMode(payload) {
         if (typeof trGridPrimitives !== 'undefined' && trGridPrimitives) trGridPrimitives.show = false;
 
         if (subMode === 'satellite') {
-            // 위성 뷰: 틸팅 비활성화, 화면에 달이 절반만 찰 정도로 아주 멀리 줌 아웃 (2만 km 고도)
+            // 위성 뷰: 내장 rotation 활성화 + 틸팅 허용
+            viewer.scene.screenSpaceCameraController.enableRotate = true;
             viewer.scene.screenSpaceCameraController.enableTilt = true;
             viewer.scene.screenSpaceCameraController.enableLook = false;
             let carto = viewer.camera.positionCartographic;
@@ -937,6 +1052,8 @@ function updateAppMode(payload) {
                 drawSatelliteData(lastSatellitesData);
             }
         } else if (subMode === 'firstPerson') {
+            // 1인칭 뷰: 내장 rotation 활성화
+            viewer.scene.screenSpaceCameraController.enableRotate = true;
             // 1인칭 뷰 로직 (재사용 가능: 지형 줌인, 땅보기, 탐사지점 1인칭 전환 등)
             const carto = viewer.camera.positionCartographic;
             let terrainHeight = 0;
@@ -992,7 +1109,7 @@ function updateAppMode(payload) {
                 }
             });
         } else {
-            // 기본 뷰 (우주 뷰 = 기본): 틸팅 비활성화, 줌/회전만 가능
+            // 기본 뷰 (우주 뷰 = 기본): 줌/회전 가능
             viewer.scene.screenSpaceCameraController.enableTilt = true;
             viewer.scene.screenSpaceCameraController.enableLook = false;
         }
