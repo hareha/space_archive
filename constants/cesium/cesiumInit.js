@@ -97,6 +97,9 @@ export const CESIUM_INIT = `
         window.tilesetReady = true;
         window.moonTileset = moonTileset; // 타일 로드 이벤트 감지용
         console.log('[Init] Moon tileset loaded, tilesetReady = true');
+        var bs = moonTileset.boundingSphere;
+        console.log('[Init] tileset boundingSphere center:', bs.center.x.toFixed(0), bs.center.y.toFixed(0), bs.center.z.toFixed(0), 'radius:', bs.radius.toFixed(0));
+        console.log('[Init] MOON ellipsoid radius:', Cesium.Ellipsoid.MOON.maximumRadius);
         if (showTempMap) moonTileset.show = false;
         viewer.camera.flyToBoundingSphere(moonTileset.boundingSphere, { duration: 0 });
 

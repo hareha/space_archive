@@ -168,6 +168,11 @@ function handleRNMessage(data) {
             window.magBalance = message.payload.balance || 0;
         }
         if (message.type === 'RESET_VIEW') {
+            // 자동 회전 정리
+            if (window._autoOrbitRemove) {
+                window._autoOrbitRemove();
+                window._autoOrbitRemove = null;
+            }
             // 위성/착륙지 포커스 해제
             viewer.camera.lookAtTransform(Cesium.Matrix4.IDENTITY);
             if (_focusSatPos) {
@@ -196,25 +201,75 @@ function handleRNMessage(data) {
             resetExplorer();
         }
         if (message.type === 'GO_TO_LOCATION') {
-            const { lat, lng } = message.payload;
+            const { lat, lng, orbit } = message.payload;
             const latRad = Cesium.Math.toRadians(lat);
             const lngRad = Cesium.Math.toRadians(lng);
 
-            // 패널이 하단 50%를 차지 → 지점이 상단 50% 중앙에 오도록
             const altitude = 150000;
-            var latOffset = Cesium.Math.toRadians(7.0); // 7도 남쪽 offset
-            var camLatRad = latRad - latOffset;
-            var pitchDeg = -55; // 비스듬하게 (지점이 화면 상단에 보이도록)
 
-            viewer.camera.flyTo({
-                destination: Cesium.Cartesian3.fromRadians(lngRad, camLatRad, altitude, Cesium.Ellipsoid.MOON),
-                orientation: {
-                    heading: 0,
-                    pitch: Cesium.Math.toRadians(pitchDeg),
-                    roll: 0
-                },
-                duration: 2.0
-            });
+            // 기존 자동 회전 정리
+            if (window._autoOrbitRemove) {
+                window._autoOrbitRemove();
+                window._autoOrbitRemove = null;
+            }
+            if (window._goToTickListener) {
+                viewer.clock.onTick.removeEventListener(window._goToTickListener);
+                window._goToTickListener = null;
+            }
+            viewer.camera.cancelFlight();
+            viewer.camera.lookAtTransform(Cesium.Matrix4.IDENTITY);
+
+            if (orbit) {
+                // orbit 모드: flyTo 후 자동 공전
+                viewer.camera.flyTo({
+                    destination: Cesium.Cartesian3.fromRadians(lngRad, latRad, altitude, Cesium.Ellipsoid.MOON),
+                    orientation: { heading: 0, pitch: Cesium.Math.toRadians(-90), roll: 0 },
+                    duration: 1.5,
+                    complete: function() {
+                        var center = Cesium.Cartesian3.fromRadians(lngRad, latRad, 0, Cesium.Ellipsoid.MOON);
+                        var transform = Cesium.Transforms.eastNorthUpToFixedFrame(center);
+                        var oh = 0, stopped = false;
+                        var op = Cesium.Math.toRadians(-45);
+                        viewer.camera.lookAtTransform(transform, new Cesium.HeadingPitchRange(oh, op, altitude));
+                        var orbitTick = function() {
+                            if (stopped) return;
+                            oh += 0.05 / 60;
+                            viewer.camera.lookAtTransform(transform, new Cesium.HeadingPitchRange(oh, op, altitude));
+                        };
+                        viewer.clock.onTick.addEventListener(orbitTick);
+                        var stopOrbit = function() {
+                            if (stopped) return; stopped = true;
+                            viewer.clock.onTick.removeEventListener(orbitTick);
+                            viewer.camera.lookAtTransform(Cesium.Matrix4.IDENTITY);
+                        };
+                        var cvs = viewer.canvas;
+                        ['pointerdown','wheel'].forEach(function(ev) { cvs.addEventListener(ev, stopOrbit, {once:true}); });
+                        window._autoOrbitRemove = function() {
+                            stopOrbit();
+                            ['pointerdown','wheel'].forEach(function(ev) { cvs.removeEventListener(ev, stopOrbit); });
+                        };
+                    }
+                });
+            } else {
+                // 일반 모드: setView lerp (자연스러운 전환)
+                var startCarto = Cesium.Cartographic.fromCartesian(viewer.camera.positionWC, Cesium.Ellipsoid.MOON);
+                if (!startCarto) startCarto = new Cesium.Cartographic(lngRad, latRad, altitude);
+                var sLon = startCarto.longitude, sLat = startCarto.latitude, sAlt = startCarto.height;
+                var sH = viewer.camera.heading, sP = viewer.camera.pitch;
+                var dur = 1500, st = Date.now();
+                function _ease(t) { return t < 0.5 ? 2*t*t : 1 - Math.pow(-2*t+2,2)/2; }
+                function _lerpA(a,b,t) { var d=b-a; while(d>Math.PI)d-=2*Math.PI; while(d<-Math.PI)d+=2*Math.PI; return a+d*t; }
+                var tk = function() {
+                    var t = Math.min((Date.now()-st)/dur, 1.0), e = _ease(t);
+                    viewer.camera.setView({
+                        destination: Cesium.Cartesian3.fromRadians(sLon+(lngRad-sLon)*e, sLat+(latRad-sLat)*e, sAlt+(altitude-sAlt)*e, Cesium.Ellipsoid.MOON),
+                        orientation: { heading: _lerpA(sH,0,e), pitch: sP+(Cesium.Math.toRadians(-90)-sP)*e, roll: 0 }
+                    });
+                    if (t >= 1.0) { viewer.clock.onTick.removeEventListener(tk); window._goToTickListener = null; }
+                };
+                window._goToTickListener = tk;
+                viewer.clock.onTick.addEventListener(tk);
+            }
         }
         // 특정 좌표에서 공중뷰 (lerp 기반 매끄러운 전환, 바운스 없음)
         if (message.type === 'FIRST_PERSON_AT') {
@@ -415,7 +470,7 @@ function handleRNMessage(data) {
             }
         }
         if (message.type === 'FOCUS_SATELLITE') {
-            // 위성 전용: lookAt으로 위성 중심 카메라 고정 (줌 자유롭게 가능)
+            // 위성 전체뷰: 달 전체가 보이는 약간 줌된 뷰 (lookAt 안함)
             var satName = message.payload.name;
             highlightSatellite(satName);
 
@@ -432,7 +487,59 @@ function handleRNMessage(data) {
                 if (wasTemp) viewer.entities.remove(tempEnt);
             }
 
-            // 위성 현재 위치 (애니메이션된 위치 우선)
+            _focusSatPos = null;
+            _focusSatName = satName;
+
+            // lookAt 모드인 경우 (뷰 전환 버튼에서 상세보기 요청)
+            if (message.payload.lookAt) {
+                var satPos2 = null;
+                if (window._satCurrentPositions && window._satCurrentPositions[satName]) {
+                    satPos2 = window._satCurrentPositions[satName];
+                } else if (lastSatellitesData) {
+                    for (var fi2 = 0; fi2 < lastSatellitesData.length; fi2++) {
+                        if (lastSatellitesData[fi2].name === satName && lastSatellitesData[fi2].position) {
+                            var sp2 = lastSatellitesData[fi2].position;
+                            satPos2 = new Cesium.Cartesian3(sp2.x * 1000, sp2.y * 1000, sp2.z * 1000);
+                            break;
+                        }
+                    }
+                }
+                if (satPos2) {
+                    _focusSatPos = satPos2;
+                    _focusSatRange = 1200;
+                    var dirToCenter = Cesium.Cartesian3.normalize(
+                        Cesium.Cartesian3.negate(satPos2, new Cesium.Cartesian3()),
+                        new Cesium.Cartesian3()
+                    );
+                    var shiftAmount = _focusSatRange * 0.4;
+                    _focusSatLookTarget = Cesium.Cartesian3.add(
+                        satPos2,
+                        Cesium.Cartesian3.multiplyByScalar(dirToCenter, shiftAmount, new Cesium.Cartesian3()),
+                        new Cesium.Cartesian3()
+                    );
+                    var hpr = new Cesium.HeadingPitchRange(0, Cesium.Math.toRadians(-30), _focusSatRange);
+                    viewer.camera.flyToBoundingSphere(
+                        new Cesium.BoundingSphere(_focusSatLookTarget, 0),
+                        {
+                            offset: hpr,
+                            duration: 2.0,
+                            complete: function() {
+                                viewer.camera.lookAt(_focusSatLookTarget, hpr);
+                            }
+                        }
+                    );
+                }
+                return;
+            }
+
+            // 기본 전체뷰: 달 전체 + 위성 궤도가 보이는 뷰
+            var moonCenter = new Cesium.Cartesian3(0, 0, 0);
+            if (window._moonTilesetCenter) {
+                moonCenter = window._moonTilesetCenter;
+            }
+            var moonRadius = 1737400; // 미터
+
+            // 위성 현재 위치 찾기
             var satPos = null;
             if (window._satCurrentPositions && window._satCurrentPositions[satName]) {
                 satPos = window._satCurrentPositions[satName];
@@ -447,30 +554,38 @@ function handleRNMessage(data) {
             }
 
             if (satPos) {
-                _focusSatName = satName;
-                _focusSatPos = satPos;
-                _focusSatRange = 1200;
-
-                var dirToCenter = Cesium.Cartesian3.normalize(
-                    Cesium.Cartesian3.negate(satPos, new Cesium.Cartesian3()),
+                // 위성이 있는 방향에서 달 전체가 보이도록 카메라 배치
+                // 위성→달 중심 방향의 반대쪽에서 바라봄
+                var satDir = Cesium.Cartesian3.normalize(
+                    Cesium.Cartesian3.subtract(satPos, moonCenter, new Cesium.Cartesian3()),
                     new Cesium.Cartesian3()
                 );
-                var shiftAmount = _focusSatRange * 0.4;
-                _focusSatLookTarget = Cesium.Cartesian3.add(
-                    satPos,
-                    Cesium.Cartesian3.multiplyByScalar(dirToCenter, shiftAmount, new Cesium.Cartesian3()),
+                // 카메라를 위성 방향 뒤쪽에 배치 (달이 90% 차게)
+                var camDist = moonRadius * 3.5;
+                var camPos = Cesium.Cartesian3.add(
+                    moonCenter,
+                    Cesium.Cartesian3.multiplyByScalar(satDir, camDist, new Cesium.Cartesian3()),
                     new Cesium.Cartesian3()
                 );
 
-                var hpr = new Cesium.HeadingPitchRange(0, Cesium.Math.toRadians(-30), _focusSatRange);
+                viewer.camera.flyTo({
+                    destination: camPos,
+                    orientation: {
+                        direction: Cesium.Cartesian3.normalize(
+                            Cesium.Cartesian3.subtract(moonCenter, camPos, new Cesium.Cartesian3()),
+                            new Cesium.Cartesian3()
+                        ),
+                        up: new Cesium.Cartesian3(0, 0, 1)
+                    },
+                    duration: 2.0
+                });
+            } else {
+                // 위성 위치 없으면 달 전체만
                 viewer.camera.flyToBoundingSphere(
-                    new Cesium.BoundingSphere(_focusSatLookTarget, 0),
+                    new Cesium.BoundingSphere(moonCenter, moonRadius),
                     {
-                        offset: hpr,
-                        duration: 2.0,
-                        complete: function() {
-                            viewer.camera.lookAt(_focusSatLookTarget, hpr);
-                        }
+                        offset: new Cesium.HeadingPitchRange(0, Cesium.Math.toRadians(-25), moonRadius * 0.3),
+                        duration: 2.0
                     }
                 );
             }
@@ -562,6 +677,9 @@ function handleRNMessage(data) {
         if (message.type === 'HIDE_FEATURE_AREA') {
             hideFeatureArea();
         }
+        if (message.type === 'CLEAR_MINERAL_HIGHLIGHT') {
+            clearMineralHighlight();
+        }
         if (message.type === 'RECOMMEND_LAND') {
             const { lat, lng } = message.payload;
 
@@ -646,6 +764,65 @@ handler.setInputAction((movement) => {
     _touchStartPos = null;
 
 
+
+    // ── 탐사 모드: 광물 히트맵 셀 클릭 처리 ──
+    if (mainMode === 'exploration' && activeMineralFilter && mineralDataArray.length > 0) {
+        var ray = viewer.camera.getPickRay(movement.position);
+        console.log('[MineralClick] ray.origin:', ray.origin.x.toFixed(0), ray.origin.y.toFixed(0), ray.origin.z.toFixed(0));
+        console.log('[MineralClick] ray.direction:', ray.direction.x.toFixed(4), ray.direction.y.toFixed(4), ray.direction.z.toFixed(4));
+
+        var intersection = Cesium.IntersectionTests.rayEllipsoid(ray, Cesium.Ellipsoid.MOON);
+        console.log('[MineralClick] intersection:', intersection ? 'found start=' + intersection.start.toFixed(0) + ' stop=' + intersection.stop.toFixed(0) : 'NONE');
+
+        if (intersection && intersection.start > 0) {
+            var clickPos = Cesium.Ray.getPoint(ray, intersection.start);
+            console.log('[MineralClick] clickPos:', clickPos.x.toFixed(0), clickPos.y.toFixed(0), clickPos.z.toFixed(0));
+            var carto = Cesium.Cartographic.fromCartesian(clickPos, Cesium.Ellipsoid.MOON);
+            if (carto) {
+                var clickLat = Cesium.Math.toDegrees(carto.latitude);
+                // 캔버스 시프트로 히트맵이 지형과 맞춰졌으므로 클릭 좌표는 보정 없이 사용
+                var clickLon = Cesium.Math.toDegrees(carto.longitude);
+                console.log('[MineralClick] lat:', clickLat.toFixed(3), 'lon:', clickLon.toFixed(3));
+
+                // mineralDataArray에서 해당 위경도 범위에 해당하는 셀 찾기
+                var foundCell = null;
+                for (var mi = 0; mi < mineralDataArray.length; mi++) {
+                    var md = mineralDataArray[mi];
+                    if (clickLat >= md.latMin && clickLat < md.latMax &&
+                        clickLon >= md.lonMin && clickLon < md.lonMax) {
+                        foundCell = md;
+                        break;
+                    }
+                }
+
+                if (foundCell) {
+                    var cellVal = getMineralValue(foundCell, activeMineralFilter);
+                    console.log('[MineralClick] cell:', foundCell.latMin, '~', foundCell.latMax, ',', foundCell.lonMin, '~', foundCell.lonMax, 'val:', cellVal);
+                    var unitMap = {
+                        feo: 'wt%', tio2: 'wt%', mgo: 'wt%', al2o3: 'wt%',
+                        sio2: 'wt%', cao: 'wt%', k: 'ppm', th: 'ppm', u: 'ppm',
+                        am: 'g/mol', neutron: 'count/s'
+                    };
+                    sendToRN('MINERAL_CELL_INFO', {
+                        latMin: foundCell.latMin,
+                        latMax: foundCell.latMax,
+                        lonMin: foundCell.lonMin,
+                        lonMax: foundCell.lonMax,
+                        value: cellVal,
+                        filter: activeMineralFilter,
+                        unit: unitMap[activeMineralFilter] || ''
+                    });
+
+                    // 히트맵 텍스처에 직접 셀 하이라이트 (셰이더 그리드 셀 1개에 맞춤)
+                    highlightMineralCell(clickLat, clickLon);
+                } else {
+                    clearMineralHighlight();
+                    sendToRN('MINERAL_CELL_INFO', null);
+                }
+            }
+        }
+        return;
+    }
 
     // 2. 히트박스 기반 셀 선택 (scene.pick)
     if (mainMode !== 'occupation') return;

@@ -1,7 +1,6 @@
-import React, { useState } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, ScrollView, Dimensions, ActivityIndicator } from 'react-native';
+import React, { useState, useRef, useEffect } from 'react';
+import { View, Text, TouchableOpacity, StyleSheet, ScrollView, Dimensions, ActivityIndicator, Animated } from 'react-native';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
-import { BlurView } from 'expo-blur';
 
 const { width: SCREEN_W } = Dimensions.get('window');
 
@@ -38,6 +37,13 @@ const RESOURCE_CATEGORIES = {
   },
 };
 
+const RESOURCE_NAMES: Record<string, string> = {
+  feo: '철 (FeO)', tio2: '티타늄 (TiO₂)', mgo: '마그네슘 (MgO)',
+  al2o3: '알루미늄 (Al₂O₃)', sio2: '규소 (SiO₂)', cao: '칼슘 (CaO)',
+  k: '칼륨 (K)', th: '토륨 (Th)', u: '우라늄 (U)',
+  neutron: '중성자', thermalGrid: '온도', gravity: '중력',
+};
+
 // 범례 스케일 정의
 const LEGEND_SCALES: Record<string, { values: number[]; unit: string }> = {
   feo: { values: [20.0, 10.0, 0.0], unit: 'wt%' },
@@ -62,7 +68,26 @@ function findResourceColor(key: string): string {
   return '#3B82F6';
 }
 
+function formatValue(v: number): string {
+  if (Math.abs(v) >= 100) return Math.round(v).toString();
+  if (Math.abs(v) >= 1) return (Math.round(v * 100) / 100).toString();
+  return (Math.round(v * 1000) / 1000).toString();
+}
+
+function formatLat(v: number): string {
+  return Math.abs(v).toFixed(1) + '°' + (v >= 0 ? 'N' : 'S');
+}
+function formatLon(v: number): string {
+  return Math.abs(v).toFixed(1) + '°' + (v >= 0 ? 'E' : 'W');
+}
+
 type CategoryKey = 'general' | 'special' | 'environment';
+
+interface CellInfo {
+  latMin: number; latMax: number;
+  lonMin: number; lonMax: number;
+  value: number; filter: string; unit: string;
+}
 
 interface ResourceScannerPanelProps {
   visible: boolean;
@@ -71,6 +96,8 @@ interface ResourceScannerPanelProps {
   activeResource: string | null;
   mineralStats?: { filter: string; min: number; max: number; unit: string } | null;
   mineralDataLoaded?: boolean;
+  mineralCellInfo?: CellInfo | null;
+  onClearCellInfo?: () => void;
 }
 
 export default function ResourceScannerPanel({
@@ -80,8 +107,22 @@ export default function ResourceScannerPanel({
   activeResource,
   mineralStats,
   mineralDataLoaded = false,
+  mineralCellInfo,
+  onClearCellInfo,
 }: ResourceScannerPanelProps) {
   const [activeTab, setActiveTab] = useState<CategoryKey>('general');
+
+  const expandAnim = useRef(new Animated.Value(0)).current;
+  const [showPanel, setShowPanel] = useState(false);
+
+  useEffect(() => {
+    if (visible) {
+      setShowPanel(true);
+      Animated.spring(expandAnim, { toValue: 1, useNativeDriver: true, tension: 120, friction: 14 }).start();
+    } else {
+      Animated.timing(expandAnim, { toValue: 0, duration: 200, useNativeDriver: true }).start(() => setShowPanel(false));
+    }
+  }, [visible]);
 
   const category = RESOURCE_CATEGORIES[activeTab];
   const activeColor = activeResource ? findResourceColor(activeResource) : '#3B82F6';
@@ -104,146 +145,168 @@ export default function ResourceScannerPanel({
     }
   }
 
+  const panelAnimStyle = {
+    opacity: expandAnim,
+    transform: [{ scale: expandAnim.interpolate({ inputRange: [0, 1], outputRange: [0.3, 1] }) }],
+  };
+  const legendAnimStyle = {
+    opacity: expandAnim,
+    transform: [{ translateY: expandAnim.interpolate({ inputRange: [0, 1], outputRange: [20, 0] }) }],
+  };
+
+  const isDataDependentTab = activeTab === 'general' || activeTab === 'special';
+  const isLoading = !mineralDataLoaded && isDataDependentTab;
+
+  // 셀 정보에서 스펙트럼 위 마커 위치 계산 (0~1 비율)
+  let valueMarkerRatio: number | null = null;
+  if (mineralCellInfo && legendData) {
+    const minV = legendData.values[2];
+    const maxV = legendData.values[0];
+    if (maxV !== minV) {
+      valueMarkerRatio = Math.max(0, Math.min(1, (mineralCellInfo.value - minV) / (maxV - minV)));
+    }
+  }
+
   return (
     <View style={styles.container} pointerEvents="box-none">
 
-      {/* ════ 접힌 상태: 토글 버튼만 ════ */}
-      {!visible ? (
-        <TouchableOpacity
-          style={styles.toggleBtn}
-          onPress={onToggle}
-          activeOpacity={0.7}
-        >
+      {/* ════ 접힌 상태: 토글 버튼 ════ */}
+      {!visible && !showPanel && (
+        <TouchableOpacity style={styles.toggleBtn} onPress={onToggle} activeOpacity={0.7}>
           <MaterialCommunityIcons name="radar" size={22} color="#fff" />
         </TouchableOpacity>
-      ) : (
+      )}
+
+      {/* ════ 펼쳐진 상태 ════ */}
+      {showPanel && (
         <>
-          {/* ════ 펼쳐진 상태: 버튼+패널 통합 ════ */}
-          <View style={styles.expandedPanel}>
-            <BlurView intensity={80} tint="dark" style={styles.panelBlur}>
+          <Animated.View style={[styles.expandedPanel, panelAnimStyle]}>
+            <View style={styles.panelBg}>
 
-              {/* Row 1: 레이더 아이콘 + 제목 + 탭 + 닫기 */}
-              <View style={styles.topRow}>
-                <TouchableOpacity
-                  style={[styles.headerIcon, { backgroundColor: activeColor + '25' }]}
-                  onPress={onToggle}
-                  activeOpacity={0.7}
-                >
+              {/* ── 헤더 ── */}
+              <View style={styles.headerRow}>
+                <View style={[styles.headerIcon, { backgroundColor: activeColor + '25' }]}>
                   <MaterialCommunityIcons name="radar" size={16} color={activeColor} />
-                </TouchableOpacity>
-                <Text style={styles.titleText}>자원 스캐너</Text>
-
-                <View style={styles.miniTabs}>
-                  {(Object.keys(RESOURCE_CATEGORIES) as CategoryKey[]).map((key) => {
-                    const isActive = activeTab === key;
-                    return (
-                      <TouchableOpacity
-                        key={key}
-                        style={[styles.miniTab, isActive && styles.miniTabActive]}
-                        onPress={() => setActiveTab(key)}
-                        activeOpacity={0.7}
-                      >
-                        <Text style={[styles.miniTabText, isActive && styles.miniTabTextActive]}>
-                          {RESOURCE_CATEGORIES[key].label}
-                        </Text>
-                      </TouchableOpacity>
-                    );
-                  })}
                 </View>
-
-                <TouchableOpacity
-                  onPress={onToggle}
-                  hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
-                >
-                  <Ionicons name="close-circle" size={20} color="rgba(255,255,255,0.3)" />
+                <Text style={styles.titleText}>자원 스캐너</Text>
+                <View style={{ flex: 1 }} />
+                <TouchableOpacity onPress={onToggle} hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}>
+                  <Ionicons name="close-circle" size={20} color="rgba(255,255,255,0.4)" />
                 </TouchableOpacity>
               </View>
 
-              {/* Row 2: 자원 칩 */}
-              {!mineralDataLoaded && (activeTab === 'general' || activeTab === 'special') ? (
-                <View style={styles.loadingRow}>
+              {/* ── 로딩 / 탭+칩 ── */}
+              {isLoading ? (
+                <View style={styles.loadingBox}>
                   <ActivityIndicator size="small" color="#60A5FA" />
                   <Text style={styles.loadingText}>자원 데이터 로드중...</Text>
                 </View>
               ) : (
-                <ScrollView
-                  horizontal
-                  showsHorizontalScrollIndicator={false}
-                  contentContainerStyle={styles.chipScroll}
-                >
-                  {category.resources.map((resource) => {
-                    const isActive = activeResource === resource.key;
-                    return (
-                      <TouchableOpacity
-                        key={resource.key}
-                        style={[
-                          styles.chip,
-                          isActive && {
-                            backgroundColor: resource.color + '20',
-                            borderColor: resource.color + '60',
-                          },
-                        ]}
-                        onPress={() => onSelectResource(resource.key)}
-                        activeOpacity={0.6}
-                      >
-                        <MaterialCommunityIcons
-                          name={resource.icon as any}
-                          size={14}
-                          color={isActive ? resource.color : '#666'}
-                        />
-                        <Text style={[styles.chipLabel, isActive && { color: resource.color, fontWeight: '700' }]}>
-                          {resource.label}{resource.key === 'u' ? ' ≈0.27×Th' : ''}
-                        </Text>
-                        {isActive && (
-                          <View style={[styles.chipDot, { backgroundColor: resource.color }]} />
-                        )}
-                      </TouchableOpacity>
-                    );
-                  })}
-                </ScrollView>
+                <>
+                  <View style={styles.tabRow}>
+                    {(Object.keys(RESOURCE_CATEGORIES) as CategoryKey[]).map((key) => {
+                      const isActive = activeTab === key;
+                      return (
+                        <TouchableOpacity
+                          key={key}
+                          style={[styles.tab, isActive && styles.tabActive]}
+                          onPress={() => setActiveTab(key)}
+                          activeOpacity={0.7}
+                        >
+                          <Text style={[styles.tabText, isActive && styles.tabTextActive]}>
+                            {RESOURCE_CATEGORIES[key].label}
+                          </Text>
+                        </TouchableOpacity>
+                      );
+                    })}
+                  </View>
+                  <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.chipScroll}>
+                    {category.resources.map((resource) => {
+                      const isAct = activeResource === resource.key;
+                      return (
+                        <TouchableOpacity
+                          key={resource.key}
+                          style={[styles.chip, isAct && { backgroundColor: resource.color + '20', borderColor: resource.color + '60' }]}
+                          onPress={() => onSelectResource(resource.key)}
+                          activeOpacity={0.6}
+                        >
+                          <MaterialCommunityIcons name={resource.icon as any} size={14} color={isAct ? resource.color : '#666'} />
+                          <Text style={[styles.chipLabel, isAct && { color: resource.color, fontWeight: '700' }]}>
+                            {resource.label}{resource.key === 'u' ? ' ≈0.27×Th' : ''}
+                          </Text>
+                          {isAct && <View style={[styles.chipDot, { backgroundColor: resource.color }]} />}
+                        </TouchableOpacity>
+                      );
+                    })}
+                  </ScrollView>
+                </>
+              )}
+            </View>
+          </Animated.View>
+
+          {/* ════ 하단: 스펙트럼 + 셀 정보 통합 ════ */}
+          {activeResource && legendData && (
+            <Animated.View style={[styles.bottomBar, legendAnimStyle]}>
+
+              {/* ── 셀 선택 정보 (있을 때만) ── */}
+              {mineralCellInfo && (
+                <View style={styles.cellInfoSection}>
+                  <View style={styles.cellInfoMain}>
+                    <Text style={[styles.cellInfoValue, { color: activeColor }]}>
+                      {formatValue(mineralCellInfo.value)}
+                    </Text>
+                    <Text style={styles.cellInfoUnit}>{mineralCellInfo.unit}</Text>
+                  </View>
+                  <View style={styles.cellInfoCoord}>
+                    <View style={styles.coordRow}>
+                      <Ionicons name="location-outline" size={10} color="#666" />
+                      <Text style={styles.coordText}>
+                        {formatLat(mineralCellInfo.latMin)}~{formatLat(mineralCellInfo.latMax)}
+                      </Text>
+                    </View>
+                    <View style={styles.coordRow}>
+                      <Ionicons name="compass-outline" size={10} color="#666" />
+                      <Text style={styles.coordText}>
+                        {formatLon(mineralCellInfo.lonMin)}~{formatLon(mineralCellInfo.lonMax)}
+                      </Text>
+                    </View>
+                  </View>
+                  <TouchableOpacity onPress={onClearCellInfo} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
+                    <Ionicons name="close" size={14} color="rgba(255,255,255,0.3)" />
+                  </TouchableOpacity>
+                </View>
               )}
 
-            </BlurView>
-          </View>
-
-          {/* ════ 하단 중앙: 가로 스펙트럼 범례 ════ */}
-          {activeResource && legendData && (
-            <View style={styles.legendFloat}>
-              <View style={styles.legendHRow}>
-                {/* 값 라벨: min */}
+              {/* ── 스펙트럼 바 + 마커 ── */}
+              <View style={styles.spectrumSection}>
                 <Text style={styles.legendVal}>{legendData.values[2]}</Text>
-                {/* 가로 그라데이션 바 — 각 광물 실제 HSL 공식 사용 */}
-                <View style={styles.gradientBarH}>
-                  {[...Array(40)].map((_, i) => {
-                    const n = i / 39; // normalized 0→1 (min→max)
-                    let hue: number, sat: number, light: number;
-                    switch (activeResource) {
-                      case 'u':
-                        hue = (260 - 200 * n); sat = 90; light = 50; break;
-                      case 'th':
-                        hue = 240 * (1 - n); sat = 100; light = 50; break;
-                      case 'k':
-                        hue = 120 * (1 - n); sat = 100; light = 45; break;
-                      case 'feo':
-                        hue = 180 * (1 - n); sat = 100; light = 45; break;
-                      case 'tio2':
-                        hue = 180 + 120 * n; sat = 90; light = 50; break;
-                      default:
-                        hue = 240 * (1 - n); sat = 100; light = 50; break;
-                    }
-                    return (
-                      <View
-                        key={i}
-                        style={{ flex: 1, backgroundColor: `hsl(${hue}, ${sat}%, ${light}%)` }}
-                      />
-                    );
-                  })}
+                <View style={styles.gradientBarWrap}>
+                  <View style={styles.gradientBarH}>
+                    {[...Array(40)].map((_, i) => {
+                      const n = i / 39;
+                      let hue: number, sat: number, light: number;
+                      switch (activeResource) {
+                        case 'u': hue = 260 - 200 * n; sat = 90; light = 50; break;
+                        case 'th': hue = 240 * (1 - n); sat = 100; light = 50; break;
+                        case 'k': hue = 120 * (1 - n); sat = 100; light = 45; break;
+                        case 'feo': hue = 180 * (1 - n); sat = 100; light = 45; break;
+                        case 'tio2': hue = 180 + 120 * n; sat = 90; light = 50; break;
+                        default: hue = 240 * (1 - n); sat = 100; light = 50; break;
+                      }
+                      return <View key={i} style={{ flex: 1, backgroundColor: `hsl(${hue}, ${sat}%, ${light}%)` }} />;
+                    })}
+                  </View>
+                  {/* 값 위치 마커 (▲) */}
+                  {valueMarkerRatio !== null && (
+                    <View style={[styles.markerWrap, { left: `${valueMarkerRatio * 100}%` as any }]}>
+                      <View style={styles.markerTriangle} />
+                    </View>
+                  )}
                 </View>
-                {/* 값 라벨: max */}
                 <Text style={styles.legendVal}>{legendData.values[0]}</Text>
               </View>
               <Text style={styles.legendUnitText}>{legendData.unit}</Text>
-            </View>
+            </Animated.View>
           )}
         </>
       )}
@@ -254,175 +317,103 @@ export default function ResourceScannerPanel({
 // ──────────────────────────────────────────────────
 const styles = StyleSheet.create({
   container: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
-    zIndex: 8,
+    position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, zIndex: 8,
   },
-
-  /* ── 접힌 상태: 토글 버튼 ── */
   toggleBtn: {
-    position: 'absolute',
-    top: 12,
-    left: 12,
-    width: 42,
-    height: 42,
-    borderRadius: 21,
-    backgroundColor: 'rgba(0,0,0,0.6)',
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.15)',
-    justifyContent: 'center',
-    alignItems: 'center',
+    position: 'absolute', top: 12, left: 12, width: 42, height: 42,
+    borderRadius: 21, backgroundColor: 'rgba(0,0,0,0.6)',
+    borderWidth: 1, borderColor: 'rgba(255,255,255,0.15)',
+    justifyContent: 'center', alignItems: 'center',
   },
 
-  /* ── 펼쳐진 상태: 통합 패널 ── */
+  /* ── 패널 ── */
   expandedPanel: {
-    position: 'absolute',
-    top: 12,
-    left: 12,
-    maxWidth: SCREEN_W - 82,
-    borderRadius: 21,
-    overflow: 'hidden',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.4,
-    shadowRadius: 12,
-    elevation: 10,
+    position: 'absolute', top: 12, left: 12, right: 72,
+    borderRadius: 16, overflow: 'hidden',
+    shadowColor: '#000', shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.4, shadowRadius: 12, elevation: 10,
+    transformOrigin: 'left top',
   },
-  panelBlur: {
-    paddingTop: 10,
-    paddingBottom: 8,
-    paddingHorizontal: 12,
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.15)',
-    borderRadius: 21,
-    overflow: 'hidden',
+  panelBg: {
+    backgroundColor: 'rgba(10, 12, 24, 0.95)',
+    borderWidth: 1, borderColor: 'rgba(255,255,255,0.12)',
+    borderRadius: 16, paddingTop: 10, paddingBottom: 8, paddingHorizontal: 12,
   },
+  headerRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 8 },
+  headerIcon: { width: 28, height: 28, borderRadius: 14, justifyContent: 'center', alignItems: 'center', marginRight: 6 },
+  titleText: { color: '#eee', fontSize: 13, fontWeight: '700', letterSpacing: 0.2 },
 
-  /* Row 1 */
-  topRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 8,
+  loadingBox: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, paddingVertical: 10 },
+  loadingText: { color: '#60A5FA', fontSize: 12, fontWeight: '600' },
+
+  tabRow: { flexDirection: 'row', gap: 4, marginBottom: 8 },
+  tab: { flex: 1, paddingVertical: 5, borderRadius: 10, backgroundColor: 'rgba(255,255,255,0.06)', alignItems: 'center' },
+  tabActive: { backgroundColor: 'rgba(59,130,246,0.25)' },
+  tabText: { color: '#777', fontSize: 11, fontWeight: '600' },
+  tabTextActive: { color: '#93C5FD' },
+
+  chipScroll: { flexDirection: 'row', gap: 8, paddingBottom: 2 },
+  chip: {
+    flexDirection: 'row', alignItems: 'center', paddingHorizontal: 10, paddingVertical: 6,
+    borderRadius: 16, backgroundColor: 'rgba(255,255,255,0.04)',
+    borderWidth: 1, borderColor: 'rgba(255,255,255,0.08)', gap: 4,
+  },
+  chipLabel: { color: '#999', fontSize: 11, fontWeight: '500' },
+  chipDot: { width: 5, height: 5, borderRadius: 3, marginLeft: 1 },
+
+  /* ── 하단 통합 바 ── */
+  bottomBar: {
+    position: 'absolute', bottom: 28, left: 20, right: 20,
+    backgroundColor: 'rgba(8,12,24,0.92)',
+    borderRadius: 16, paddingHorizontal: 14, paddingVertical: 10,
+    borderWidth: 1, borderColor: 'rgba(255,255,255,0.08)',
     gap: 6,
   },
-  headerIcon: {
-    width: 28,
-    height: 28,
-    borderRadius: 14,
-    justifyContent: 'center',
-    alignItems: 'center',
+
+  /* ── 셀 정보 ── */
+  cellInfoSection: {
+    flexDirection: 'row', alignItems: 'center', gap: 10,
+    paddingBottom: 8, borderBottomWidth: 1, borderBottomColor: 'rgba(255,255,255,0.06)',
+    marginBottom: 2,
   },
-  titleText: {
-    color: '#eee',
-    fontSize: 13,
-    fontWeight: '700',
-    letterSpacing: 0.2,
-    marginRight: 2,
+  cellInfoMain: {
+    flexDirection: 'row', alignItems: 'baseline', gap: 4,
   },
-  miniTabs: {
-    flexDirection: 'row',
-    flex: 1,
-    justifyContent: 'center',
-    gap: 3,
+  cellInfoValue: {
+    fontSize: 22, fontWeight: '800', letterSpacing: -0.5,
   },
-  miniTab: {
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: 12,
-    backgroundColor: 'rgba(255,255,255,0.06)',
+  cellInfoUnit: {
+    fontSize: 11, color: '#888', fontWeight: '600',
   },
-  miniTabActive: {
-    backgroundColor: 'rgba(59,130,246,0.25)',
+  cellInfoCoord: {
+    flex: 1, gap: 2,
   },
-  miniTabText: {
-    color: '#777',
-    fontSize: 11,
-    fontWeight: '600',
+  coordRow: {
+    flexDirection: 'row', alignItems: 'center', gap: 3,
   },
-  miniTabTextActive: {
-    color: '#93C5FD',
+  coordText: {
+    fontSize: 10, color: '#666', fontWeight: '500', letterSpacing: 0.2,
   },
 
-  /* Row 2: 칩 */
-  chipScroll: {
-    flexDirection: 'row',
-    gap: 8,
-    paddingBottom: 2,
+  /* ── 스펙트럼 바 ── */
+  spectrumSection: {
+    flexDirection: 'row', alignItems: 'center', gap: 8,
   },
-  chip: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: 16,
-    backgroundColor: 'rgba(255,255,255,0.04)',
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.08)',
-    gap: 4,
-  },
-  chipLabel: {
-    color: '#999',
-    fontSize: 11,
-    fontWeight: '500',
-  },
-  chipDot: {
-    width: 5,
-    height: 5,
-    borderRadius: 3,
-    marginLeft: 1,
-  },
-  loadingRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 8,
-    paddingVertical: 8,
-  },
-  loadingText: {
-    color: '#60A5FA',
-    fontSize: 12,
-    fontWeight: '600',
-  },
-
-  /* ── 하단 중앙: 가로 스펙트럼 범례 ── */
-  legendFloat: {
-    position: 'absolute',
-    bottom: 28,
-    left: 40,
-    right: 40,
-    alignItems: 'center',
-    gap: 3,
-    backgroundColor: 'rgba(8,12,24,0.85)',
-    borderRadius: 16,
-    paddingHorizontal: 14,
-    paddingVertical: 8,
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.08)',
-  },
-  legendHRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    width: '100%' as any,
+  gradientBarWrap: {
+    flex: 1, position: 'relative' as any,
   },
   gradientBarH: {
-    flex: 1,
-    height: 10,
-    borderRadius: 5,
-    overflow: 'hidden',
-    flexDirection: 'row',
+    height: 10, borderRadius: 5, overflow: 'hidden', flexDirection: 'row',
   },
-  legendVal: {
-    color: '#bbb',
-    fontSize: 10,
-    fontWeight: '600',
+  markerWrap: {
+    position: 'absolute', top: -5, marginLeft: -4,
   },
-  legendUnitText: {
-    color: '#666',
-    fontSize: 9,
-    marginTop: 1,
+  markerTriangle: {
+    width: 0, height: 0,
+    borderLeftWidth: 4, borderRightWidth: 4, borderBottomWidth: 5,
+    borderLeftColor: 'transparent', borderRightColor: 'transparent',
+    borderBottomColor: '#fff',
   },
+  legendVal: { color: '#bbb', fontSize: 10, fontWeight: '600' },
+  legendUnitText: { color: '#666', fontSize: 9, textAlign: 'center' as any },
 });

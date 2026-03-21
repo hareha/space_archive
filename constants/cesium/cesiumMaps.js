@@ -186,6 +186,22 @@ export const CESIUM_MAPS = `
           mineralStats.min = Math.min.apply(null, values);
           mineralStats.max = Math.max.apply(null, values);
         }
+
+        // 단위 매핑
+        var unitMap = {
+          feo: 'wt%', tio2: 'wt%', mgo: 'wt%', al2o3: 'wt%',
+          sio2: 'wt%', cao: 'wt%', k: 'ppm', th: 'ppm', u: 'ppm',
+          am: 'g/mol', neutron: 'count/s'
+        };
+        var unit = unitMap[filter] || '';
+
+        // RN에 통계 전송
+        sendToRN('MINERAL_STATS', {
+          filter: filter,
+          min: mineralStats.min,
+          max: mineralStats.max,
+          unit: unit
+        });
       }
 
       function getMineralValue(data, filter) {
@@ -240,6 +256,9 @@ export const CESIUM_MAPS = `
         }
       }
 
+      // 현재 하이라이트된 셀 (위경도 범위)
+      var highlightedMineralCell = null;
+
       function updateMineralTexture() {
         if (!activeMineralFilter || mineralDataArray.length === 0) {
           return;
@@ -250,9 +269,9 @@ export const CESIUM_MAPS = `
           return;
         }
 
-        // 360x180 캔버스 (셰이더 격자와 일치)
-        var width = 360;
-        var height = 180;
+        // 720x360 캔버스 (고해상도 하이라이트를 위해 2배)
+        var width = 720;
+        var height = 360;
         var canvas = document.createElement('canvas');
         canvas.width = width;
         canvas.height = height;
@@ -260,6 +279,8 @@ export const CESIUM_MAPS = `
         ctx.clearRect(0, 0, width, height);
 
         // 광물 데이터는 셀 범위(latMin~latMax, lonMin~lonMax)이므로 fillRect 사용
+        // LP-GRS 데이터 경도 0° = Cesium 달 경도 180° → 캔버스에 +180° 시프트(+width/2) 적용
+        var halfW = width / 2;
         for (var i = 0; i < mineralDataArray.length; i++) {
           var item = mineralDataArray[i];
           var val = getMineralValue(item, activeMineralFilter);
@@ -270,24 +291,65 @@ export const CESIUM_MAPS = `
 
           var rgb = getMineralColor(activeMineralFilter, normalized);
 
-          // 360x180 캔버스 좌표로 변환
-          var x = (item.lonMin + 180) * (width / 360);
+          var baseX = (item.lonMin + 180) * (width / 360);
           var y = (90 - item.latMax) * (height / 180);
           var w = (item.lonMax - item.lonMin) * (width / 360);
           var h = (item.latMax - item.latMin) * (height / 180);
+          var x = (baseX + halfW) % width;
 
-          // rgba: alpha 0.63 = 다른 히트맵의 160/255와 동일
           ctx.fillStyle = 'rgba(' + rgb[0] + ',' + rgb[1] + ',' + rgb[2] + ',0.63)';
-          ctx.fillRect(x, y, Math.max(w, 1), Math.max(h, 1));
+          if (x + w > width) {
+            // 캔버스 오른쪽 경계를 넘는 셀 → 두 부분으로 나눠서 그림
+            ctx.fillRect(x, y, width - x, Math.max(h, 1));
+            ctx.fillRect(0, y, w - (width - x), Math.max(h, 1));
+          } else {
+            ctx.fillRect(x, y, Math.max(w, 1), Math.max(h, 1));
+          }
+        }
+
+        // ── 선택된 셀 하이라이트 (셰이더 그리드 셀 1개에 맞춤) ──
+        if (highlightedMineralCell) {
+          var hc = highlightedMineralCell;
+          // 클릭 위치를 캔버스 좌표로 변환 (+180° 시프트 포함)
+          var clickCanvasX = ((hc.clickLon + 180) * (width / 360) + halfW) % width;
+          var clickCanvasY = (90 - hc.clickLat) * (height / 180);
+          // 셰이더 그리드 셀 크기 (gridW=180, gridH=90)
+          var gridCellW = width / 180;   // 720/180 = 4px
+          var gridCellH = height / 90;   // 360/90  = 4px
+          // 클릭 위치가 속한 그리드 셀의 좌상단 좌표
+          var hx = Math.floor(clickCanvasX / gridCellW) * gridCellW;
+          var hy = Math.floor(clickCanvasY / gridCellH) * gridCellH;
+
+          // 밝은 흰색 채움으로 셀을 확 밝게
+          ctx.fillStyle = 'rgba(255, 255, 255, 0.55)';
+          ctx.fillRect(hx, hy, gridCellW, gridCellH);
+          // 얇은 시안 테두리 (어떤 히트맵 색 위에서도 구분됨)
+          ctx.strokeStyle = 'rgba(0, 255, 255, 0.9)';
+          ctx.lineWidth = 1;
+          ctx.strokeRect(hx, hy, gridCellW, gridCellH);
         }
 
         if (geologicPrimitive && geologicPrimitive.appearance && geologicPrimitive.appearance.material) {
-          geologicPrimitive.appearance.material.uniforms.image = canvas;
+          // canvas 직접 전달 시 Cesium 캐싱 문제 → dataURL로 변환하여 항상 새 텍스처로 인식
+          var dataUrl = canvas.toDataURL('image/png');
+          geologicPrimitive.appearance.material.uniforms.image = dataUrl;
+          console.log('[MineralTexture] texture updated, highlight:', !!highlightedMineralCell);
+        } else {
+          console.log('[MineralTexture] geologicPrimitive not ready:', !!geologicPrimitive);
         }
       }
 
+      function highlightMineralCell(clickLat, clickLon) {
+        highlightedMineralCell = { clickLat: clickLat, clickLon: clickLon };
+        updateMineralTexture();
+      }
+
+      function clearMineralHighlight() {
+        highlightedMineralCell = null;
+        updateMineralTexture();
+      }
+
       function createMineralSphere() {
-        // 광물 데이터는 2도 해상도 → 격자 180x90
         geologicPrimitive = createUnifiedHeatmapSphere(
           document.createElement('canvas'),
           20000,
