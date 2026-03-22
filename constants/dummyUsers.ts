@@ -2,13 +2,17 @@
  * 더미 유저 데이터 — 주인공 1명 + 더미 20명
  * S2 Level 16 셀 구매 정보 포함
  * 
- * 셀 ID 형식: L16_{lat.toFixed(4)}_{lng.toFixed(4)}
- * (s2CellUtils.ts와 동일한 포맷)
+ * cellId = S2 토큰(hex) — CesiumJS의 s2.cellid.toToken()과 동일
+ * s2js 라이브러리로 lat/lng → S2 Cell ID → Level 16 parent → 토큰 변환
+ * 
+ * TODO: TEMP_AUTH - 실제 서버 연동 시 서버에서 셀 관리
  */
 
+import { s2 } from 's2js';
+
 export interface OwnedCell {
-  cellId: string;       // L16_lat_lng
-  lat: number;
+  cellId: string;       // S2 토큰 (hex)
+  lat: number;          // 중심 위경도 (보조: 범위 쿼리용)
   lng: number;
   purchasedAt: string;  // ISO date
   cost: number;         // Mag
@@ -35,54 +39,74 @@ function seededRandom(seed: number): () => number {
   };
 }
 
-// ── S2 Level 16 셀 클러스터 생성 ──
-function generateCellCluster(
-  centerLat: number,
-  centerLng: number,
+// ── lat/lng → S2 Level 16 토큰 ──
+function latLngToS2Token(lat: number, lng: number): string {
+  const ll = s2.LatLng.fromDegrees(lat, lng);
+  const leafId = s2.cellid.fromLatLng(ll);
+  const cellId = s2.cellid.parent(leafId, 16);
+  return s2.cellid.toToken(cellId);
+}
+
+// ── S2 토큰 → 중심 위경도 ──
+function tokenToLatLng(token: string): { lat: number; lng: number } {
+  const cellId = s2.cellid.fromToken(token);
+  const cell = s2.Cell.fromCellID(cellId);
+  const center = cell.center();
+  const r = Math.sqrt(center.x * center.x + center.y * center.y + center.z * center.z);
+  const lat = Math.asin(center.z / r) * (180 / Math.PI);
+  const lng = Math.atan2(center.y, center.x) * (180 / Math.PI);
+  return { lat: Number(lat.toFixed(6)), lng: Number(lng.toFixed(6)) };
+}
+
+// ── 달 반경으로 km→도 변환 ──
+const MOON_RADIUS_KM = 1737.4;
+function kmToDeg(km: number, centerLat: number) {
+  const latDeg = (km / MOON_RADIUS_KM) * (180 / Math.PI);
+  const lngDeg = latDeg / Math.cos((centerLat * Math.PI) / 180);
+  return { latDeg, lngDeg };
+}
+
+// ── 실제 POI 범위 내에서 S2 Level 16 셀 생성 (토큰 기반) ──
+interface POI {
+  name: string;
+  lat: number;
+  lng: number;
+  radiusKm: number;
+}
+
+function generateCellsInPOI(
+  poi: POI,
   count: number,
   seed: number
 ): OwnedCell[] {
   const rand = seededRandom(seed);
   const cells: OwnedCell[] = [];
-  const cellSize = 0.0029; // ~Level 16 셀 크기 (약 0.003도)
-
-  // 클러스터 반경 (셀 수에 비례)
-  const radius = Math.ceil(Math.sqrt(count)) + 2;
+  const { latDeg, lngDeg } = kmToDeg(poi.radiusKm, poi.lat);
   const used = new Set<string>();
 
-  // 몇 개의 서브 클러스터로 나눔
-  const numClusters = Math.max(1, Math.floor(count / 50));
-  const clusterCenters: { lat: number; lng: number }[] = [];
-
-  for (let c = 0; c < numClusters; c++) {
-    clusterCenters.push({
-      lat: centerLat + (rand() - 0.5) * radius * cellSize * 2,
-      lng: centerLng + (rand() - 0.5) * radius * cellSize * 2,
-    });
-  }
-
-  // 각 서브 클러스터 주변에 셀 배치
   let attempts = 0;
-  while (cells.length < count && attempts < count * 10) {
+  while (cells.length < count && attempts < count * 20) {
     attempts++;
-    const cc = clusterCenters[Math.floor(rand() * clusterCenters.length)];
-    const spreadLat = (rand() - 0.5) * radius * cellSize * 0.6;
-    const spreadLng = (rand() - 0.5) * radius * cellSize * 0.6;
-    const lat = Number((cc.lat + spreadLat).toFixed(4));
-    const lng = Number((cc.lng + spreadLng).toFixed(4));
-    const cellId = `L16_${lat.toFixed(4)}_${lng.toFixed(4)}`;
+    // POI 범위 내 랜덤 위치
+    const randLat = poi.lat + (rand() - 0.5) * 2 * latDeg;
+    const randLng = poi.lng + (rand() - 0.5) * 2 * lngDeg;
 
-    if (used.has(cellId)) continue;
-    used.add(cellId);
+    // S2 Level 16 토큰 계산
+    const token = latLngToS2Token(randLat, randLng);
 
-    // 구매 날짜 (최근 90일 내)
+    if (used.has(token)) continue;
+    used.add(token);
+
+    // 토큰의 실제 중심 위경도
+    const center = tokenToLatLng(token);
+
     const daysAgo = Math.floor(rand() * 90);
     const date = new Date(Date.now() - daysAgo * 86400000);
 
     cells.push({
-      cellId,
-      lat,
-      lng,
+      cellId: token,
+      lat: center.lat,
+      lng: center.lng,
       purchasedAt: date.toISOString().split('T')[0],
       cost: 1,
     });
@@ -91,32 +115,36 @@ function generateCellCluster(
   return cells;
 }
 
-// ── 달 표면 주요 관심 지역 (셀 클러스터 중심) ──
-const CLUSTER_CENTERS = [
-  { lat: 0.6744, lng: 23.4730 },    // 고요의 바다 (아폴로 11)
-  { lat: -3.0128, lng: -23.4219 },  // 폭풍의 대양
-  { lat: 26.1322, lng: 3.6339 },    // 비의 바다
-  { lat: -8.9734, lng: 15.5011 },   // 풍요의 바다
-  { lat: 20.0, lng: 31.0 },         // 맑음의 바다
-  { lat: -43.0, lng: -11.0 },       // 티코 분화구
-  { lat: -9.0, lng: -21.0 },        // 코페르니쿠스 분화구 근처
-  { lat: 44.0, lng: -10.0 },        // 플라톤 분화구 근처
-  { lat: -70.0, lng: 0.0 },         // 남극 근처 (탐사 목표)
-  { lat: 80.0, lng: 30.0 },         // 북극 근처
-  { lat: 5.0, lng: -63.0 },         // 아리스타르코스 고원
-  { lat: -5.0, lng: 150.0 },        // 달 뒷면
-  { lat: 30.0, lng: -35.0 },        // 무지개만
-  { lat: -20.0, lng: 50.0 },        // 이슬의 바다 근처
-  { lat: 15.0, lng: -30.0 },        // 에라토스테네스 근처
-  { lat: -55.0, lng: 10.0 },        // 클라비우스 분화구
-  { lat: 10.0, lng: 80.0 },         // 위기의 바다
-  { lat: -30.0, lng: -45.0 },       // 습지의 바다
-  { lat: 40.0, lng: 50.0 },         // 차가움의 바다
-  { lat: -15.0, lng: -70.0 },       // 습기의 바다
+// ── 실제 착륙지 + 주요 지형 POI ──
+const POIS: POI[] = [
+  // 착륙지 (반경 5km)
+  { name: '아폴로 11호', lat: 0.674, lng: 23.473, radiusKm: 5 },
+  { name: '아폴로 12호', lat: -3.0124, lng: -23.4216, radiusKm: 5 },
+  { name: '아폴로 15호', lat: 26.1322, lng: 3.6339, radiusKm: 5 },
+  { name: '아폴로 16호', lat: -8.973, lng: 15.5002, radiusKm: 5 },
+  { name: '아폴로 17호', lat: 20.1908, lng: 30.7717, radiusKm: 5 },
+  { name: '루나 2호', lat: 29.1, lng: 0, radiusKm: 5 },
+  { name: '찬드라얀 3호', lat: -69.373, lng: 32.319, radiusKm: 5 },
+  { name: '창어 3호', lat: 44.12, lng: -19.51, radiusKm: 5 },
+  { name: '블루고스트 M1', lat: 18.56, lng: 61.81, radiusKm: 5 },
+  { name: '루나 9호', lat: 7.03, lng: -64.33, radiusKm: 5 },
+
+  // 주요 지형 (반경 = diameterKm / 2)
+  { name: '고요의 바다', lat: 8.5, lng: 31.4, radiusKm: 436 },
+  { name: '티코', lat: -43.3, lng: -11.2, radiusKm: 42.5 },
+  { name: '코페르니쿠스', lat: 9.6, lng: -20.1, radiusKm: 46.5 },
+  { name: '플라톤', lat: 51.6, lng: -9.4, radiusKm: 50.5 },
+  { name: '아리스타르코스', lat: 23.7, lng: -47.4, radiusKm: 20 },
+  { name: '무지개 만', lat: 44.1, lng: -31.5, radiusKm: 118 },
+  { name: '클라비우스', lat: -58.4, lng: -14.4, radiusKm: 115.5 },
+  { name: '위기의 바다', lat: 17.0, lng: 59.1, radiusKm: 278 },
+  { name: '중앙 만', lat: 2.4, lng: 1.7, radiusKm: 167.5 },
+  { name: '직선의 벽', lat: -21.67, lng: -7.70, radiusKm: 67 },
 ];
 
-// ── 주인공 유저 ──
-const HERO_CELLS = generateCellCluster(0.6744, 23.4730, 400, 42);
+// ── 주인공 유저 (아폴로 11호 + 고요의 바다) ──
+const HERO_APOLLO11 = generateCellsInPOI(POIS[0], 200, 42);
+const HERO_TRANQUILITY = generateCellsInPOI(POIS[10], 200, 43);
 
 export const HERO_USER: DummyUser = {
   id: 'hero',
@@ -127,7 +155,7 @@ export const HERO_USER: DummyUser = {
   magBalance: 12500,
   totalOccupied: 400,
   joinDate: '2025-01-15',
-  ownedCells: HERO_CELLS,
+  ownedCells: [...HERO_APOLLO11, ...HERO_TRANQUILITY],
 };
 
 // ── 더미 유저 20명 ──
@@ -154,28 +182,51 @@ const DUMMY_PROFILES: Omit<DummyUser, 'ownedCells' | 'totalOccupied'>[] = [
   { id: 'user20', email: 'moon_base@mail.com', password: 'pw20', nickname: '문베이스', avatarColor: '#059669', magBalance: 28000, joinDate: '2024-12-01' },
 ];
 
-// 셀 개수 분포: 20~1000 (유저별 다양하게)
-const CELL_COUNTS = [
-  45, 120, 350, 980, 20, 210, 75, 850, 95, 500,
-  160, 30, 1000, 280, 750, 65, 40, 25, 600, 420,
+// ── 각 유저의 POI별 구매 [poiIdx, cellCount] ──
+const USER_PURCHASES: [number, number][][] = [
+  [[5, 30], [10, 15]],           // user01: 루나 2호 + 고요의 바다
+  [[0, 80], [10, 40]],           // user02: 아폴로 11호 + 고요의 바다
+  [[10, 200], [15, 150]],        // user03: 고요의 바다 + 무지개 만
+  [[11, 500], [12, 480]],        // user04: 티코 + 코페르니쿠스
+  [[5, 20]],                      // user05: 루나 2호
+  [[10, 100], [0, 110]],         // user06: 고요의 바다 + 아폴로 11호
+  [[18, 75]],                     // user07: 중앙 만
+  [[11, 400], [16, 450]],        // user08: 티코 + 클라비우스
+  [[5, 50], [2, 45]],            // user09: 루나 2호 + 아폴로 15호
+  [[10, 300], [17, 200]],        // user10: 고요의 바다 + 위기의 바다
+  [[0, 100], [5, 60]],           // user11: 아폴로 11호 + 루나 2호
+  [[5, 30]],                      // user12: 루나 2호
+  [[10, 500], [18, 500]],        // user13: 고요의 바다 + 중앙 만
+  [[12, 150], [14, 130]],        // user14: 코페르니쿠스 + 아리스타르코스
+  [[15, 400], [13, 350]],        // user15: 무지개 만 + 플라톤
+  [[10, 65]],                     // user16: 고요의 바다
+  [[6, 40]],                      // user17: 찬드라얀 3호
+  [[5, 25]],                      // user18: 루나 2호
+  [[10, 350], [19, 250]],        // user19: 고요의 바다 + 직선의 벽
+  [[0, 200], [10, 220]],         // user20: 아폴로 11호 + 고요의 바다
 ];
 
 export const DUMMY_USERS: DummyUser[] = DUMMY_PROFILES.map((profile, idx) => {
-  const cellCount = CELL_COUNTS[idx];
-  const center = CLUSTER_CENTERS[idx % CLUSTER_CENTERS.length];
-  const cells = generateCellCluster(center.lat, center.lng, cellCount, (idx + 1) * 137);
+  const purchases = USER_PURCHASES[idx];
+  let allCells: OwnedCell[] = [];
+
+  for (const [poiIdx, count] of purchases) {
+    const poi = POIS[poiIdx];
+    const cells = generateCellsInPOI(poi, count, (idx + 1) * 137 + poiIdx * 53);
+    allCells = allCells.concat(cells);
+  }
 
   return {
     ...profile,
-    totalOccupied: cells.length,
-    ownedCells: cells,
+    totalOccupied: allCells.length,
+    ownedCells: allCells,
   };
 });
 
 // ── 전체 유저 목록 ──
 export const ALL_USERS: DummyUser[] = [HERO_USER, ...DUMMY_USERS];
 
-// ── 특정 셀이 누구 소유인지 빠르게 조회하기 위한 맵 ──
+// ── 특정 셀이 누구 소유인지 빠르게 조회 (메모리 캐시) ──
 let _ownershipMap: Map<string, { userId: string; nickname: string; avatarColor: string }> | null = null;
 
 export function getOwnershipMap() {
@@ -193,13 +244,14 @@ export function getOwnershipMap() {
   return _ownershipMap;
 }
 
-// ── 셀 소유자 조회 ──
 export function getCellOwner(cellId: string) {
   return getOwnershipMap().get(cellId) || null;
 }
 
-// ── 특정 유저의 셀 목록 ──
 export function getUserCells(userId: string): OwnedCell[] {
   const user = ALL_USERS.find(u => u.id === userId);
   return user?.ownedCells || [];
 }
+
+// ── S2 유틸 re-export (다른 파일에서 사용) ──
+export { latLngToS2Token, tokenToLatLng };

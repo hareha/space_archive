@@ -95,8 +95,14 @@ export const CESIUM_CONTROLS_PL = `
       plClickHandler.setInputAction(function(movement) {
           if (mainMode !== 'occupation2') return; // 점유모드2가 아니면 무시
 
-          var picked = viewer.scene.pick(movement.position);
-          if (!Cesium.defined(picked) || !picked.id) return;
+          var picked = null;
+          var drillResults = viewer.scene.drillPick(movement.position);
+          for (var di = 0; di < drillResults.length; di++) {
+              if (Cesium.defined(drillResults[di]) && drillResults[di].id && typeof drillResults[di].id !== 'string') {
+                  picked = drillResults[di]; break;
+              }
+          }
+          if (!picked || !picked.id) return;
           var pickedCellId = picked.id;
 
           var lastCellId = selectionStack.length === 0 ? null : selectionStack[selectionStack.length - 1];

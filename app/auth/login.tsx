@@ -62,19 +62,15 @@ export default function LoginScreen() {
               <Text style={s.logoSubtitle}>달의 새로운 가능성을 탐험하세요</Text>
             </View>
 
-            {/* 빠른 회원가입 배너 */}
-            <TouchableOpacity
-              style={s.quickBanner}
-              onPress={() => router.push('/auth/signup')}
-              activeOpacity={0.8}
-            >
-              <Text style={s.quickBannerIcon}>✨</Text>
-              <Text style={s.quickBannerText}>3초만에 빠른 회원가입</Text>
-              <Ionicons name="chevron-forward" size={16} color="#FBBF24" />
-            </TouchableOpacity>
-
             {/* SNS 로그인 */}
             <View style={s.snsSection}>
+              {/* 카카오 말풍선 */}
+              <View style={s.speechBubbleContainer}>
+                <View style={s.speechBubble}>
+                  <Text style={s.speechBubbleText}>✨ 3초만에 빠른 회원가입</Text>
+                </View>
+                <View style={s.speechBubbleArrow} />
+              </View>
               {/* 카카오 */}
               <TouchableOpacity
                 style={[s.snsBtn, { backgroundColor: '#FEE500' }]}
@@ -227,16 +223,21 @@ const s = StyleSheet.create({
     fontSize: 14, color: '#9CA3AF', letterSpacing: 0.5,
   },
 
-  // 빠른 회원가입
-  quickBanner: {
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
-    backgroundColor: 'rgba(251,191,36,0.1)', borderRadius: 12,
-    paddingVertical: 12, paddingHorizontal: 20, marginBottom: 28,
-    borderWidth: 1, borderColor: 'rgba(251,191,36,0.2)',
-    gap: 6,
+  // 말풍선 (카카오 위)
+  speechBubbleContainer: {
+    alignItems: 'center', marginBottom: 4,
   },
-  quickBannerIcon: { fontSize: 14 },
-  quickBannerText: { color: '#FBBF24', fontSize: 14, fontWeight: '600' },
+  speechBubble: {
+    backgroundColor: '#FBBF24', borderRadius: 14,
+    paddingVertical: 6, paddingHorizontal: 14,
+  },
+  speechBubbleText: { color: '#1A1A1A', fontSize: 12, fontWeight: '700' },
+  speechBubbleArrow: {
+    width: 0, height: 0,
+    borderLeftWidth: 6, borderRightWidth: 6, borderTopWidth: 6,
+    borderLeftColor: 'transparent', borderRightColor: 'transparent',
+    borderTopColor: '#FBBF24',
+  },
 
   // SNS
   snsSection: { gap: 10, marginBottom: 20 },

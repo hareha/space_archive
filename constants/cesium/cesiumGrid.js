@@ -272,6 +272,122 @@ export const CESIUM_GRID = `
           _perfStats.renderOneParentTimeMs += performance.now() - _ropT0;
       }
 
+      // occupiedTokens → 특정 레벨 부모별 점유 수 카운트 (모드1용)
+      function buildOccupationMapM1(displayLevel) {
+          var map = {};
+          for (var oi = 0; oi < occupiedTokens.length; oi++) {
+              try {
+                  var ocId = s2.cellid.fromToken(occupiedTokens[oi]);
+                  var parentId = s2.cellid.parent(ocId, displayLevel);
+                  var parentToken = s2.cellid.toToken(parentId);
+                  map[parentToken] = (map[parentToken] || 0) + 1;
+              } catch(e) {}
+          }
+          return map;
+      }
+      // 부모 토큰별 점유 라벨/색상 추적 (증분 업데이트)
+      var _occRendered = {}; // token → { entities:[], colorPrim:null }
+
+      function clearOccForToken(token) {
+          var entry = _occRendered[token];
+          if (!entry) return;
+          for (var i = 0; i < entry.entities.length; i++) {
+              try { viewer.entities.remove(entry.entities[i]); } catch(e) {}
+          }
+          if (entry.colorPrim) {
+              try { pillarPrimitives.remove(entry.colorPrim); } catch(e) {}
+          }
+          delete _occRendered[token];
+      }
+
+      function clearAllOccRendered() {
+          Object.keys(_occRendered).forEach(function(t) { clearOccForToken(t); });
+      }
+
+      function renderOccForParent(parentCellId, targetLevel) {
+          var token = s2.cellid.toToken(parentCellId);
+          if (_occRendered[token]) return; // 이미 있으면 스킵
+          var entry = { entities: [], colorPrim: null };
+          var children = getDescendants(parentCellId, targetLevel);
+
+          if (targetLevel < 16) {
+              var occMap = buildOccupationMapM1(targetLevel);
+              var levelDiff = 16 - targetLevel;
+              var maxSubCells = Math.pow(4, levelDiff);
+              var colorInstances = [];
+              children.forEach(function(cid) {
+                  var cnt = occMap[s2.cellid.toToken(cid)] || 0;
+                  if (cnt > 0) {
+                      var hc = s2.Cell.fromCellID(cid);
+                      var center = hc.center();
+                      var cr = Math.sqrt(center.x*center.x+center.y*center.y+center.z*center.z);
+                      var labelPos = Cesium.Cartesian3.fromRadians(
+                          Math.atan2(center.y, center.x), Math.asin(center.z / cr), 0, Cesium.Ellipsoid.MOON
+                      );
+                      entry.entities.push(viewer.entities.add({
+                          position: labelPos,
+                          label: {
+                              text: cnt.toString(), font: 'bold 12px sans-serif',
+                              fillColor: Cesium.Color.WHITE, outlineColor: Cesium.Color.BLACK, outlineWidth: 3,
+                              style: Cesium.LabelStyle.FILL_AND_OUTLINE,
+                              horizontalOrigin: Cesium.HorizontalOrigin.CENTER, verticalOrigin: Cesium.VerticalOrigin.CENTER,
+                              heightReference: Cesium.HeightReference.CLAMP_TO_GROUND,
+                              disableDepthTestDistance: Number.POSITIVE_INFINITY,
+                              scaleByDistance: new Cesium.NearFarScalar(5000, 1.0, 500000, 0.3),
+                          }
+                      }));
+                      var ratio = Math.min(cnt / maxSubCells, 1.0);
+                      var fillR = ratio < 0.5 ? ratio * 2 : 1.0;
+                      var fillG = ratio < 0.5 ? 1.0 : 1.0 - (ratio - 0.5) * 2;
+                      var fillColor = new Cesium.Color(fillR, fillG, 0.1, 0.15 + ratio * 0.15);
+                      var cellObj = s2.Cell.fromCellID(cid); var cPos = [];
+                      for (var vi = 0; vi < 4; vi++) {
+                          var v = cellObj.vertex(vi); var vr = Math.sqrt(v.x**2+v.y**2+v.z**2);
+                          cPos.push(Cesium.Cartesian3.fromRadians(Math.atan2(v.y,v.x), Math.asin(v.z/vr), 0, Cesium.Ellipsoid.MOON));
+                      }
+                      colorInstances.push(new Cesium.GeometryInstance({
+                          geometry: new Cesium.PolygonGeometry({
+                              polygonHierarchy: new Cesium.PolygonHierarchy(cPos), ellipsoid: Cesium.Ellipsoid.MOON,
+                              height: -15000, extrudedHeight: 15000, granularity: Math.PI
+                          }),
+                          attributes: { color: Cesium.ColorGeometryInstanceAttribute.fromColor(fillColor) }
+                      }));
+                  }
+              });
+              if (colorInstances.length > 0) {
+                  entry.colorPrim = new Cesium.ClassificationPrimitive({
+                      geometryInstances: colorInstances,
+                      appearance: new Cesium.PerInstanceColorAppearance({ flat: true, translucent: true }),
+                      classificationType: Cesium.ClassificationType.CESIUM_3D_TILE, asynchronous: true
+                  });
+                  pillarPrimitives.add(entry.colorPrim);
+              }
+          } else {
+              children.forEach(function(cid) {
+                  if (occupiedTokens.indexOf(s2.cellid.toToken(cid)) !== -1) {
+                      var hc = s2.Cell.fromCellID(cid); var center = hc.center();
+                      var cr = Math.sqrt(center.x*center.x+center.y*center.y+center.z*center.z);
+                      var labelPos = Cesium.Cartesian3.fromRadians(
+                          Math.atan2(center.y, center.x), Math.asin(center.z / cr), 0, Cesium.Ellipsoid.MOON
+                      );
+                      entry.entities.push(viewer.entities.add({
+                          position: labelPos,
+                          label: {
+                              text: '✓', font: 'bold 10px sans-serif',
+                              fillColor: new Cesium.Color(1, 0.3, 0.2, 0.9), outlineColor: Cesium.Color.BLACK, outlineWidth: 2,
+                              style: Cesium.LabelStyle.FILL_AND_OUTLINE,
+                              horizontalOrigin: Cesium.HorizontalOrigin.CENTER, verticalOrigin: Cesium.VerticalOrigin.CENTER,
+                              heightReference: Cesium.HeightReference.CLAMP_TO_GROUND,
+                              disableDepthTestDistance: Number.POSITIVE_INFINITY,
+                              scaleByDistance: new Cesium.NearFarScalar(500, 1.0, 50000, 0.3),
+                          }
+                      }));
+                  }
+              });
+          }
+          _occRendered[token] = entry;
+      }
+
       // 증분 업데이트: 기존 셀 유지 + 새 셀 추가 + 안 보이는 셀 제거
       function updateDynamicGrid() {
           var lastCellId = selectionStack.length === 0 ? null : selectionStack[selectionStack.length - 1];
@@ -305,22 +421,21 @@ export const CESIUM_GRID = `
 
           // 새로 보이는 셀만 추가
           Object.keys(newTokens).forEach(function(token) {
-              if (_renderedCells[token]) return; // 이미 렌더됨 — 유지
+              if (_renderedCells[token]) return;
               renderOneParent(newTokens[token], currentLevel, targetLevel, lineWidth, lastCellId);
           });
 
-          // 디버그 오버레이
-          try {
-              if (!window._classDebugEl) {
-                  window._classDebugEl = document.createElement('div');
-                  window._classDebugEl.style.cssText = 'position:fixed;left:10px;bottom:80px;background:rgba(0,0,0,0.8);color:#0f0;font:12px monospace;padding:8px;z-index:9999;border-radius:4px;pointer-events:none;white-space:pre;';
-                  document.body.appendChild(window._classDebugEl);
-              }
-              var renderedCount = Object.keys(_renderedCells).length;
-              window._classDebugEl.innerHTML =
-                  'rendered=' + renderedCount + ' visible=' + visibleParents.length + ' / MAX=' + MAX_VISIBLE +
-                  '<br>removed=' + toRemove.length + ' kept=' + (renderedCount - (visibleParents.length - toRemove.length));
-          } catch(e) {}
+          // ═══ 점유 라벨/색상 증분 업데이트 ═══
+          // 안 보이는 토큰의 라벨/색상 제거
+          Object.keys(_occRendered).forEach(function(token) {
+              if (!newTokens[token]) clearOccForToken(token);
+          });
+          // 새로 보이는 토큰만 라벨/색상 추가
+          if (occupiedTokens.length > 0) {
+              Object.keys(newTokens).forEach(function(token) {
+                  if (!_occRendered[token]) renderOccForParent(newTokens[token], targetLevel);
+              });
+          }
 
           updateUI();
       }
@@ -344,6 +459,7 @@ export const CESIUM_GRID = `
           if (typeof mainMode !== 'undefined' && mainMode === 'exploration') {
               if (typeof pillarPrimitives !== 'undefined') pillarPrimitives.removeAll();
               clearRenderedCells();
+              clearAllOccRendered();
               return;
           }
 

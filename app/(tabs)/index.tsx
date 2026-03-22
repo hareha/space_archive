@@ -20,6 +20,7 @@ import { fetchSpacecraftPosition, fetchSpacecraftTrajectory } from '@/services/H
 import { LANDING_SITES, LandingSite, sortByYear, sortByCountry, findNearbySites, getContactColor, COUNTRY_NAMES } from '@/constants/LandingSiteData';
 import { LUNAR_FEATURES, LunarFeature, sortByType, sortBySize, getFeatureTypeColor, getFeatureTypeEmoji, formatArea, isFarSide, findNearbyFeatures } from '@/constants/LunarFeatureData';
 import { addScrapArea, removeScrapArea, isAreaScrapped } from '@/constants/scrapStore';
+import { getAllOccupiedTokens } from '@/services/database';
 
 export default function MoonScreen() {
   const webviewRef = useRef<WebView>(null);
@@ -29,6 +30,7 @@ export default function MoonScreen() {
   // 모드 상태 추가
   const [mainMode, setMainMode] = useState<'exploration' | 'occupation' | 'occupation2' | 'occupation3'>('exploration');
   const isOccupation = mainMode === 'occupation' || mainMode === 'occupation2' || mainMode === 'occupation3';
+  const [featureHighlight, setFeatureHighlight] = useState<{ name: string; lat: number; lng: number; radiusKm: number } | null>(null);
   const [subMode, setSubMode] = useState<'space' | 'firstPerson'>('space');
   const [canGoBack, setCanGoBack] = useState(false);
   const [showFilterModal, setShowFilterModal] = useState(false);
@@ -595,6 +597,11 @@ export default function MoonScreen() {
 
   const handleReset = () => {
     webviewRef.current?.postMessage(JSON.stringify({ type: 'RESET_VIEW' }));
+    // 하이라이트 정리
+    if (featureHighlight) {
+      setFeatureHighlight(null);
+      webviewRef.current?.postMessage(JSON.stringify({ type: 'CLEAR_FEATURE_HIGHLIGHT' }));
+    }
   };
 
   const handleBack = () => {
@@ -1031,7 +1038,13 @@ export default function MoonScreen() {
           <View style={styles.modeToggleInner}>
             <TouchableOpacity
               style={[styles.modeTab, mainMode === 'exploration' && styles.modeTabActive]}
-              onPress={() => setMainMode('exploration')}
+              onPress={() => {
+                setMainMode('exploration');
+                if (featureHighlight) {
+                  setFeatureHighlight(null);
+                  webviewRef.current?.postMessage(JSON.stringify({ type: 'CLEAR_FEATURE_HIGHLIGHT' }));
+                }
+              }}
             >
               <Text style={[styles.modeTabText, mainMode === 'exploration' && styles.modeTabTextActive]}>탐사 모드</Text>
             </TouchableOpacity>
@@ -1083,16 +1096,30 @@ export default function MoonScreen() {
           }}
         />
 
-        {/* Mag 잔액 표시 (좌측 상단) */}
-        {isOccupation && (
-          <View style={styles.magDisplay}>
-            <Text style={styles.magLabel}>MAG</Text>
-            <View style={styles.magRow}>
-              {selectedCell && magCost > 0 && (
-                <><Text style={styles.magCost}>{magCost}</Text><Text style={styles.magSlash}> / </Text></>
-              )}
-              <Text style={styles.magBalance}>{magBalance}</Text>
-            </View>
+
+
+        {/* 지형 하이라이트 플로팅 버튼 (점유모드) */}
+        {isOccupation && featureHighlight && (
+          <View style={{
+            position: 'absolute', top: 110, left: 16, zIndex: 30,
+            flexDirection: 'row', alignItems: 'center',
+            backgroundColor: 'rgba(59,130,246,0.25)',
+            borderWidth: 1, borderColor: 'rgba(59,130,246,0.5)',
+            borderRadius: 20, paddingHorizontal: 14, paddingVertical: 8,
+          }}>
+            <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: '#3B82F6', marginRight: 8 }} />
+            <Text style={{ color: '#93C5FD', fontSize: 13, fontWeight: '600', marginRight: 8 }}>
+              {featureHighlight.name}
+            </Text>
+            <TouchableOpacity
+              onPress={() => {
+                setFeatureHighlight(null);
+                webviewRef.current?.postMessage(JSON.stringify({ type: 'CLEAR_FEATURE_HIGHLIGHT' }));
+              }}
+              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+            >
+              <Ionicons name="close-circle" size={18} color="rgba(147,197,253,0.7)" />
+            </TouchableOpacity>
           </View>
         )}
 
@@ -2178,14 +2205,22 @@ export default function MoonScreen() {
                 setLandingSiteDetailMode('detail');
               });
             }}
-            onGoToOccupation={() => {
+            onGoToOccupation={async () => {
               const lat = selectedLandingSite.lat;
               const lng = selectedLandingSite.lng;
+              const name = selectedLandingSite.nameKr;
+              setFeatureHighlight({ name, lat, lng, radiusKm: 5 });
               setSelectedLandingSite(null);
               setLandingSiteDetailMode('detail');
               setMainMode('occupation');
+              // DB에서 점유 토큰 로드 → WebView에 전달
+              try {
+                const tokens = await getAllOccupiedTokens();
+                webviewRef.current?.postMessage(JSON.stringify({ type: 'SET_OCCUPIED_TOKENS', payload: { tokens } }));
+              } catch (e) { console.log('[Index] Failed to load occupied tokens', e); }
               setTimeout(() => {
-                webviewRef.current?.postMessage(JSON.stringify({ type: 'GO_TO_LOCATION', payload: { lat, lng } }));
+                webviewRef.current?.postMessage(JSON.stringify({ type: 'ROTATE_TO_LOCATION', payload: { lat, lng } }));
+                webviewRef.current?.postMessage(JSON.stringify({ type: 'SET_FEATURE_HIGHLIGHT', payload: { name, lat, lng, radiusKm: 5 } }));
               }, 300);
             }}
             target={{ name: selectedLandingSite.nameKr, lat: selectedLandingSite.lat, lng: selectedLandingSite.lng, radiusKm: 5 }}
@@ -2420,14 +2455,22 @@ export default function MoonScreen() {
                 setFeatureDetailMode('detail');
               });
             }}
-            onGoToOccupation={() => {
+            onGoToOccupation={async () => {
               const lat = selectedFeature.lat;
               const lng = selectedFeature.lng;
+              const name = selectedFeature.nameKr;
+              const radiusKm = (selectedFeature.diameterKm || 10) / 2;
+              setFeatureHighlight({ name, lat, lng, radiusKm });
               setSelectedFeature(null);
               setFeatureDetailMode('detail');
               setMainMode('occupation');
+              try {
+                const tokens = await getAllOccupiedTokens();
+                webviewRef.current?.postMessage(JSON.stringify({ type: 'SET_OCCUPIED_TOKENS', payload: { tokens } }));
+              } catch (e) { console.log('[Index] Failed to load occupied tokens', e); }
               setTimeout(() => {
-                webviewRef.current?.postMessage(JSON.stringify({ type: 'GO_TO_LOCATION', payload: { lat, lng } }));
+                webviewRef.current?.postMessage(JSON.stringify({ type: 'ROTATE_TO_LOCATION', payload: { lat, lng } }));
+                webviewRef.current?.postMessage(JSON.stringify({ type: 'SET_FEATURE_HIGHLIGHT', payload: { name, lat, lng, radiusKm } }));
               }, 300);
             }}
             target={{ name: selectedFeature.nameKr, lat: selectedFeature.lat, lng: selectedFeature.lng, diameterKm: selectedFeature.diameterKm, widthKm: selectedFeature.widthKm, angle: selectedFeature.angle }}
