@@ -10,6 +10,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useColorScheme } from '@/components/useColorScheme';
 import OnboardingScreen from '@/components/OnboardingScreen';
 import { OnboardingProvider, useOnboarding } from '@/components/OnboardingContext';
+import { AuthProvider } from '@/components/AuthContext';
 
 export {
   // Catch any errors thrown by the Layout component.
@@ -47,7 +48,9 @@ export default function RootLayout() {
 
   return (
     <OnboardingProvider>
-      <RootLayoutNav />
+      <AuthProvider>
+        <RootLayoutNav />
+      </AuthProvider>
     </OnboardingProvider>
   );
 }
@@ -96,6 +99,7 @@ function RootLayoutNav() {
     <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
       <Stack>
         <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
+        <Stack.Screen name="auth" options={{ headerShown: false, presentation: 'modal' }} />
         <Stack.Screen name="profile" options={{ headerShown: false }} />
         <Stack.Screen name="modal" options={{ presentation: 'modal' }} />
       </Stack>

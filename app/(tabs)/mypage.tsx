@@ -4,6 +4,8 @@ import { useRouter } from 'expo-router';
 import { Text } from '@/components/Themed';
 import { Ionicons } from '@expo/vector-icons';
 import AR2MoonViewer from '@/components/AR2MoonViewer';
+import { useAuth } from '@/components/AuthContext';
+import LoginPrompt from '@/components/LoginPrompt';
 
 // ─── 메뉴 아이템 ───
 function MenuRow({ icon, label, onPress, color }: { icon: string; label: string; onPress?: () => void; color?: string }) {
@@ -21,13 +23,19 @@ function MenuRow({ icon, label, onPress, color }: { icon: string; label: string;
 // ─── 메인 컴포넌트 ───
 export default function MyPageScreen() {
     const router = useRouter();
+    const { user, isLoggedIn, logout } = useAuth();
     const [showLogoutModal, setShowLogoutModal] = useState(false);
     const [showAR, setShowAR] = useState(false);
 
-    const handleLogout = () => {
+    const handleLogout = async () => {
         setShowLogoutModal(false);
-        // TODO: 실제 로그아웃 처리
+        await logout();
     };
+
+    // 비로그인 상태
+    if (!isLoggedIn) {
+        return <LoginPrompt />;
+    }
 
     return (
         <SafeAreaView style={styles.container}>
@@ -53,8 +61,8 @@ export default function MyPageScreen() {
                             <Ionicons name="person" size={28} color="#9E9E9E" />
                         </View>
                         <View style={styles.profileInfo}>
-                            <Text style={styles.userName}>USER011</Text>
-                            <Text style={styles.userEmail}>luna_explorer@lunaverse.io</Text>
+                            <Text style={styles.userName}>{user?.nickname || 'User'}</Text>
+                            <Text style={styles.userEmail}>{user?.email || ''}</Text>
                         </View>
                         <Ionicons name="chevron-forward" size={20} color="#BDBDBD" />
                     </View>
@@ -72,14 +80,14 @@ export default function MyPageScreen() {
                             <Text style={styles.purchaseButtonText}>+이용권 구매하기</Text>
                         </TouchableOpacity>
                     </View>
-                    <Text style={styles.assetValue}>12,500 ell</Text>
+                    <Text style={styles.assetValue}>{(user?.magBalance || 0).toLocaleString()} ell</Text>
                     <Text style={styles.assetPeriod}>2025.03.09 ~ 2025.04.09</Text>
 
                     <View style={styles.statsRow}>
                         <View style={styles.statBox}>
                             <Text style={styles.statLabel}>총 점유 구역</Text>
                             <View style={styles.statValueRow}>
-                                <Text style={styles.statNumber}>400</Text>
+                                <Text style={styles.statNumber}>{user?.totalOccupied || 0}</Text>
                                 <Text style={styles.statUnit}> Mag</Text>
                             </View>
                         </View>
@@ -127,6 +135,7 @@ export default function MyPageScreen() {
                     <Text style={styles.sectionTitle}>설정</Text>
                     <View style={styles.menuGroup}>
                         <MenuRow icon="headset-outline" label="고객센터" onPress={() => router.push('/profile/customer-service')} />
+                        <MenuRow icon="log-out-outline" label="로그아웃" onPress={() => setShowLogoutModal(true)} color="#E53935" />
                     </View>
                 </View>
             </ScrollView>
