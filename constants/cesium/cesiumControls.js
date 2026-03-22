@@ -212,6 +212,7 @@ function handleRNMessage(data) {
                 window._autoOrbitRemove();
                 window._autoOrbitRemove = null;
             }
+            window._orbitState = null;
             if (window._goToTickListener) {
                 viewer.clock.onTick.removeEventListener(window._goToTickListener);
                 window._goToTickListener = null;
@@ -219,28 +220,49 @@ function handleRNMessage(data) {
             viewer.camera.cancelFlight();
             viewer.camera.lookAtTransform(Cesium.Matrix4.IDENTITY);
 
+            function _ease(t) { return t < 0.5 ? 2*t*t : 1 - Math.pow(-2*t+2,2)/2; }
+            function _lerpA(a,b,t) { var d=b-a; while(d>Math.PI)d-=2*Math.PI; while(d<-Math.PI)d+=2*Math.PI; return a+d*t; }
+
             if (orbit) {
-                // orbit 모드: flyTo 후 자동 공전
-                viewer.camera.flyTo({
-                    destination: Cesium.Cartesian3.fromRadians(lngRad, latRad, altitude, Cesium.Ellipsoid.MOON),
-                    orientation: { heading: 0, pitch: Cesium.Math.toRadians(-90), roll: 0 },
-                    duration: 1.5,
-                    complete: function() {
-                        var center = Cesium.Cartesian3.fromRadians(lngRad, latRad, 0, Cesium.Ellipsoid.MOON);
-                        var transform = Cesium.Transforms.eastNorthUpToFixedFrame(center);
-                        var oh = 0, stopped = false;
-                        var op = Cesium.Math.toRadians(-45);
-                        viewer.camera.lookAtTransform(transform, new Cesium.HeadingPitchRange(oh, op, altitude));
+                // orbit: lookAtTransform으로 줌+틸트 동시 (1.5초) → 자동 회전
+                var orbitAlt = 50000;
+                var center = Cesium.Cartesian3.fromRadians(lngRad, latRad, 0, Cesium.Ellipsoid.MOON);
+                var transform = Cesium.Transforms.eastNorthUpToFixedFrame(center);
+                // 현재 고도를 시작 range로 사용 (HPR 역산 불필요)
+                var startCarto = Cesium.Cartographic.fromCartesian(viewer.camera.positionWC, Cesium.Ellipsoid.MOON);
+                var sRange = startCarto ? startCarto.height : altitude;
+                var sHeading = 0, sPitch = Cesium.Math.toRadians(-90);
+                var tHeading = 0, tPitch = Cesium.Math.toRadians(-45), tRange = orbitAlt;
+                var dur = 1500, st = Date.now(), stopped = false;
+
+                // 즉시 lookAtTransform 진입 (정확히 위에서 시작)
+                viewer.camera.lookAtTransform(transform, new Cesium.HeadingPitchRange(sHeading, sPitch, sRange));
+                window._orbitState = { transform: transform, heading: sHeading, pitch: sPitch, range: sRange };
+
+                var tk = function() {
+                    if (stopped) return;
+                    var t = Math.min((Date.now()-st)/dur, 1.0), e = _ease(t);
+                    var p = sPitch + (tPitch - sPitch) * e;
+                    var r = sRange + (tRange - sRange) * e;
+                    viewer.camera.lookAtTransform(transform, new Cesium.HeadingPitchRange(0, p, r));
+                    window._orbitState = { transform: transform, heading: 0, pitch: p, range: r };
+
+                    if (t >= 1.0) {
+                        viewer.clock.onTick.removeEventListener(tk);
+                        window._goToTickListener = null;
+                        // 자동 회전
+                        var oh = 0;
                         var orbitTick = function() {
                             if (stopped) return;
                             oh += 0.05 / 60;
-                            viewer.camera.lookAtTransform(transform, new Cesium.HeadingPitchRange(oh, op, altitude));
+                            var curR = window._orbitState ? window._orbitState.range : tRange;
+                            viewer.camera.lookAtTransform(transform, new Cesium.HeadingPitchRange(oh, tPitch, curR));
+                            if (window._orbitState) { window._orbitState.heading = oh; window._orbitState.range = curR; }
                         };
                         viewer.clock.onTick.addEventListener(orbitTick);
                         var stopOrbit = function() {
                             if (stopped) return; stopped = true;
                             viewer.clock.onTick.removeEventListener(orbitTick);
-                            viewer.camera.lookAtTransform(Cesium.Matrix4.IDENTITY);
                         };
                         var cvs = viewer.canvas;
                         ['pointerdown','wheel'].forEach(function(ev) { cvs.addEventListener(ev, stopOrbit, {once:true}); });
@@ -249,26 +271,26 @@ function handleRNMessage(data) {
                             ['pointerdown','wheel'].forEach(function(ev) { cvs.removeEventListener(ev, stopOrbit); });
                         };
                     }
-                });
+                };
+                window._goToTickListener = tk;
+                viewer.clock.onTick.addEventListener(tk);
             } else {
-                // 일반 모드: setView lerp (자연스러운 전환)
+                // 일반: setView lerp
                 var startCarto = Cesium.Cartographic.fromCartesian(viewer.camera.positionWC, Cesium.Ellipsoid.MOON);
                 if (!startCarto) startCarto = new Cesium.Cartographic(lngRad, latRad, altitude);
                 var sLon = startCarto.longitude, sLat = startCarto.latitude, sAlt = startCarto.height;
                 var sH = viewer.camera.heading, sP = viewer.camera.pitch;
-                var dur = 1500, st = Date.now();
-                function _ease(t) { return t < 0.5 ? 2*t*t : 1 - Math.pow(-2*t+2,2)/2; }
-                function _lerpA(a,b,t) { var d=b-a; while(d>Math.PI)d-=2*Math.PI; while(d<-Math.PI)d+=2*Math.PI; return a+d*t; }
-                var tk = function() {
-                    var t = Math.min((Date.now()-st)/dur, 1.0), e = _ease(t);
+                var dur2 = 1500, st2 = Date.now();
+                var tk2 = function() {
+                    var t = Math.min((Date.now()-st2)/dur2, 1.0), e = _ease(t);
                     viewer.camera.setView({
                         destination: Cesium.Cartesian3.fromRadians(sLon+(lngRad-sLon)*e, sLat+(latRad-sLat)*e, sAlt+(altitude-sAlt)*e, Cesium.Ellipsoid.MOON),
                         orientation: { heading: _lerpA(sH,0,e), pitch: sP+(Cesium.Math.toRadians(-90)-sP)*e, roll: 0 }
                     });
-                    if (t >= 1.0) { viewer.clock.onTick.removeEventListener(tk); window._goToTickListener = null; }
+                    if (t >= 1.0) { viewer.clock.onTick.removeEventListener(tk2); window._goToTickListener = null; }
                 };
-                window._goToTickListener = tk;
-                viewer.clock.onTick.addEventListener(tk);
+                window._goToTickListener = tk2;
+                viewer.clock.onTick.addEventListener(tk2);
             }
         }
         // 특정 좌표에서 공중뷰 (lerp 기반 매끄러운 전환, 바운스 없음)
@@ -971,11 +993,21 @@ var _exploreZoomTarget = null;
 
 function exploreZoom(direction) {
     var cam = viewer.camera;
+
+    // lookAtTransform 모드인 경우: range만 변경
+    if (window._orbitState) {
+        var os = window._orbitState;
+        var scale = direction > 0 ? 0.6 : 1.667;
+        os.range = Math.max(10000, Math.min(500000, os.range * scale));
+        cam.lookAtTransform(os.transform, new Cesium.HeadingPitchRange(os.heading, os.pitch, os.range));
+        return;
+    }
+
+    // 일반 모드: 기존 로직
     var pos = cam.positionWC;
     var currentRange = Cesium.Cartesian3.magnitude(pos);
     
     var scale = direction > 0 ? 0.6 : 1.667;
-    // 누적 목표 계산 (빠르게 연타해도 부드럽게)
     var base = (_exploreZoomTarget !== null) ? _exploreZoomTarget : currentRange;
     _exploreZoomTarget = Math.max(1800000, Math.min(20000000, base * scale));
 
@@ -983,7 +1015,6 @@ function exploreZoom(direction) {
 
     var startRange = currentRange;
     var targetRange = _exploreZoomTarget;
-    // 현재 카메라 방향 단위벡터 (원점→카메라)
     var dir = Cesium.Cartesian3.normalize(pos, new Cesium.Cartesian3());
     var duration = 400;
     var startTime = null;
@@ -992,10 +1023,9 @@ function exploreZoom(direction) {
     function animate(timestamp) {
         if (!startTime) startTime = timestamp;
         var progress = Math.min((timestamp - startTime) / duration, 1.0);
-        var t = 1 - Math.pow(1 - progress, 3); // ease-out cubic
+        var t = 1 - Math.pow(1 - progress, 3);
         var curRange = startRange + (targetRange - startRange) * t;
 
-        // 방향 벡터 * 새 거리 = 새 위치 (방향 완벽 보존)
         var newPos = Cesium.Cartesian3.multiplyByScalar(dir, curRange, new Cesium.Cartesian3());
         cam.position = newPos;
 
