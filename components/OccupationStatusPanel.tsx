@@ -79,34 +79,6 @@ export default function OccupationStatusPanel({
           </View>
         </View>
 
-        {/* 셀 그리드 (빈 상태) */}
-        <View style={st.gridSection}>
-          <View style={st.gridContainer}>
-            {Array.from({ length: GRID_ROWS }).map((_, rowIdx) => (
-              <View key={rowIdx} style={st.gridRow}>
-                {Array.from({ length: GRID_COLS }).map((_, colIdx) => (
-                  <View key={colIdx} style={st.gridCell} />
-                ))}
-              </View>
-            ))}
-          </View>
-
-          {/* 범례 */}
-          <View style={st.legendRow}>
-            <View style={st.legendItem}>
-              <View style={[st.legendDot, { backgroundColor: '#4B5563' }]} />
-              <Text style={st.legendText}>점유 중</Text>
-            </View>
-            <View style={st.legendItem}>
-              <View style={[st.legendDot, { backgroundColor: '#3B82F6' }]} />
-              <Text style={st.legendText}>내 구역</Text>
-            </View>
-            <View style={st.legendItem}>
-              <View style={[st.legendDot, { backgroundColor: '#1F2937' }]} />
-              <Text style={st.legendText}>점유 가능</Text>
-            </View>
-          </View>
-        </View>
 
         {/* ③ 점유 구역 리스트 */}
         <View style={st.listSection}>

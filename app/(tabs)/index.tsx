@@ -18,7 +18,7 @@ import * as FileSystem from 'expo-file-system/legacy';
 import { LIVE_MISSIONS, Spacecraft } from '@/constants/SpacecraftData';
 import { fetchSpacecraftPosition, fetchSpacecraftTrajectory } from '@/services/HorizonsApi';
 import { LANDING_SITES, LandingSite, sortByYear, sortByCountry, findNearbySites, getContactColor, COUNTRY_NAMES } from '@/constants/LandingSiteData';
-import { LUNAR_FEATURES, LunarFeature, sortByType, sortBySize, getFeatureTypeColor, getFeatureTypeEmoji, formatArea, isFarSide } from '@/constants/LunarFeatureData';
+import { LUNAR_FEATURES, LunarFeature, sortByType, sortBySize, getFeatureTypeColor, getFeatureTypeEmoji, formatArea, isFarSide, findNearbyFeatures } from '@/constants/LunarFeatureData';
 import { addScrapArea, removeScrapArea, isAreaScrapped } from '@/constants/scrapStore';
 
 export default function MoonScreen() {
@@ -197,6 +197,14 @@ export default function MoonScreen() {
     return featureSortMode === 'type' ? sortByType(LUNAR_FEATURES) : sortBySize(LUNAR_FEATURES);
   }, [featureSortMode]);
 
+  // 점유 현황 슬라이드 애니메이션
+  const occupationSlideAnim = useRef(new Animated.Value(Dimensions.get('window').width)).current;
+  useEffect(() => {
+    if (landingSiteDetailMode === 'occupation' || featureDetailMode === 'occupation') {
+      occupationSlideAnim.setValue(Dimensions.get('window').width);
+      Animated.timing(occupationSlideAnim, { toValue: 0, duration: 300, useNativeDriver: true }).start();
+    }
+  }, [landingSiteDetailMode, featureDetailMode]);
 
 
   // ═══ Phase 2: GLB 모델 (+5초) ═══
@@ -1090,7 +1098,8 @@ export default function MoonScreen() {
 
         {/* 좌측 상단: 자원 스캐너 (토글 버튼+패널 통합) — ResourceScannerPanel 내부에서 렌더링 */}
 
-        {/* 우측 상단 컨트롤 버튼 (+, 초기화, -) */}
+        {/* 우측 상단 컨트롤 버튼 (+, 초기화, -) — 점유 현황 뷰에서 숨김 */}
+        {!(selectedLandingSite && landingSiteDetailMode === 'occupation') && !(selectedFeature && featureDetailMode === 'occupation') && (
         <SafeAreaView style={styles.rightControls} edges={['right']} pointerEvents="box-none">
           {/* 부가기능 패널 버튼 (탐사 모드) */}
           {mainMode === 'exploration' && (
@@ -1167,9 +1176,7 @@ export default function MoonScreen() {
             </TouchableOpacity>
           )}
         </SafeAreaView>
-
-
-
+        )}
 
         {/* AI 구역 추천 버튼 (우하단) - 점유 모드 전용 */}
         {isOccupation && (
@@ -1319,7 +1326,7 @@ export default function MoonScreen() {
         {/* 기존 스펙트럼 범례 제거됨 — 자원 스캐너 패널의 좌측 범례로 통일 */}
 
         {/* 자원 스캐너 패널 — 토글 버튼 내장 (탐사 모드) */}
-        {mainMode === 'exploration' && (
+        {mainMode === 'exploration' && !(selectedLandingSite && landingSiteDetailMode === 'occupation') && !(selectedFeature && featureDetailMode === 'occupation') && (
           <ResourceScannerPanel
             visible={showResourceScanner}
             onToggle={() => {
@@ -2013,13 +2020,12 @@ export default function MoonScreen() {
           bottom: 0,
           left: 0,
           right: 0,
-          top: landingSiteDetailMode === 'occupation' ? 0 : landingPanelAnim,
+          top: landingPanelAnim,
           backgroundColor: '#111827',
-          borderTopLeftRadius: landingSiteDetailMode === 'occupation' ? 0 : 24,
-          borderTopRightRadius: landingSiteDetailMode === 'occupation' ? 0 : 24,
+          borderTopLeftRadius: 24,
+          borderTopRightRadius: 24,
           overflow: 'hidden',
         }}>
-          {landingSiteDetailMode === 'detail' ? (
           <>
           {/* 드래그 가능 영역: 핸들 + 제목행 */}
           <View {...landingPanelPanResponder.panHandlers}>
@@ -2146,10 +2152,7 @@ export default function MoonScreen() {
                     onPress={() => {
                       setSelectedLandingSite(nearby);
                       setLandingSiteDetailMode('detail');
-                      webviewRef.current?.postMessage(JSON.stringify({ type: 'RESET_VIEW' }));
-                      setTimeout(() => {
-                        webviewRef.current?.postMessage(JSON.stringify({ type: 'GO_TO_LOCATION', payload: { lat: nearby.lat, lng: nearby.lng } }));
-                      }, 300);
+                      webviewRef.current?.postMessage(JSON.stringify({ type: 'GO_TO_LOCATION', payload: { lat: nearby.lat, lng: nearby.lng } }));
                     }}
                     activeOpacity={0.7}
                   >
@@ -2163,22 +2166,30 @@ export default function MoonScreen() {
             <View style={{ height: 40 }} />
           </ScrollView>
           </>
-          ) : (
-            <OccupationStatusPanel
-              onBack={() => setLandingSiteDetailMode('detail')}
-              onGoToOccupation={() => {
-                const lat = selectedLandingSite.lat;
-                const lng = selectedLandingSite.lng;
-                setSelectedLandingSite(null);
+        </Animated.View>
+      )}
+
+      {/* ═══ 착륙지점 점유 현황 — 전체화면 슬라이드 ═══ */}
+      {selectedLandingSite && mainMode === 'exploration' && landingSiteDetailMode === 'occupation' && (
+        <Animated.View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: '#111827', zIndex: 100, transform: [{ translateX: occupationSlideAnim }] }}>
+          <OccupationStatusPanel
+            onBack={() => {
+              Animated.timing(occupationSlideAnim, { toValue: Dimensions.get('window').width, duration: 250, useNativeDriver: true }).start(() => {
                 setLandingSiteDetailMode('detail');
-                setMainMode('occupation');
-                setTimeout(() => {
-                  webviewRef.current?.postMessage(JSON.stringify({ type: 'GO_TO_LOCATION', payload: { lat, lng } }));
-                }, 300);
-              }}
-              target={{ name: selectedLandingSite.nameKr, lat: selectedLandingSite.lat, lng: selectedLandingSite.lng, radiusKm: 5 }}
-            />
-          )}
+              });
+            }}
+            onGoToOccupation={() => {
+              const lat = selectedLandingSite.lat;
+              const lng = selectedLandingSite.lng;
+              setSelectedLandingSite(null);
+              setLandingSiteDetailMode('detail');
+              setMainMode('occupation');
+              setTimeout(() => {
+                webviewRef.current?.postMessage(JSON.stringify({ type: 'GO_TO_LOCATION', payload: { lat, lng } }));
+              }, 300);
+            }}
+            target={{ name: selectedLandingSite.nameKr, lat: selectedLandingSite.lat, lng: selectedLandingSite.lng, radiusKm: 5 }}
+          />
         </Animated.View>
       )}
 
@@ -2229,7 +2240,7 @@ export default function MoonScreen() {
       )}
 
       {/* ═══ 대표 지형 상세 패널 (50%, 풀 정보) ═══ */}
-      {selectedFeature && mainMode === 'exploration' && featureDetailMode === 'detail' && (
+      {selectedFeature && mainMode === 'exploration' && (featureDetailMode === 'detail' || featureDetailMode === 'occupation') && (
         <Animated.View style={{
           position: 'absolute',
           bottom: 0,
@@ -2288,66 +2299,96 @@ export default function MoonScreen() {
           <View style={{ height: 1, backgroundColor: 'rgba(255,255,255,0.06)', marginHorizontal: 16 }} />
 
           <ScrollView style={{ flex: 1, paddingHorizontal: 20, paddingTop: 12 }} showsVerticalScrollIndicator={false}>
-            {/* 서브 정보 */}
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 4 }}>
-              <Text style={{ color: '#6B7280', fontSize: 12, fontWeight: '500' }}>{selectedFeature.nameEn}</Text>
-              <Text style={{ color: '#6B7280', fontSize: 3 }}>●</Text>
-              <Text style={{ color: '#9CA3AF', fontSize: 12 }}>{selectedFeature.typeKr}</Text>
+            {/* 영문명 · 좌표 */}
+            <View style={{ flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between' }}>
+              <View style={{ flex: 1 }}>
+                <Text style={{ color: '#6B7280', fontSize: 13, marginBottom: 2 }}>{selectedFeature.nameEn}</Text>
+                <Text style={{ color: '#9CA3AF', fontSize: 12 }}>
+                  {selectedFeature.lat.toFixed(3)}°{selectedFeature.lat >= 0 ? 'N' : 'S'}  {Math.abs(selectedFeature.lng).toFixed(3)}°{selectedFeature.lng >= 0 ? 'E' : 'W'}
+                </Text>
+              </View>
+              {/* 스크랩 / 내보내기 */}
+              <View style={{ flexDirection: 'row', gap: 12, alignItems: 'center', marginTop: 2 }}>
+                <TouchableOpacity hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+                  <Ionicons name="bookmark-outline" size={22} color="#9CA3AF" />
+                </TouchableOpacity>
+                <TouchableOpacity hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+                  <Ionicons name="share-outline" size={22} color="#9CA3AF" />
+                </TouchableOpacity>
+              </View>
             </View>
-            {/* 유형 + 위치 */}
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 8 }}>
+
+            {/* 유형 태그 + 위치 */}
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 10 }}>
               <View style={{ paddingHorizontal: 10, paddingVertical: 4, borderRadius: 12, backgroundColor: `${getFeatureTypeColor(selectedFeature.typeKr)}20` }}>
                 <Text style={{ color: getFeatureTypeColor(selectedFeature.typeKr), fontSize: 12, fontWeight: '600' }}>{selectedFeature.typeKr}</Text>
               </View>
               <Text style={{ color: '#6B7280', fontSize: 12 }}>{isFarSide(selectedFeature) ? '🔙 뒷면' : '🌕 앞면'}</Text>
             </View>
-            <Text style={{ color: '#6B7280', fontSize: 13, marginTop: 6 }}>
-              {selectedFeature.lat.toFixed(3)}°{selectedFeature.lat >= 0 ? 'N' : 'S'}, {Math.abs(selectedFeature.lng).toFixed(3)}°{selectedFeature.lng >= 0 ? 'E' : 'W'}
-            </Text>
 
-            {/* 주요 제원 */}
-            <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 12, marginTop: 16, paddingTop: 16, borderTopWidth: 1, borderTopColor: '#1F2937' }}>
-              <View style={{ minWidth: '40%' }}>
-                <Text style={{ color: '#6B7280', fontSize: 11 }}>직경</Text>
-                <Text style={{ color: 'white', fontSize: 16, fontWeight: '700' }}>{selectedFeature.diameterKm} km</Text>
+            {/* 짧은 설명 */}
+            <Text style={{ color: '#9CA3AF', fontSize: 13, lineHeight: 20, marginTop: 12 }}>{selectedFeature.description}</Text>
+
+            {/* ── 지형 정보 ── */}
+            <View style={{ marginTop: 20, paddingTop: 16, borderTopWidth: 1, borderTopColor: 'rgba(255,255,255,0.06)' }}>
+              <Text style={{ color: '#D1D5DB', fontSize: 15, fontWeight: '700', marginBottom: 12 }}>지형 정보</Text>
+              <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 10 }}>
+                <View style={{ flex: 1, minWidth: '45%', backgroundColor: '#1F2937', borderRadius: 12, padding: 14, borderWidth: 1, borderColor: 'rgba(255,255,255,0.08)' }}>
+                  <Text style={{ color: '#6B7280', fontSize: 11, marginBottom: 4 }}>직경</Text>
+                  <Text style={{ color: 'white', fontSize: 16, fontWeight: '700' }}>{selectedFeature.diameterKm} km</Text>
+                </View>
+                <View style={{ flex: 1, minWidth: '45%', backgroundColor: '#1F2937', borderRadius: 12, padding: 14, borderWidth: 1, borderColor: 'rgba(255,255,255,0.08)' }}>
+                  <Text style={{ color: '#6B7280', fontSize: 11, marginBottom: 4 }}>위치</Text>
+                  <Text style={{ color: 'white', fontSize: 16, fontWeight: '700' }}>{isFarSide(selectedFeature) ? '달 뒷면' : '달 앞면'}</Text>
+                </View>
+                {selectedFeature.depthKm && (
+                  <View style={{ flex: 1, minWidth: '45%', backgroundColor: '#1F2937', borderRadius: 12, padding: 14, borderWidth: 1, borderColor: 'rgba(255,255,255,0.08)' }}>
+                    <Text style={{ color: '#6B7280', fontSize: 11, marginBottom: 4 }}>깊이</Text>
+                    <Text style={{ color: 'white', fontSize: 16, fontWeight: '700' }}>{selectedFeature.depthKm} km</Text>
+                  </View>
+                )}
+                {selectedFeature.areaKm2 && (
+                  <View style={{ flex: 1, minWidth: '45%', backgroundColor: '#1F2937', borderRadius: 12, padding: 14, borderWidth: 1, borderColor: 'rgba(255,255,255,0.08)' }}>
+                    <Text style={{ color: '#6B7280', fontSize: 11, marginBottom: 4 }}>면적</Text>
+                    <Text style={{ color: 'white', fontSize: 16, fontWeight: '700' }}>{formatArea(selectedFeature.areaKm2)}</Text>
+                  </View>
+                )}
               </View>
-              {selectedFeature.areaKm2 && (
-                <View style={{ minWidth: '40%' }}>
-                  <Text style={{ color: '#6B7280', fontSize: 11 }}>면적</Text>
-                  <Text style={{ color: 'white', fontSize: 16, fontWeight: '700' }}>{formatArea(selectedFeature.areaKm2)}</Text>
-                </View>
-              )}
-              {selectedFeature.depthKm && (
-                <View style={{ minWidth: '40%' }}>
-                  <Text style={{ color: '#6B7280', fontSize: 11 }}>깊이</Text>
-                  <Text style={{ color: 'white', fontSize: 16, fontWeight: '700' }}>{selectedFeature.depthKm} km</Text>
-                </View>
-              )}
-              {selectedFeature.widthKm !== selectedFeature.diameterKm && (
-                <View style={{ minWidth: '40%' }}>
-                  <Text style={{ color: '#6B7280', fontSize: 11 }}>폭</Text>
-                  <Text style={{ color: 'white', fontSize: 16, fontWeight: '700' }}>{selectedFeature.widthKm} km</Text>
-                </View>
-              )}
             </View>
 
-            {/* 설명 */}
-            <View style={{ marginTop: 16, paddingTop: 16, borderTopWidth: 1, borderTopColor: '#1F2937' }}>
+            {/* ── 상세 설명 ── */}
+            <View style={{ marginTop: 20, paddingTop: 16, borderTopWidth: 1, borderTopColor: 'rgba(255,255,255,0.06)' }}>
+              <Text style={{ color: '#D1D5DB', fontSize: 15, fontWeight: '700', marginBottom: 8 }}>상세 설명</Text>
               <Text style={{ color: '#9CA3AF', fontSize: 13, lineHeight: 20 }}>{selectedFeature.description}</Text>
             </View>
 
-            {/* 관련 뉴스 + 점유 현황 버튼 */}
-            <View style={{ flexDirection: 'row', gap: 10, marginTop: 16, marginBottom: 20 }}>
+            {/* ── 인근 주요 지형 ── */}
+            <View style={{ marginTop: 20, paddingTop: 16, borderTopWidth: 1, borderTopColor: 'rgba(255,255,255,0.06)' }}>
+              <Text style={{ color: '#D1D5DB', fontSize: 15, fontWeight: '700', marginBottom: 10 }}>인근 주요 지형</Text>
+              <View style={{ flexDirection: 'row', gap: 10 }}>
+                {findNearbyFeatures(selectedFeature, 2).map((nearby, idx) => (
+                  <TouchableOpacity
+                    key={idx}
+                    style={{ flex: 1, backgroundColor: '#1F2937', borderRadius: 12, padding: 12, borderWidth: 1, borderColor: 'rgba(255,255,255,0.06)' }}
+                    onPress={() => {
+                      setSelectedFeature(nearby);
+                      setFeatureDetailMode('detail');
+                      webviewRef.current?.postMessage(JSON.stringify({ type: 'GO_TO_LOCATION', payload: { lat: nearby.lat, lng: nearby.lng } }));
+                      webviewRef.current?.postMessage(JSON.stringify({ type: 'SHOW_FEATURE_AREA', payload: { lat: nearby.lat, lng: nearby.lng, diameterKm: nearby.diameterKm, widthKm: nearby.widthKm, angle: nearby.angle, typeEn: nearby.typeEn } }));
+                    }}
+                    activeOpacity={0.7}
+                  >
+                    <Text style={{ color: '#F9FAFB', fontSize: 13, fontWeight: '600' }}>{nearby.nameKr}</Text>
+                    <Text style={{ color: '#6B7280', fontSize: 11, marginTop: 2 }}>{nearby.typeKr} · {nearby.diameterKm}km</Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            </View>
+
+            {/* 점유 현황 버튼 */}
+            <View style={{ marginTop: 20, marginBottom: 20 }}>
               <TouchableOpacity
-                style={{ flex: 1, backgroundColor: '#1F2937', borderRadius: 12, paddingVertical: 14, alignItems: 'center', borderWidth: 1, borderColor: 'rgba(255,255,255,0.08)' }}
-                onPress={() => router.push(`/(tabs)?search=${encodeURIComponent(selectedFeature.nameKr)}`)}
-                activeOpacity={0.7}
-              >
-                <Ionicons name="newspaper-outline" size={18} color="#60A5FA" style={{ marginBottom: 4 }} />
-                <Text style={{ color: '#D1D5DB', fontSize: 13, fontWeight: '600' }}>관련 뉴스 →</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={{ flex: 1, backgroundColor: '#1F2937', borderRadius: 12, paddingVertical: 14, alignItems: 'center', borderWidth: 1, borderColor: 'rgba(255,255,255,0.08)' }}
+                style={{ backgroundColor: '#1F2937', borderRadius: 12, paddingVertical: 14, alignItems: 'center', borderWidth: 1, borderColor: 'rgba(255,255,255,0.08)' }}
                 onPress={() => setFeatureDetailMode('occupation')}
                 activeOpacity={0.7}
               >
@@ -2362,7 +2403,7 @@ export default function MoonScreen() {
 
       {/* ═══ 대표 지형 점유 현황 ═══ */}
       {selectedFeature && mainMode === 'exploration' && featureDetailMode === 'occupation' && (
-        <View style={{
+        <Animated.View style={{
           position: 'absolute',
           bottom: 0,
           left: 0,
@@ -2370,9 +2411,15 @@ export default function MoonScreen() {
           top: 0,
           backgroundColor: '#111827',
           overflow: 'hidden',
+          zIndex: 100,
+          transform: [{ translateX: occupationSlideAnim }],
         }}>
           <OccupationStatusPanel
-            onBack={() => setFeatureDetailMode('detail')}
+            onBack={() => {
+              Animated.timing(occupationSlideAnim, { toValue: Dimensions.get('window').width, duration: 250, useNativeDriver: true }).start(() => {
+                setFeatureDetailMode('detail');
+              });
+            }}
             onGoToOccupation={() => {
               const lat = selectedFeature.lat;
               const lng = selectedFeature.lng;
@@ -2385,7 +2432,7 @@ export default function MoonScreen() {
             }}
             target={{ name: selectedFeature.nameKr, lat: selectedFeature.lat, lng: selectedFeature.lng, diameterKm: selectedFeature.diameterKm, widthKm: selectedFeature.widthKm, angle: selectedFeature.angle }}
           />
-        </View>
+        </Animated.View>
       )}
 
       {/* ═══ 대표 지형 전체화면 뷰 (하단 20% 타이틀바) ═══ */}

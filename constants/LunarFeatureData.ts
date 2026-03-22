@@ -124,3 +124,16 @@ export function formatArea(areaKm2: number | null): string {
   if (areaKm2 >= 1000) return `${(areaKm2 / 1000).toFixed(1)}K km²`;
   return `${areaKm2.toFixed(0)} km²`;
 }
+
+// 인근 주요 지형 찾기 (위경도 유클리드 거리 기준, 자기 자신 제외)
+export function findNearbyFeatures(feature: LunarFeature, count = 2): LunarFeature[] {
+  return LUNAR_FEATURES
+    .filter(f => f.id !== feature.id)
+    .map(f => ({
+      feature: f,
+      dist: Math.sqrt(Math.pow(f.lat - feature.lat, 2) + Math.pow(f.lng - feature.lng, 2)),
+    }))
+    .sort((a, b) => a.dist - b.dist)
+    .slice(0, count)
+    .map(item => item.feature);
+}
