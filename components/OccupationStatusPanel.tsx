@@ -84,7 +84,7 @@ export default function OccupationStatusPanel({
   }, [dbData, sortBy]);
 
   const SORT_LABELS: Record<SortOption, string> = {
-    recent: '최신 점유순',
+    recent: '최신 개척순',
     amount: '보유량 순',
     mine: '내 구역',
   };
@@ -107,7 +107,7 @@ export default function OccupationStatusPanel({
             <Text style={st.statValue}>{stats.totalCells.toLocaleString()} <Text style={st.statUnit}>Mag</Text></Text>
           </View>
           <View style={[st.statCard, { borderColor: occupiedCount > 0 ? 'rgba(239,68,68,0.3)' : 'rgba(107,114,128,0.3)' }]}>
-            <Text style={st.statLabel}>점유 중</Text>
+            <Text style={st.statLabel}>개척 완료</Text>
             {loading ? (
               <ActivityIndicator size="small" color="#9CA3AF" style={{ marginTop: 4 }} />
             ) : (
@@ -117,7 +117,7 @@ export default function OccupationStatusPanel({
             )}
           </View>
           <View style={[st.statCard, { borderColor: 'rgba(107,114,128,0.3)' }]}>
-            <Text style={st.statLabel}>점유 가능</Text>
+            <Text style={st.statLabel}>개척 가능</Text>
             {loading ? (
               <ActivityIndicator size="small" color="#9CA3AF" style={{ marginTop: 4 }} />
             ) : (
@@ -135,7 +135,7 @@ export default function OccupationStatusPanel({
               <View style={[st.progressFill, { width: `${Math.min(100, (occupiedCount / stats.totalCells) * 100)}%` }]} />
             </View>
             <Text style={st.progressText}>
-              {((occupiedCount / stats.totalCells) * 100).toFixed(1)}% 점유됨
+              {((occupiedCount / stats.totalCells) * 100).toFixed(1)}% 개척됨
             </Text>
           </View>
         )}
@@ -143,7 +143,7 @@ export default function OccupationStatusPanel({
         {/* ③ 점유 구역 리스트 */}
         <View style={st.listSection}>
           <View style={st.listHeader}>
-            <Text style={st.listTitle}>점유 구역 리스트 ({sortedOwners.length}명)</Text>
+            <Text style={st.listTitle}>개척 현황 목록 ({sortedOwners.length}명)</Text>
             <TouchableOpacity
               style={st.sortBtn}
               onPress={() => setShowSortMenu(!showSortMenu)}
@@ -179,7 +179,7 @@ export default function OccupationStatusPanel({
           ) : sortedOwners.length === 0 ? (
             <View style={st.emptyList}>
               <Ionicons name="people-outline" size={32} color="#374151" />
-              <Text style={st.emptyListText}>아직 점유된 구역이 없습니다</Text>
+              <Text style={st.emptyListText}>아직 개척된 구역이 없습니다</Text>
             </View>
           ) : (
             <View style={{ gap: 2 }}>
@@ -210,7 +210,7 @@ export default function OccupationStatusPanel({
         {/* ④ 점유 지형 확인 → 점유모드 전환 */}
         <View style={{ paddingHorizontal: 20 }}>
           <TouchableOpacity style={st.ctaBtn} activeOpacity={0.7} onPress={onGoToOccupation}>
-            <Text style={st.ctaText}>점유 지형 확인  →</Text>
+            <Text style={st.ctaText}>개척 현황 확인  →</Text>
           </TouchableOpacity>
         </View>
       </ScrollView>

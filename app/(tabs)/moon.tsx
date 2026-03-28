@@ -1,31 +1,45 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import {
-    StyleSheet, ScrollView, SafeAreaView, TouchableOpacity,
-    StatusBar, View, Text, TextInput, FlatList
+    StyleSheet, ScrollView, TouchableOpacity,
+    StatusBar, View, Text, TextInput, Dimensions,
+    NativeSyntheticEvent, NativeScrollEvent, Animated
 } from 'react-native';
-import NewsCard from '@/components/NewsCard';
-import { FontAwesome, Ionicons } from '@expo/vector-icons';
+import { Image } from 'expo-image';
+import { Ionicons } from '@expo/vector-icons';
 import { router, useLocalSearchParams } from 'expo-router';
-import { NEWS_DATA } from '@/constants/MockData';
+import { NEWS_DATA, COSMOS_NEWS_DATA } from '@/constants/MockData';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-const CATEGORIES = ['전체', '탐사', '자원', '기술', '분석'];
+const { width: SCREEN_WIDTH } = Dimensions.get('window');
+const BREAKING_CARD_WIDTH = SCREEN_WIDTH;
+const SOURCE_TYPES = ['전체', '코스모스', '생성형'] as const;
+const ALL_NEWS = [...COSMOS_NEWS_DATA, ...NEWS_DATA];
 
-export default function TabOneScreen() {
-
+export default function InsightScreen() {
     const { search } = useLocalSearchParams<{ search?: string }>();
+    const [selectedSourceType, setSelectedSourceType] = useState<string>('전체');
     const [selectedCategory, setSelectedCategory] = useState<string>('전체');
     const [searchText, setSearchText] = useState('');
     const [sortOrder, setSortOrder] = useState<'최신순' | '인기순'>('최신순');
-    const [viewMode, setViewMode] = useState<'card' | 'list'>('card');
+    const [breakingIndex, setBreakingIndex] = useState(0);
+    const breakingScrollRef = useRef<ScrollView>(null);
 
-    // route param으로 검색어 전달 시 자동 설정
     useEffect(() => {
-        if (search) {
-            setSearchText(search);
-        }
+        if (search) setSearchText(search);
     }, [search]);
 
-    const filteredNews = NEWS_DATA.filter(item => {
+    // 소스타입에 따른 기사 풀
+    const sourceFilteredNews = selectedSourceType === '전체'
+        ? ALL_NEWS
+        : ALL_NEWS.filter(item => item.sourceType === selectedSourceType);
+
+    // 세부 카테고리 목록 동적 생성
+    const availableCategories = ['전체', ...Array.from(new Set(sourceFilteredNews.map(item => item.category)))];
+
+    // Breaking 뉴스 (코스모스 기사 우선)
+    const breakingNews = COSMOS_NEWS_DATA.slice(0, 3);
+
+    const filteredNews = sourceFilteredNews.filter(item => {
         const matchesCategory = selectedCategory === '전체' || item.category === selectedCategory;
         const matchesSearch = searchText === '' ||
             item.title.includes(searchText) ||
@@ -33,101 +47,177 @@ export default function TabOneScreen() {
         return matchesCategory && matchesSearch;
     });
 
+    const insets = useSafeAreaInsets();
+
+    // Breaking 스크롤 인디케이터
+    const handleBreakingScroll = useCallback((e: NativeSyntheticEvent<NativeScrollEvent>) => {
+        const idx = Math.round(e.nativeEvent.contentOffset.x / SCREEN_WIDTH);
+        setBreakingIndex(idx);
+    }, []);
+
     return (
-        <SafeAreaView style={styles.container}>
+        <View style={[styles.container, { paddingTop: insets.top }]}>
             <StatusBar barStyle="dark-content" />
 
-            {/* ① 헤더 */}
-            <View style={styles.header}>
-                <Text style={styles.headerTitle}>인사이트</Text>
-                <TouchableOpacity style={styles.searchIconBtn}>
-                    <Ionicons name="search" size={22} color="#1A1A1A" />
-                </TouchableOpacity>
-            </View>
-
-            <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
-
-                {/* ① 검색 영역 */}
-                <View style={styles.searchContainer}>
-                    <View style={styles.searchInputWrap}>
+            <ScrollView
+                contentContainerStyle={styles.scrollContent}
+                showsVerticalScrollIndicator={false}
+                stickyHeaderIndices={[2]}
+            >
+                {/* ═══ ⓪ 검색창 (스크롤과 함께 올라감) ═══ */}
+                <View style={styles.searchBarWrap}>
+                    <View style={styles.searchBar}>
                         <TextInput
                             style={styles.searchInput}
-                            placeholder="키워드를 입력하세요"
+                            placeholder="키워드 검색"
                             placeholderTextColor="#ACACAC"
                             value={searchText}
                             onChangeText={setSearchText}
                             returnKeyType="search"
                         />
-                        <TouchableOpacity style={styles.filterBtn}>
-                            <Ionicons name="options-outline" size={20} color="#666" />
-                        </TouchableOpacity>
+                        <Ionicons name="search" size={18} color="#ACACAC" />
                     </View>
                 </View>
 
-                {/* ② 카테고리 칩 영역 */}
-                <ScrollView
-                    horizontal
-                    showsHorizontalScrollIndicator={false}
-                    style={styles.categoryRow}
-                    contentContainerStyle={styles.categoryRowContent}
-                >
-                    {CATEGORIES.map((cat) => (
-                        <TouchableOpacity
-                            key={cat}
-                            style={[
-                                styles.categoryChip,
-                                selectedCategory === cat ? styles.categoryChipActive : styles.categoryChipInactive
-                            ]}
-                            onPress={() => setSelectedCategory(cat)}
-                            activeOpacity={0.7}
-                        >
-                            <Text style={[
-                                styles.categoryChipText,
-                                selectedCategory === cat ? styles.categoryChipTextActive : styles.categoryChipTextInactive
-                            ]}>{cat}</Text>
-                        </TouchableOpacity>
-                    ))}
-                </ScrollView>
+                {/* ═══ ① Breaking 뉴스 슬라이더 ═══ */}
+                <View style={styles.breakingSection}>
+                    {/* 풀와이드 Breaking 슬라이더 */}
+                    <ScrollView
+                        ref={breakingScrollRef}
+                        horizontal
+                        pagingEnabled
+                        showsHorizontalScrollIndicator={false}
+                        onMomentumScrollEnd={handleBreakingScroll}
+                        decelerationRate="fast"
+                    >
+                        {breakingNews.map((news) => (
+                            <TouchableOpacity
+                                key={news.id}
+                                style={styles.breakingCard}
+                                activeOpacity={0.95}
+                                onPress={() => router.push(`/news/${news.id}`)}
+                            >
+                                <Image
+                                    source={{ uri: news.imageUrl }}
+                                    style={styles.breakingImage}
+                                    contentFit="cover"
+                                    transition={300}
+                                />
+                                <View style={styles.breakingOverlay}>
+                                    <Text style={styles.breakingLabel}>BREAKING</Text>
+                                    <View>
+                                        <Text style={styles.breakingCardTitle} numberOfLines={2}>
+                                            {news.title}
+                                        </Text>
+                                        <Text style={styles.breakingCardSummary} numberOfLines={2}>
+                                            {news.summary}
+                                        </Text>
+                                        {/* 인디케이터 바 (카드 안) */}
+                                        <View style={styles.indicatorRow}>
+                                            {breakingNews.map((_, i) => (
+                                                <View
+                                                    key={i}
+                                                    style={[
+                                                        styles.indicatorDot,
+                                                        breakingIndex === i && styles.indicatorDotActive,
+                                                    ]}
+                                                />
+                                            ))}
+                                        </View>
+                                    </View>
+                                </View>
+                            </TouchableOpacity>
+                        ))}
+                    </ScrollView>
+                </View>
 
-                {/* 정렬 */}
+                {/* ═══ ② 소스타입 + 카테고리 탭 (라인형, sticky) ═══ */}
+                <View style={styles.stickyHeader}>
+                    {/* 상위 소스타입 탭 */}
+                    <View style={styles.sourceTypeRow}>
+                        {SOURCE_TYPES.map((type) => (
+                            <TouchableOpacity
+                                key={type}
+                                style={[
+                                    styles.sourceTypeTab,
+                                    selectedSourceType === type && styles.sourceTypeTabActive,
+                                ]}
+                                onPress={() => {
+                                    setSelectedSourceType(type);
+                                    setSelectedCategory('전체');
+                                }}
+                                activeOpacity={0.7}
+                            >
+                                <Text style={[
+                                    styles.sourceTypeTabText,
+                                    selectedSourceType === type && styles.sourceTypeTabTextActive,
+                                ]}>{type}</Text>
+                            </TouchableOpacity>
+                        ))}
+                    </View>
+                    {/* 세부 카테고리 탭 */}
+                    <ScrollView
+                        horizontal
+                        showsHorizontalScrollIndicator={false}
+                        contentContainerStyle={styles.categoryRowContent}
+                    >
+                        {availableCategories.map((cat) => (
+                            <TouchableOpacity
+                                key={cat}
+                                style={[
+                                    styles.categoryTab,
+                                    selectedCategory === cat && styles.categoryTabActive,
+                                ]}
+                                onPress={() => setSelectedCategory(cat)}
+                                activeOpacity={0.7}
+                            >
+                                <Text style={[
+                                    styles.categoryTabText,
+                                    selectedCategory === cat && styles.categoryTabTextActive,
+                                ]}>{cat}</Text>
+                            </TouchableOpacity>
+                        ))}
+                    </ScrollView>
+                </View>
+
+                {/* ═══ 정렬 ═══ */}
                 <View style={styles.sortRow}>
                     <TouchableOpacity
                         style={styles.sortBtn}
-                        onPress={() => {
-                            setSortOrder(sortOrder === '최신순' ? '인기순' : '최신순');
-                        }}
+                        onPress={() => setSortOrder(sortOrder === '최신순' ? '인기순' : '최신순')}
                     >
                         <Text style={styles.sortText}>{sortOrder}</Text>
-                        <Ionicons name="chevron-down" size={14} color="#888" />
+                        <Ionicons name="chevron-down" size={14} color="#999" />
                     </TouchableOpacity>
-
-                    <View style={styles.viewToggle}>
-                        <TouchableOpacity
-                            style={[styles.viewToggleBtn, viewMode === 'card' && styles.viewToggleBtnActive]}
-                            onPress={() => setViewMode('card')}
-                        >
-                            <Ionicons name="grid-outline" size={16} color={viewMode === 'card' ? '#1A1A1A' : '#ACACAC'} />
-                        </TouchableOpacity>
-                        <TouchableOpacity
-                            style={[styles.viewToggleBtn, viewMode === 'list' && styles.viewToggleBtnActive]}
-                            onPress={() => setViewMode('list')}
-                        >
-                            <Ionicons name="list-outline" size={16} color={viewMode === 'list' ? '#1A1A1A' : '#ACACAC'} />
-                        </TouchableOpacity>
-                    </View>
                 </View>
 
-                {/* ③ 뉴스 피드 리스트 */}
+                {/* ═══ ③ 뉴스 리스트 (리스트형) ═══ */}
                 {filteredNews.map((news) => (
-                    <TouchableOpacity key={news.id} onPress={() => router.push(`/news/${news.id}`)} activeOpacity={0.8}>
-                        <NewsCard
-                            category={news.category}
-                            title={news.title}
-                            summary={news.summary}
-                            date={news.date}
-                            imageUrl={news.imageUrl}
-                            viewMode={viewMode}
+                    <TouchableOpacity
+                        key={news.id}
+                        style={styles.listItem}
+                        activeOpacity={0.7}
+                        onPress={() => router.push(`/news/${news.id}`)}
+                    >
+                        <Image
+                            source={{ uri: news.imageUrl }}
+                            style={styles.listThumb}
+                            contentFit="cover"
+                            transition={200}
                         />
+                        <View style={styles.listContent}>
+                            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 4 }}>
+                                <Text style={[
+                                    styles.sourceTypeBadge,
+                                    news.sourceType === '코스모스' ? styles.cosmosBadge : styles.generativeBadge,
+                                ]}>{news.sourceType}</Text>
+                                <Text style={styles.listCategory}>{news.category}</Text>
+                            </View>
+                            <Text style={styles.listTitle} numberOfLines={2}>
+                                {news.title}
+                            </Text>
+                            <Text style={styles.listDate}>{news.date}</Text>
+                        </View>
                     </TouchableOpacity>
                 ))}
 
@@ -138,53 +228,35 @@ export default function TabOneScreen() {
                     </View>
                 )}
 
-                {/* 하단 여백 */}
-                <View style={{ height: 40 }} />
+                <View style={{ height: 100 }} />
             </ScrollView>
-        </SafeAreaView>
+        </View>
     );
 }
 
 const styles = StyleSheet.create({
     container: {
         flex: 1,
-        backgroundColor: '#F5F5F5',
+        backgroundColor: '#FFFFFF',
     },
-
-    // ── 헤더 ──
-    header: {
-        flexDirection: 'row',
-        justifyContent: 'space-between',
-        alignItems: 'center',
-        paddingHorizontal: 20,
-        paddingTop: 8,
-        paddingBottom: 12,
-        backgroundColor: '#F5F5F5',
-    },
-    headerTitle: {
-        fontSize: 24,
-        fontWeight: '700',
-        color: '#1A1A1A',
-    },
-    searchIconBtn: {
-        padding: 6,
-    },
-
     scrollContent: {
-        paddingHorizontal: 20,
+        paddingBottom: 20,
     },
 
-    // ── 검색 ──
-    searchContainer: {
-        marginBottom: 16,
+    // ═══ 검색창 ═══
+    searchBarWrap: {
+        backgroundColor: '#FFFFFF',
+        paddingHorizontal: 16,
+        paddingTop: 8,
+        paddingBottom: 10,
     },
-    searchInputWrap: {
+    searchBar: {
         flexDirection: 'row',
         alignItems: 'center',
-        backgroundColor: '#EBEBEB',
-        borderRadius: 10,
+        backgroundColor: '#F2F2F5',
+        borderRadius: 2,
         paddingHorizontal: 14,
-        height: 44,
+        height: 42,
     },
     searchInput: {
         flex: 1,
@@ -192,76 +264,191 @@ const styles = StyleSheet.create({
         color: '#1A1A1A',
         paddingVertical: 0,
     },
-    filterBtn: {
-        paddingLeft: 10,
-    },
 
-    // ── 카테고리 ──
-    categoryRow: {
-        marginBottom: 12,
-        maxHeight: 44,
+    // ═══ Breaking 뉴스 ═══
+    breakingSection: {
+        paddingBottom: 8,
     },
-    categoryRowContent: {
-        gap: 8,
+    breakingCard: {
+        width: SCREEN_WIDTH,
+        height: 420,
+        overflow: 'hidden',
     },
-    categoryChip: {
-        paddingHorizontal: 18,
-        paddingVertical: 8,
-        borderRadius: 20,
-        height: 36,
+    breakingImage: {
+        width: '100%',
+        height: '100%',
+        backgroundColor: '#DDD',
+    },
+    breakingOverlay: {
+        ...StyleSheet.absoluteFillObject,
+        justifyContent: 'space-between',
+        padding: 20,
+        paddingTop: 24,
+        paddingBottom: 28,
+        backgroundColor: 'rgba(0,0,0,0.35)',
+    },
+    breakingLabel: {
+        color: 'rgba(255,255,255,0.9)',
+        fontSize: 12,
+        fontWeight: '800',
+        letterSpacing: 3,
+        alignSelf: 'flex-start',
+    },
+    breakingCardTitle: {
+        color: '#FFFFFF',
+        fontSize: 26,
+        fontWeight: '800',
+        lineHeight: 34,
+        marginBottom: 8,
+    },
+    breakingCardSummary: {
+        color: 'rgba(255,255,255,0.6)',
+        fontSize: 13,
+        lineHeight: 19,
+    },
+    indicatorRow: {
+        flexDirection: 'row',
         justifyContent: 'center',
         alignItems: 'center',
+        gap: 6,
+        marginTop: 24,
     },
-    categoryChipActive: {
-        backgroundColor: '#1A1A1A',
+    indicatorDot: {
+        width: 6,
+        height: 6,
+        borderRadius: 3,
+        backgroundColor: 'rgba(255,255,255,0.35)',
     },
-    categoryChipInactive: {
-        backgroundColor: '#E8E8E8',
-    },
-    categoryChipText: {
-        fontSize: 13,
-        fontWeight: '600',
-    },
-    categoryChipTextActive: {
-        color: '#FFFFFF',
-    },
-    categoryChipTextInactive: {
-        color: '#666',
+    indicatorDotActive: {
+        backgroundColor: '#FFFFFF',
+        width: 24,
+        height: 4,
+        borderRadius: 2,
     },
 
-    // ── 정렬 ──
+    // ═══ 소스타입 탭 ═══
+    stickyHeader: {
+        backgroundColor: '#FFFFFF',
+        borderBottomWidth: 1,
+        borderBottomColor: '#ECECEC',
+    },
+    sourceTypeRow: {
+        flexDirection: 'row',
+        paddingHorizontal: 16,
+        borderBottomWidth: 1,
+        borderBottomColor: '#F0F0F0',
+    },
+    sourceTypeTab: {
+        paddingHorizontal: 14,
+        paddingVertical: 10,
+    },
+    sourceTypeTabActive: {
+        borderBottomWidth: 2,
+        borderBottomColor: '#1A1A1A',
+    },
+    sourceTypeTabText: {
+        fontSize: 13,
+        fontWeight: '600',
+        color: '#ACACAC',
+    },
+    sourceTypeTabTextActive: {
+        color: '#1A1A1A',
+        fontWeight: '700',
+    },
+    // ═══ 카테고리 탭 ═══
+    categoryRowContent: {
+        paddingHorizontal: 16,
+    },
+    categoryTab: {
+        paddingHorizontal: 14,
+        paddingVertical: 10,
+    },
+    categoryTabActive: {
+        borderBottomWidth: 2,
+        borderBottomColor: '#4A6CF7',
+    },
+    categoryTabText: {
+        fontSize: 12,
+        fontWeight: '500',
+        color: '#ACACAC',
+    },
+    categoryTabTextActive: {
+        color: '#4A6CF7',
+        fontWeight: '700',
+    },
+
+    // ═══ 정렬 ═══
     sortRow: {
         flexDirection: 'row',
-        justifyContent: 'flex-end',
-        marginBottom: 12,
+        justifyContent: 'flex-start',
+        paddingHorizontal: 16,
+        marginBottom: 4,
+        marginTop: 12,
     },
     sortBtn: {
         flexDirection: 'row',
         alignItems: 'center',
-        gap: 4,
+        gap: 3,
     },
     sortText: {
         fontSize: 13,
-        color: '#888',
+        color: '#999',
+        fontWeight: '500',
     },
 
-    // ── 보기모드 토글 ──
-    viewToggle: {
+    // ═══ 뉴스 리스트 ═══
+    listItem: {
         flexDirection: 'row',
-        backgroundColor: '#EBEBEB',
-        borderRadius: 8,
-        padding: 2,
-        gap: 2,
+        alignItems: 'center',
+        paddingHorizontal: 16,
+        paddingVertical: 14,
+        gap: 14,
+        backgroundColor: '#FFFFFF',
     },
-    viewToggleBtn: {
-        padding: 6,
-        borderRadius: 6,
+    listThumb: {
+        width: 72,
+        height: 72,
+        borderRadius: 2,
+        backgroundColor: '#E5E5E5',
     },
-    viewToggleBtnActive: {
-        backgroundColor: '#fff',
+    listContent: {
+        flex: 1,
+        justifyContent: 'center',
+    },
+    sourceTypeBadge: {
+        fontSize: 9,
+        fontWeight: '700',
+        paddingHorizontal: 5,
+        paddingVertical: 2,
+        borderRadius: 2,
+        overflow: 'hidden',
+    },
+    cosmosBadge: {
+        backgroundColor: '#E8F0FE',
+        color: '#1967D2',
+    },
+    generativeBadge: {
+        backgroundColor: '#F3E8FD',
+        color: '#8E24AA',
+    },
+    listCategory: {
+        fontSize: 11,
+        fontWeight: '700',
+        color: '#4A6CF7',
+    },
+    listTitle: {
+        fontSize: 14,
+        fontWeight: '600',
+        color: '#1A1A1A',
+        lineHeight: 20,
+        marginBottom: 4,
+    },
+    listDate: {
+        fontSize: 11,
+        color: '#ACACAC',
     },
 
-    // ── 빈 상태 ──
+    // ═══ 빈 상태 ═══
     emptyState: {
         paddingVertical: 60,
         alignItems: 'center',

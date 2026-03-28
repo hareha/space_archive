@@ -76,21 +76,21 @@ interface Territory {
 
 const MY_TERRITORIES: Territory[] = [
     // 북극 (60°~90°N) — 3구역
-    { id: 'T001', token: '1a2b3c4d', level: 15, lat: 72.5, lng: 15.3, area: '2.6', magCost: 4, occupiedDate: '2025.11.20', minerals: ['He-3', 'H₂O'], score: 94 },
-    { id: 'T002', token: '1a2b3c54', level: 15, lat: 70.8, lng: 16.1, area: '2.6', magCost: 4, occupiedDate: '2025.11.21', minerals: ['He-3'], score: 91 },
-    { id: 'T003', token: '1a2b3c5c', level: 15, lat: 74.2, lng: -30.5, area: '2.5', magCost: 4, occupiedDate: '2026.01.05', minerals: ['H₂O', 'FeO'], score: 88 },
-    // 북위 (0°~60°N) — 3구역
-    { id: 'T004', token: '3c4a1b2f', level: 15, lat: 0.67, lng: 23.47, area: '3.2', magCost: 4, occupiedDate: '2025.12.15', minerals: ['FeO', 'TiO₂'], score: 87 },
-    { id: 'T005', token: '3c4a1b34', level: 15, lat: 18.2, lng: -54.3, area: '3.1', magCost: 4, occupiedDate: '2026.01.10', minerals: ['TiO₂', 'MgO'], score: 72 },
-    { id: 'T006', token: '5a7f42e4', level: 15, lat: 45.6, lng: 88.2, area: '2.9', magCost: 4, occupiedDate: '2026.02.01', minerals: ['MgO'], score: 68 },
+    { id: 'T001', token: '25d45a3f', level: 16, lat: 73.0, lng: 16.2, area: '0.19', magCost: 4, occupiedDate: '2025.11.20', minerals: ['He-3', 'H₂O'], score: 94 },
+    { id: 'T002', token: '25d45a45', level: 16, lat: 71.4, lng: 15.8, area: '0.18', magCost: 4, occupiedDate: '2025.11.21', minerals: ['He-3'], score: 91 },
+    { id: 'T003', token: '27b1c8d3', level: 16, lat: 74.6, lng: -30.1, area: '0.17', magCost: 4, occupiedDate: '2026.01.05', minerals: ['H₂O', 'FeO'], score: 88 },
+    // 북위 (0°~60°N) — 3구역 (아폴로 11호 근처 등)
+    { id: 'T004', token: '4c5e7a19', level: 16, lat: 0.67, lng: 23.47, area: '0.23', magCost: 4, occupiedDate: '2025.12.15', minerals: ['FeO', 'TiO₂'], score: 87 },
+    { id: 'T005', token: '4d3f2b71', level: 16, lat: 18.2, lng: -54.3, area: '0.22', magCost: 4, occupiedDate: '2026.01.10', minerals: ['TiO₂', 'MgO'], score: 72 },
+    { id: 'T006', token: '5a7e9c03', level: 16, lat: 45.6, lng: 88.2, area: '0.20', magCost: 4, occupiedDate: '2026.02.01', minerals: ['MgO'], score: 68 },
     // 남위 (0°~60°S) — 3구역
-    { id: 'T007', token: '7b12d8a4', level: 15, lat: -21.3, lng: -16.6, area: '3.0', magCost: 4, occupiedDate: '2026.02.28', minerals: ['SiO₂', 'CaO'], score: 54 },
-    { id: 'T008', token: '7b12d8ac', level: 15, lat: -43.3, lng: -11.2, area: '2.8', magCost: 4, occupiedDate: '2026.03.05', minerals: ['Al₂O₃', 'FeO', 'U'], score: 93 },
-    { id: 'T009', token: '9d456f1c', level: 15, lat: -15.7, lng: 45.8, area: '3.1', magCost: 4, occupiedDate: '2026.03.08', minerals: ['TiO₂'], score: 70 },
-    // 남극 (60°~90°S) — 3구역
-    { id: 'T010', token: '9d456f24', level: 15, lat: -65.4, lng: -22.1, area: '2.5', magCost: 4, occupiedDate: '2026.03.10', minerals: ['H₂O', 'He-3'], score: 96 },
-    { id: 'T011', token: 'bc78ef12', level: 15, lat: -71.8, lng: 50.3, area: '2.4', magCost: 4, occupiedDate: '2026.03.11', minerals: ['H₂O'], score: 92 },
-    { id: 'T012', token: 'bc78ef1a', level: 15, lat: -75.2, lng: -80.6, area: '2.3', magCost: 4, occupiedDate: '2026.03.12', minerals: ['He-3', 'Al₂O₃'], score: 90 },
+    { id: 'T007', token: '89a4d6b5', level: 16, lat: -21.3, lng: -16.6, area: '0.22', magCost: 4, occupiedDate: '2026.02.28', minerals: ['SiO₂', 'CaO'], score: 54 },
+    { id: 'T008', token: '8b2c1e47', level: 16, lat: -43.3, lng: -11.2, area: '0.20', magCost: 4, occupiedDate: '2026.03.05', minerals: ['Al₂O₃', 'FeO', 'U'], score: 93 },
+    { id: 'T009', token: '9e3d7f29', level: 16, lat: -15.7, lng: 45.8, area: '0.22', magCost: 4, occupiedDate: '2026.03.08', minerals: ['TiO₂'], score: 70 },
+    // 남극 (60°~90°S) — 3구역 (Shackleton 근처 등)
+    { id: 'T010', token: 'b14a5c83', level: 16, lat: -65.4, lng: -22.1, area: '0.17', magCost: 4, occupiedDate: '2026.03.10', minerals: ['H₂O', 'He-3'], score: 96 },
+    { id: 'T011', token: 'b37e2d15', level: 16, lat: -71.8, lng: 50.3, area: '0.16', magCost: 4, occupiedDate: '2026.03.11', minerals: ['H₂O'], score: 92 },
+    { id: 'T012', token: 'b5c8f1a7', level: 16, lat: -75.2, lng: -80.6, area: '0.15', magCost: 4, occupiedDate: '2026.03.12', minerals: ['He-3', 'Al₂O₃'], score: 90 },
 ];
 
 // ─── 그룹 생성 ───
@@ -210,48 +210,18 @@ export default function MyTerritoriesScreen() {
                 <View style={styles.dashboard}>
                     <DashCell label="총 보유 구역" value={String(TOTAL_COUNT)} unit="구역" />
                     <View style={styles.dashDivider} />
-                    <DashCell label="점유 Mag" value={String(TOTAL_MAG)} unit="Mag" />
+                    <DashCell label="개척 Mag" value={String(TOTAL_MAG)} unit="Mag" />
                     <View style={styles.dashDivider} />
                     <DashCell label="총 면적" value={TOTAL_AREA.toFixed(1)} unit="km²" />
                 </View>
 
-                {/* ── 분류 기준 선택 + 뷰 토글 ── */}
+                {/* ── 분류 기준 (위경도만) ── */}
                 <View style={styles.controlRow}>
-                    {/* 분류 기준 */}
-                    <View style={styles.classifyToggle}>
-                        <TouchableOpacity
-                            style={[styles.classifyBtn, classify === 'quadrant' && styles.classifyBtnActive]}
-                            onPress={() => { setClassify('quadrant'); setExpandedKey(null); }}
-                        >
-                            <Text style={[styles.classifyText, classify === 'quadrant' && styles.classifyTextActive]}>위경도</Text>
-                        </TouchableOpacity>
-                        <TouchableOpacity
-                            style={[styles.classifyBtn, classify === 'face' && styles.classifyBtnActive]}
-                            onPress={() => { setClassify('face'); setExpandedKey(null); }}
-                        >
-                            <Text style={[styles.classifyText, classify === 'face' && styles.classifyTextActive]}>S2 Face</Text>
-                        </TouchableOpacity>
-                    </View>
-
-                    {/* 뷰 모드 */}
-                    <View style={styles.viewToggle}>
-                        <TouchableOpacity
-                            style={[styles.viewToggleBtn, viewMode === 'list' && styles.viewToggleBtnActive]}
-                            onPress={() => setViewMode('list')}
-                        >
-                            <Ionicons name="list" size={16} color={viewMode === 'list' ? '#fff' : '#999'} />
-                        </TouchableOpacity>
-                        <TouchableOpacity
-                            style={[styles.viewToggleBtn, viewMode === 'grid' && styles.viewToggleBtnActive]}
-                            onPress={() => setViewMode('grid')}
-                        >
-                            <Ionicons name="grid" size={16} color={viewMode === 'grid' ? '#fff' : '#999'} />
-                        </TouchableOpacity>
-                    </View>
+                    <Text style={{ fontSize: 13, fontWeight: '600', color: '#9E9E9E' }}>위경도 기준 분류</Text>
                 </View>
 
                 {/* ═══ 리스트 (아코디언) 뷰 ═══ */}
-                {viewMode === 'list' && groups.map(group => {
+                {groups.map(group => {
                     const isOwned = group.owned;
                     const isExpanded = expandedKey === group.def.key;
                     return (
@@ -268,7 +238,7 @@ export default function MyTerritoriesScreen() {
                                     {isOwned ? (
                                         <Text style={styles.groupMeta}>{group.items.length}구역 · {group.totalArea.toFixed(1)} km²</Text>
                                     ) : (
-                                        <Text style={styles.groupMetaDim}>미점유</Text>
+                                        <Text style={styles.groupMetaDim}>미개척</Text>
                                     )}
                                 </View>
                                 {isOwned && (
@@ -284,22 +254,10 @@ export default function MyTerritoriesScreen() {
                                     {group.items.map((t: Territory) => (
                                         <TouchableOpacity key={t.id} style={styles.compactRow} onPress={() => navigateToDetail(t)} activeOpacity={0.6}>
                                             <View style={[styles.compactColorBar, { backgroundColor: group.def.color }]} />
-                                            <View style={styles.rowLeft}>
-                                                <Text style={styles.rowToken}>{t.token}</Text>
-                                                <Text style={styles.rowCoord}>
-                                                    {Math.abs(t.lat).toFixed(2)}°{t.lat >= 0 ? 'N' : 'S'} {Math.abs(t.lng).toFixed(2)}°{t.lng >= 0 ? 'E' : 'W'}
-                                                </Text>
-                                            </View>
-                                            <View style={styles.rowMid}>
-                                                {t.minerals && t.minerals.slice(0, 2).map((m: string, i: number) => (
-                                                    <Text key={i} style={styles.rowMineral}>{m}</Text>
-                                                ))}
-                                            </View>
-                                            <View style={styles.rowRight}>
-                                                {t.score && <Text style={[styles.rowScore, { color: scoreColor(t.score) }]}>⚡{t.score}</Text>}
-                                                <Text style={styles.rowArea}>{t.area} km²</Text>
-                                            </View>
-                                            <Ionicons name="chevron-forward" size={14} color="#D0D0D0" />
+                                            <Text style={styles.rowToken}>{t.token}</Text>
+                                            <Text style={styles.rowCoord}>
+                                                {Math.abs(t.lat).toFixed(2)}°{t.lat >= 0 ? 'N' : 'S'} {Math.abs(t.lng).toFixed(2)}°{t.lng >= 0 ? 'E' : 'W'}
+                                            </Text>
                                         </TouchableOpacity>
                                     ))}
                                 </View>
@@ -308,43 +266,6 @@ export default function MyTerritoriesScreen() {
                     );
                 })}
 
-                {/* ═══ 그리드 뷰 (색상 = 구역 색상) ═══ */}
-                {viewMode === 'grid' && (
-                    <>
-                        <View style={styles.gridContainer}>
-                            {gridVisible.map(t => {
-                                const gColor = getGroupColor(t, classify);
-                                return (
-                                    <TouchableOpacity key={t.id} style={styles.gridTile} onPress={() => navigateToDetail(t)} activeOpacity={0.7}>
-                                        <View style={[styles.gridTileBar, { backgroundColor: gColor }]} />
-                                        <Text style={styles.gridTileToken} numberOfLines={1}>{t.token}</Text>
-                                        <Text style={styles.gridTileCoord} numberOfLines={1}>
-                                            {Math.abs(t.lat).toFixed(1)}°{t.lat >= 0 ? 'N' : 'S'}
-                                        </Text>
-                                        <Text style={styles.gridTileArea}>{t.area} km²</Text>
-                                        {t.score && <Text style={[styles.gridTileScore, { color: gColor }]}>⚡{t.score}</Text>}
-                                    </TouchableOpacity>
-                                );
-                            })}
-                        </View>
-                        {/* 범례 */}
-                        <View style={styles.legendRow}>
-                            {(classify === 'face' ? S2_FACES : LAT_BANDS).map(d => (
-                                <View key={d.key} style={styles.legendItem}>
-                                    <View style={[styles.legendDot, { backgroundColor: d.color }]} />
-                                    <Text style={styles.legendLabel}>{d.label}</Text>
-                                </View>
-                            ))}
-                        </View>
-                        <Text style={styles.gridCounter}>{gridVisible.length} / {MY_TERRITORIES.length}개 구역</Text>
-                    </>
-                )}
-
-                {/* ── 새 구역 점유 ── */}
-                <TouchableOpacity style={styles.addCard} onPress={() => router.push('/(tabs)')} activeOpacity={0.7}>
-                    <Ionicons name="add-circle-outline" size={18} color="#4A90D9" />
-                    <Text style={styles.addCardText}>새 구역 점유하기</Text>
-                </TouchableOpacity>
             </ScrollView>
 
             </SafeAreaView>
@@ -423,14 +344,14 @@ const styles = StyleSheet.create({
 
     // ── 컴팩트 행 ──
     compactRow: {
-        flexDirection: 'row', alignItems: 'center',
-        paddingVertical: 11, paddingLeft: 0, paddingRight: 4,
+        flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+        paddingVertical: 11, paddingLeft: 0, paddingRight: 12,
         borderTopWidth: 1, borderTopColor: '#F7F7F7',
     },
     compactColorBar: { width: 3, height: 32, borderRadius: 2, marginRight: 10 },
     rowLeft: { width: 106 },
-    rowToken: { fontSize: 13, fontWeight: '700', color: '#333', marginBottom: 2, fontFamily: 'monospace' },
-    rowCoord: { fontSize: 10, color: '#BDBDBD' },
+    rowToken: { fontSize: 13, fontWeight: '700', color: '#333', flex: 1, fontFamily: 'monospace' },
+    rowCoord: { fontSize: 12, color: '#BDBDBD' },
     rowMid: { flex: 1, flexDirection: 'row', gap: 6 },
     rowMineral: { fontSize: 11, color: '#9E9E9E', fontWeight: '500' },
     rowRight: { alignItems: 'flex-end', marginRight: 8 },

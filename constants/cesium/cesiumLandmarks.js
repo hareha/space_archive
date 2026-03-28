@@ -209,12 +209,11 @@ export const CESIUM_LANDMARKS = `
           if (landmarksLoaded) return;
           landmarksLoaded = true;
 
-          // 1. 대표 지형 50개: 라벨 + 중심점만 (오버레이는 선택 시에만)
+          // 1. 대표 지형 50개
           for (var i = 0; i < LANDMARK_SITES.length; i++) {
               var ls = LANDMARK_SITES[i];
               var typeColor = Cesium.Color.fromCssColorString(getTerrainTypeColor(ls.type));
 
-              // 라벨 + 중심점
               var tEntity = viewer.entities.add({
                   position: moonPos(ls.lat, ls.lng, 0),
                   point: {
@@ -223,7 +222,7 @@ export const CESIUM_LANDMARKS = `
                       outlineColor: Cesium.Color.BLACK.withAlpha(0.6),
                       outlineWidth: 1,
                       heightReference: Cesium.HeightReference.CLAMP_TO_GROUND,
-                      disableDepthTestDistance: 1500000,
+                      disableDepthTestDistance: Number.POSITIVE_INFINITY,
                       scaleByDistance: new Cesium.NearFarScalar(1000, 1.2, 1500000, 0.3),
                   },
                   label: {
@@ -236,7 +235,7 @@ export const CESIUM_LANDMARKS = `
                       heightReference: Cesium.HeightReference.CLAMP_TO_GROUND,
                       verticalOrigin: Cesium.VerticalOrigin.BOTTOM,
                       pixelOffset: new Cesium.Cartesian2(10, -4),
-                      disableDepthTestDistance: 1500000,
+                      disableDepthTestDistance: Number.POSITIVE_INFINITY,
                       scaleByDistance: new Cesium.NearFarScalar(1000, 1.0, 1500000, 0.15),
                       showBackground: true,
                       backgroundColor: new Cesium.Color(0, 0, 0, 0.7),
@@ -245,10 +244,12 @@ export const CESIUM_LANDMARKS = `
                   show: terrainVisible,
               });
               tEntity._lmId = ls.id;
+              tEntity._lmType = 'terrain';
+              tEntity._featureType = ls.type;
               terrainEntities.push(tEntity);
           }
 
-          // 2. 착륙지점 55개: 컬러 점 + 라벨
+          // 2. 착륙지점 55개
           for (var j = 0; j < LANDING_SITES.length; j++) {
               var site = LANDING_SITES[j];
               var dotColor = Cesium.Color.fromCssColorString(getCountryColor(site.country));
@@ -262,7 +263,7 @@ export const CESIUM_LANDMARKS = `
                       outlineColor: outlineCol,
                       outlineWidth: 2,
                       heightReference: Cesium.HeightReference.CLAMP_TO_GROUND,
-                      disableDepthTestDistance: 1500000,
+                      disableDepthTestDistance: Number.POSITIVE_INFINITY,
                       scaleByDistance: new Cesium.NearFarScalar(500, 1.5, 800000, 0.3),
                   },
                   label: {
@@ -276,7 +277,7 @@ export const CESIUM_LANDMARKS = `
                       verticalOrigin: Cesium.VerticalOrigin.CENTER,
                       horizontalOrigin: Cesium.HorizontalOrigin.LEFT,
                       pixelOffset: new Cesium.Cartesian2(12, 0),
-                      disableDepthTestDistance: 1500000,
+                      disableDepthTestDistance: Number.POSITIVE_INFINITY,
                       scaleByDistance: new Cesium.NearFarScalar(500, 1.0, 800000, 0.15),
                       showBackground: true,
                       backgroundColor: new Cesium.Color(0, 0, 0, 0.7),
@@ -285,8 +286,86 @@ export const CESIUM_LANDMARKS = `
                   show: landingSitesVisible,
               });
               sEntity._lmId = site.id;
+              sEntity._lmType = 'landing';
+              sEntity._country = site.country;
               landingEntities.push(sEntity);
           }
+
+          // 3. 달 뒤편 마커 숨김 + depthTest 동적 조정
+          //    카메라 높이에 따라 disableDepthTestDistance를 조절:
+          //    - 줌아웃(>300km): depthTest ON (0) → 뒷면 투시 방지
+          //    - 줌인(<50km): depthTest OFF (INFINITY) → 지형 파묻힘 방지
+          //    - 중간: 카메라 높이에 비례하는 값으로 보간
+          var _visFrame = 0;
+          viewer.scene.preRender.addEventListener(function() {
+              _visFrame++;
+              if (_visFrame % 3 !== 0) return;
+
+              var camPos = viewer.camera.positionWC;
+              var camMag = Cesium.Cartesian3.magnitude(camPos);
+              if (camMag < 1) return;
+
+              var camDirX = camPos.x / camMag;
+              var camDirY = camPos.y / camMag;
+              var camDirZ = camPos.z / camMag;
+
+              var moonR = Cesium.Ellipsoid.MOON.maximumRadius;
+              var camHeight = viewer.camera.positionCartographic.height;
+
+              // ── depthTest 거리 계산 ──
+              // 50km 이하: INFINITY (항상 보임, 지형에 안 파묻힘)
+              // 300km 이상: 0 (depthTest 완전 활성, 뒷면 안 보임)
+              // 50~300km: 카메라까지의 실제 거리로 설정 (가까운 것만 보임)
+              var depthDist;
+              if (camHeight < 50000) {
+                  depthDist = Number.POSITIVE_INFINITY;
+              } else if (camHeight > 200000) {
+                  depthDist = 0;
+              } else {
+                  var t = (camHeight - 50000) / 150000;
+                  depthDist = camMag * (1 - t);
+              }
+
+              // ── 가시성 threshold ──
+              // depthTest 이외에 완전히 뒤에 있는 마커를 숨김
+              // 0.05: ~87° (앞면만, 가장자리 약간 여유)
+              // -0.17: ~100° (수평선 약간 넘어까지)
+              var threshold;
+              if (camHeight < 100000) {
+                  threshold = 0.05;
+              } else if (camHeight > 500000) {
+                  threshold = -0.17;
+              } else {
+                  var tt = (camHeight - 100000) / 400000;
+                  threshold = 0.05 - 0.22 * tt;
+              }
+
+              function checkEntity(entity, baseVisible, filterArr, filterProp) {
+                  if (!baseVisible) { entity.show = false; return; }
+                  if (filterArr && filterArr.length > 0 && filterArr.indexOf(entity[filterProp]) === -1) {
+                      entity.show = false; return;
+                  }
+                  var pos = entity.position && entity.position.getValue
+                      ? entity.position.getValue(viewer.clock.currentTime)
+                      : entity.position;
+                  if (!pos) { entity.show = false; return; }
+                  var pMag = Cesium.Cartesian3.magnitude(pos);
+                  if (pMag < 1) { entity.show = false; return; }
+                  var dot = (camDirX * pos.x + camDirY * pos.y + camDirZ * pos.z) / pMag;
+                  entity.show = dot > threshold;
+
+                  // depthTest 동적 갱신
+                  if (entity.point) entity.point.disableDepthTestDistance = depthDist;
+                  if (entity.label) entity.label.disableDepthTestDistance = depthDist;
+              }
+
+              for (var ti = 0; ti < terrainEntities.length; ti++) {
+                  checkEntity(terrainEntities[ti], terrainVisible, window._terrainTypeFilter, '_featureType');
+              }
+              for (var si = 0; si < landingEntities.length; si++) {
+                  checkEntity(landingEntities[si], landingSitesVisible, window._landingCountryFilter, '_country');
+              }
+          });
       }
 
       // ── 전체 토글 (호환용) ──
@@ -299,18 +378,44 @@ export const CESIUM_LANDMARKS = `
           if (enabled) sendLandmarkList();
       }
 
-      // ── 착륙지만 토글 ──
-      function toggleLandingSites(enabled) {
+      // ── 착륙지만 토글 (countries: 필터 배열, 비어있으면 전체) ──
+      function toggleLandingSites(enabled, countries) {
           landingSitesVisible = enabled;
           if (!landmarksLoaded) { loadLandmarkModels(); sendLandmarkList(); }
-          for (var i = 0; i < landingEntities.length; i++) landingEntities[i].show = enabled;
+          var hasFilter = countries && countries.length > 0;
+          for (var i = 0; i < landingEntities.length; i++) {
+              if (!enabled) {
+                  landingEntities[i].show = false;
+              } else if (hasFilter) {
+                  landingEntities[i].show = countries.indexOf(landingEntities[i]._country) !== -1;
+              } else {
+                  landingEntities[i].show = true;
+              }
+          }
+          // 착륙지 필터 상태 저장 (preRender에서 사용)
+          window._landingCountryFilter = hasFilter ? countries : null;
+          // 3D 착륙선 모델도 토글
+          viewer.entities.values.forEach(function(entity) {
+              if (entity._isApolloModel) entity.show = enabled;
+          });
       }
 
-      // ── 지형만 토글 ──
-      function toggleTerrainFlags(enabled) {
+      // ── 지형만 토글 (types: 필터 배열, 비어있으면 전체) ──
+      function toggleTerrainFlags(enabled, types) {
           terrainVisible = enabled;
           if (!landmarksLoaded) { loadLandmarkModels(); sendLandmarkList(); }
-          for (var j = 0; j < terrainEntities.length; j++) terrainEntities[j].show = enabled;
+          var hasFilter = types && types.length > 0;
+          for (var j = 0; j < terrainEntities.length; j++) {
+              if (!enabled) {
+                  terrainEntities[j].show = false;
+              } else if (hasFilter) {
+                  terrainEntities[j].show = types.indexOf(terrainEntities[j]._featureType) !== -1;
+              } else {
+                  terrainEntities[j].show = true;
+              }
+          }
+          // 지형 필터 상태 저장 (preRender에서 사용)
+          window._terrainTypeFilter = hasFilter ? types : null;
       }
 
       // ── 선택된 지형 면적 오버레이 (ClassificationPrimitive) ──

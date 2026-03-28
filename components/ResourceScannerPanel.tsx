@@ -210,7 +210,14 @@ export default function ResourceScannerPanel({
                         <TouchableOpacity
                           key={key}
                           style={[styles.tab, isActive && styles.tabActive]}
-                          onPress={() => setActiveTab(key)}
+                          onPress={() => {
+                            setActiveTab(key);
+                            // 대메뉴 전환 시 해당 카테고리의 첫 번째 자원으로 자동 선택
+                            const firstResource = RESOURCE_CATEGORIES[key].resources[0];
+                            if (firstResource) {
+                              onSelectResource(firstResource.key);
+                            }
+                          }}
                           activeOpacity={0.7}
                         >
                           <Text style={[styles.tabText, isActive && styles.tabTextActive]}>
@@ -286,12 +293,33 @@ export default function ResourceScannerPanel({
                       const n = i / 39;
                       let hue: number, sat: number, light: number;
                       switch (activeResource) {
-                        case 'u': hue = 260 - 200 * n; sat = 90; light = 50; break;
-                        case 'th': hue = 240 * (1 - n); sat = 100; light = 50; break;
-                        case 'k': hue = 120 * (1 - n); sat = 100; light = 45; break;
-                        case 'feo': hue = 180 * (1 - n); sat = 100; light = 45; break;
-                        case 'tio2': hue = 180 + 120 * n; sat = 90; light = 50; break;
-                        default: hue = 240 * (1 - n); sat = 100; light = 50; break;
+                        // ── 일반 자원 (cesiumMaps.js getMineralColor 기준) ──
+                        case 'feo':   // 철: 초록(120) → 빨강(0)
+                          hue = 120 * (1 - n); sat = 100; light = 45; break;
+                        case 'tio2':  // 티타늄: 파랑(240) → 주황(30)
+                          hue = 240 - 210 * n; sat = 90; light = 50; break;
+                        case 'mgo':   // 마그네슘: 청록(180) → 노랑(60)
+                          hue = 180 - 120 * n; sat = 85; light = 45; break;
+                        case 'al2o3': // 알루미늄: 파랑(220) → 빨강(0)
+                          hue = 220 * (1 - n); sat = 90; light = 50; break;
+                        case 'sio2':  // 규소: 남색(250) → 초록(90)
+                          hue = 250 - 160 * n; sat = 80; light = 48; break;
+                        case 'cao':   // 칼슘: 자주(300) → 노랑(50)
+                          hue = 300 - 250 * n; sat = 85; light = 50; break;
+                        // ── 특수 자원 ──
+                        case 'k':     // 칼륨: 연두(90) → 빨강(0)
+                          hue = 90 * (1 - n); sat = 100; light = 42; break;
+                        case 'th':    // 토륨: 보라(270) → 노랑(50)
+                          hue = 270 - 220 * n; sat = 90; light = 50; break;
+                        case 'u':     // 우라늄: 청록(180) → 분홍(330)
+                          hue = (180 + 150 * n) % 360; sat = 85; light = 50; break;
+                        // ── 환경 (paintHeatmapPixels HSL 무지개) ──
+                        case 'neutron':      // 파랑(240) → 빨강(0)
+                        case 'thermalGrid':  // 파랑(240) → 빨강(0)
+                        case 'gravity':      // 파랑(240) → 빨강(0)
+                          hue = 240 * (1 - n); sat = 100; light = 50; break;
+                        default:
+                          hue = 240 * (1 - n); sat = 100; light = 50; break;
                       }
                       return <View key={i} style={{ flex: 1, backgroundColor: `hsl(${hue}, ${sat}%, ${light}%)` }} />;
                     })}
@@ -320,9 +348,8 @@ const styles = StyleSheet.create({
     position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, zIndex: 8,
   },
   toggleBtn: {
-    position: 'absolute', top: 12, left: 12, width: 42, height: 42,
-    borderRadius: 21, backgroundColor: 'rgba(0,0,0,0.6)',
-    borderWidth: 1, borderColor: 'rgba(255,255,255,0.15)',
+    position: 'absolute', top: 12, left: 12, width: 46, height: 46,
+    borderRadius: 8, backgroundColor: '#2A2D3E',
     justifyContent: 'center', alignItems: 'center',
   },
 

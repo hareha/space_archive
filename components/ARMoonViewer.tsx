@@ -166,8 +166,8 @@ export default function ARMoonViewer({ onClose }: Props) {
     const [showHistoricalMissions, setShowHistoricalMissions] = useState(false);
     const [apiError, setApiError] = useState<string | null>(null);
 
-    // 부드러운 AR 추적을 위해 센서 업데이트 속도 20ms
-    const deviceOrientation = useDeviceOrientation(20);
+    // AR 추적: 안정성과 반응성 균형 (50ms ≈ 20fps)
+    const deviceOrientation = useDeviceOrientation(50);
     const moonPosition = useMoonPosition(60000);
 
     // 애니메이션

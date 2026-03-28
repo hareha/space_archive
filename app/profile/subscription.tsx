@@ -129,23 +129,8 @@ export default function SubscriptionScreen() {
                             </Text>
                         </TouchableOpacity>
                     </View>
-
-                    {/* 진행 중인 프로모션 */}
-                    <Text style={styles.promoSubLabel}>진행 중인 프로모션</Text>
-                    <View style={styles.promoCard}>
-                        <Text style={styles.promoCardTitle}>첫 구매 2배 적립</Text>
-                        <Text style={styles.promoCardDesc}>
-                            첫 ell 구매 시 구매 ell의 2배 즉시 지급
-                        </Text>
-                        <Text style={styles.promoCardExpiry}>~2025.03.31 까지</Text>
-                    </View>
                 </View>
 
-                {/* 내 구역 관리 이동 */}
-                <TouchableOpacity style={styles.linkRow} activeOpacity={0.6}>
-                    <Text style={styles.linkText}>내 구역 관리로 이동</Text>
-                    <Ionicons name="arrow-forward" size={16} color="#4A90D9" />
-                </TouchableOpacity>
 
             </ScrollView>
 
@@ -192,14 +177,7 @@ export default function SubscriptionScreen() {
                             </View>
                         </View>
 
-                        {/* CTA */}
-                        <TouchableOpacity
-                            style={styles.modalCta}
-                            onPress={() => setShowPurchaseModal(false)}
-                            activeOpacity={0.7}
-                        >
-                            <Text style={styles.modalCtaText}>내 구역 관리로 이동 →</Text>
-                        </TouchableOpacity>
+
                     </View>
                 </View>
             </Modal>

@@ -3,6 +3,11 @@
 // ★ 스타일 통일: 모든 히트맵은 thermalGrid 방식 (nearest 샘플링 + 셀 경계선 + HSL 무지개 색상)
 
 export const CESIUM_MAPS = `
+      // 환경 자원별 마지막 범위 캐시 (toggle 시 MINERAL_STATS 재전송용)
+      var lastThermalRange = null;
+      var lastGravityRange = null;
+      var lastNeutronRange = null;
+
       // ==================================================
       // 공통 셰이더 소스 (thermalGrid 스타일 통일)
       // nearest 샘플링 + 셀 경계선(border darkening) + translucent
@@ -73,12 +78,14 @@ export const CESIUM_MAPS = `
       function paintHeatmapPixels(imgData, width, height, parsed, minVal, maxVal) {
         var data = imgData.data;
         var range = maxVal - minVal;
+        var scaleX = width / 360;
+        var scaleY = height / 180;
 
         for (var i = 0; i < parsed.length; i++) {
           var item = parsed[i];
           var lat = item.lat, lon = item.lon, val = item.val;
-          var y = Math.floor(90 - lat);
-          var x = Math.floor(lon + 180);
+          var y = Math.floor((90 - lat) * scaleY);
+          var x = Math.floor((lon + 180) * scaleX);
           if (y >= height) y = height - 1;
           if (x >= width) x = width - 1;
           if (y < 0) y = 0;
@@ -91,11 +98,17 @@ export const CESIUM_MAPS = `
           var hue = 240 * (1 - t);
           var rgb = hslToRgb(hue / 360, 1.0, 0.5);
 
-          var idx = (y * width + x) * 4;
-          data[idx] = rgb[0];
-          data[idx + 1] = rgb[1];
-          data[idx + 2] = rgb[2];
-          data[idx + 3] = 160;
+          // 1° 데이터를 scaleX × scaleY 픽셀로 채움 (x축 wraparound 처리)
+          for (var dy = 0; dy < scaleY && (y + dy) < height; dy++) {
+            for (var dx = 0; dx < scaleX; dx++) {
+              var px = (x + dx) % width;  // x축 경계 넘으면 wrap
+              var idx = ((y + dy) * width + px) * 4;
+              data[idx] = rgb[0];
+              data[idx + 1] = rgb[1];
+              data[idx + 2] = rgb[2];
+              data[idx + 3] = 160;
+            }
+          }
         }
       }
 
@@ -458,16 +471,12 @@ export const CESIUM_MAPS = `
       function renderThermalGridFromData() {
         if (!thermalGridCsvContent) return;
 
-        if (thermalGridPrimitive) {
-          viewer.scene.primitives.remove(thermalGridPrimitive);
-          thermalGridPrimitive = null;
-        }
-
         console.log('Rendering thermal grid data... Day Mode:', isDayTempMode);
         var lines = thermalGridCsvContent.split('\\n');
         
-        var width = 360;
-        var height = 180;
+        var width = 1440;
+        var height = 720;
+        var halfW = Math.floor(width / 2);
         var canvas = document.createElement('canvas');
         canvas.width = width;
         canvas.height = height;
@@ -497,14 +506,35 @@ export const CESIUM_MAPS = `
         paintHeatmapPixels(imgData, width, height, parsed, minTemp, maxTemp);
         ctx.putImageData(imgData, 0, 0);
 
-        thermalGridPrimitive = createUnifiedHeatmapSphere(canvas, 20000, showThermalGrid);
-        viewer.scene.primitives.add(thermalGridPrimitive);
+        if (highlightedEnvCell && highlightedEnvCell.filter === 'thermalGrid') {
+          drawEnvHighlightOnCanvas(ctx, width, height, halfW, highlightedEnvCell);
+        }
+        thermalGridParsed = parsed;
+        lastThermalRange = { min: Math.round(minTemp), max: Math.round(maxTemp) };
+
+        if (!thermalGridPrimitive) {
+          thermalGridPrimitive = createUnifiedHeatmapSphere(canvas, 20000, showThermalGrid);
+          viewer.scene.primitives.add(thermalGridPrimitive);
+        } else {
+          var dataUrl = canvas.toDataURL('image/png');
+          thermalGridPrimitive.appearance.material.uniforms.image = dataUrl;
+        }
+
+        sendToRN('MINERAL_STATS', {
+          filter: 'thermalGrid',
+          min: Math.round(minTemp),
+          max: Math.round(maxTemp),
+          unit: 'K'
+        });
       }
 
       function toggleThermalGrid(enabled) {
         showThermalGrid = enabled;
         if (thermalGridPrimitive) {
           thermalGridPrimitive.show = enabled;
+        }
+        if (enabled && lastThermalRange) {
+          sendToRN('MINERAL_STATS', { filter: 'thermalGrid', min: lastThermalRange.min, max: lastThermalRange.max, unit: 'K' });
         }
       }
 
@@ -520,11 +550,6 @@ export const CESIUM_MAPS = `
 
       function renderGravityMap() {
         if (!gravityCsvContent) return;
-
-        if (gravityPrimitive) {
-          viewer.scene.primitives.remove(gravityPrimitive);
-          gravityPrimitive = null;
-        }
 
         console.log('Rendering gravity anomaly map...');
         var lines = gravityCsvContent.split('\\n');
@@ -547,8 +572,9 @@ export const CESIUM_MAPS = `
 
         console.log('Gravity range:', minGrav, 'to', maxGrav, 'mGal,', parsed.length, 'points');
 
-        var width = 360;
-        var height = 180;
+        var width = 1440;
+        var height = 720;
+        var halfW = Math.floor(width / 2);
         var canvas = document.createElement('canvas');
         canvas.width = width;
         canvas.height = height;
@@ -559,16 +585,36 @@ export const CESIUM_MAPS = `
         paintHeatmapPixels(imgData, width, height, parsed, minGrav, maxGrav);
         ctx.putImageData(imgData, 0, 0);
 
-        gravityPrimitive = createUnifiedHeatmapSphere(canvas, 20000, showGravityMap);
-        viewer.scene.primitives.add(gravityPrimitive);
+        if (highlightedEnvCell && highlightedEnvCell.filter === 'gravity') {
+          drawEnvHighlightOnCanvas(ctx, width, height, halfW, highlightedEnvCell);
+        }
 
-        sendToRN('GRAVITY_RANGE', { min: Math.round(minGrav), max: Math.round(maxGrav) });
+        gravityParsed = parsed;
+        lastGravityRange = { min: Math.round(minGrav), max: Math.round(maxGrav) };
+
+        if (!gravityPrimitive) {
+          gravityPrimitive = createUnifiedHeatmapSphere(canvas, 20000, showGravityMap);
+          viewer.scene.primitives.add(gravityPrimitive);
+        } else {
+          var dataUrl = canvas.toDataURL('image/png');
+          gravityPrimitive.appearance.material.uniforms.image = dataUrl;
+        }
+
+        sendToRN('MINERAL_STATS', {
+          filter: 'gravity',
+          min: Math.round(minGrav),
+          max: Math.round(maxGrav),
+          unit: 'mGal'
+        });
       }
 
       function toggleGravityMap(enabled) {
         showGravityMap = enabled;
         if (gravityPrimitive) {
           gravityPrimitive.show = enabled;
+        }
+        if (enabled && lastGravityRange) {
+          sendToRN('MINERAL_STATS', { filter: 'gravity', min: lastGravityRange.min, max: lastGravityRange.max, unit: 'mGal' });
         }
       }
 
@@ -589,11 +635,6 @@ export const CESIUM_MAPS = `
 
       function renderNeutronMap() {
         if (!neutronCsvContent) return;
-
-        if (neutronPrimitive) {
-          viewer.scene.primitives.remove(neutronPrimitive);
-          neutronPrimitive = null;
-        }
 
         var minVal = Infinity, maxVal = -Infinity;
         var parsed = [];
@@ -618,8 +659,9 @@ export const CESIUM_MAPS = `
 
         console.log('Neutron range:', minVal, 'to', maxVal, ', Total points:', parsed.length);
 
-        var width = 360;
-        var height = 180;
+        var width = 1440;
+        var height = 720;
+        var halfW = Math.floor(width / 2);
         var canvas = document.createElement('canvas');
         canvas.width = width;
         canvas.height = height;
@@ -630,10 +672,27 @@ export const CESIUM_MAPS = `
         paintHeatmapPixels(imgData, width, height, parsed, minVal, maxVal);
         ctx.putImageData(imgData, 0, 0);
 
-        neutronPrimitive = createUnifiedHeatmapSphere(canvas, 20000, showNeutronMap);
-        viewer.scene.primitives.add(neutronPrimitive);
+        if (highlightedEnvCell && highlightedEnvCell.filter === 'neutron') {
+          drawEnvHighlightOnCanvas(ctx, width, height, halfW, highlightedEnvCell);
+        }
 
-        sendToRN('NEUTRON_RANGE', { min: Math.round(minVal), max: Math.round(maxVal) });
+        neutronParsed = parsed;
+        lastNeutronRange = { min: Math.round(minVal), max: Math.round(maxVal) };
+
+        if (!neutronPrimitive) {
+          neutronPrimitive = createUnifiedHeatmapSphere(canvas, 20000, showNeutronMap);
+          viewer.scene.primitives.add(neutronPrimitive);
+        } else {
+          var dataUrl = canvas.toDataURL('image/png');
+          neutronPrimitive.appearance.material.uniforms.image = dataUrl;
+        }
+
+        sendToRN('MINERAL_STATS', {
+          filter: 'neutron',
+          min: Math.round(minVal),
+          max: Math.round(maxVal),
+          unit: 'count/s'
+        });
       }
 
       function toggleNeutronMap(enabled) {
@@ -641,10 +700,56 @@ export const CESIUM_MAPS = `
         if (neutronPrimitive) {
           neutronPrimitive.show = enabled;
         }
+        if (enabled && lastNeutronRange) {
+          sendToRN('MINERAL_STATS', { filter: 'neutron', min: lastNeutronRange.min, max: lastNeutronRange.max, unit: 'count/s' });
+        }
       }
 
       function toggleNeutronGridMode(enabled) {
         neutronGridMode = enabled;
         // 통일 스타일에서는 항상 그리드가 켜져있으므로 이 함수는 호환성 유지용
       }
+
+      // ==================================================
+      // 환경 셀 하이라이트 (캔버스 기반 — 광물과 동일 방식)
+      // ==================================================
+
+      function drawEnvHighlightOnCanvas(ctx, width, height, halfW, hc) {
+        var clickCanvasX = (hc.clickLon + 180) * (width / 360);
+        var clickCanvasY = (90 - hc.clickLat) * (height / 180);
+        var gridCellW = width / 360;   // 1440/360 = 4px
+        var gridCellH = height / 180;  // 720/180 = 4px
+        var hx = Math.floor(clickCanvasX / gridCellW) * gridCellW;
+        var hy = Math.floor(clickCanvasY / gridCellH) * gridCellH;
+
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.55)';
+        ctx.fillRect(hx, hy, gridCellW, gridCellH);
+        ctx.strokeStyle = 'rgba(0, 255, 255, 0.9)';
+        ctx.lineWidth = 1;
+        ctx.strokeRect(hx + 0.5, hy + 0.5, gridCellW - 1, gridCellH - 1);
+      }
+
+      function highlightEnvCell(filter, clickLat, clickLon) {
+        highlightedEnvCell = { filter: filter, clickLat: clickLat, clickLon: clickLon };
+        if (envHighlightEntity) {
+          viewer.entities.remove(envHighlightEntity);
+          envHighlightEntity = null;
+        }
+        if (filter === 'thermalGrid') renderThermalGridFromData();
+        else if (filter === 'gravity') renderGravityMap();
+        else if (filter === 'neutron') renderNeutronMap();
+      }
+
+      function clearEnvHighlight() {
+        var prevFilter = highlightedEnvCell ? highlightedEnvCell.filter : null;
+        highlightedEnvCell = null;
+        if (envHighlightEntity) {
+          viewer.entities.remove(envHighlightEntity);
+          envHighlightEntity = null;
+        }
+        if (prevFilter === 'thermalGrid') renderThermalGridFromData();
+        else if (prevFilter === 'gravity') renderGravityMap();
+        else if (prevFilter === 'neutron') renderNeutronMap();
+      }
+
 `;

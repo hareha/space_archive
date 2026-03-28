@@ -176,7 +176,7 @@ export const CESIUM_GRID = `
           var token = s2.cellid.toToken(pid);
           var entry = { parentPrims: [], childPrims: [], hitPrims: [] };
           var PARENT_COLOR = Cesium.Color.WHITE.withAlpha(0.25);
-          var ACTIVE_COLOR = new Cesium.Color(0.15, 0.45, 0.95, 0.35);
+          var ACTIVE_COLOR = Cesium.Color.WHITE.withAlpha(0.2);
 
           // 부모 아웃라인
           var pInst = buildOutlineInstances([pid], PARENT_COLOR, lastCellId, lineWidth);
@@ -191,65 +191,46 @@ export const CESIUM_GRID = `
 
           // 자식 그리드
           var children = getDescendants(pid, targetLevel);
-          if (currentLevel === 12) {
-              var THICK_COLOR = new Cesium.Color(0.15, 0.45, 0.95, 0.5);
-              var THIN_COLOR = new Cesium.Color(0.15, 0.45, 0.95, 0.2);
-              var l15 = getDescendants(pid, 15);
-              var thickI = buildThickOutline(l15, lineWidth);
-              if (thickI.length > 0) {
-                  var tp = new Cesium.ClassificationPrimitive({
-                      geometryInstances: thickI,
-                      appearance: new Cesium.PerInstanceColorAppearance({ flat: true, translucent: true }),
-                      classificationType: Cesium.ClassificationType.CESIUM_3D_TILE, asynchronous: true
-                  });
-                  pillarPrimitives.add(tp); entry.childPrims.push(tp);
-              }
-              var thinI = buildOutlineInstances(children, THIN_COLOR, null, lineWidth);
-              // [최적화] 3레벨(12->16) 얇은 자식선 생략으로 버벅임 완충
-              // 256개 ClassificationPrimitive 연산을 없앰
-              if (false && thinI.length > 0) {
-                  var tnp = new Cesium.ClassificationPrimitive({
-                      geometryInstances: thinI,
-                      appearance: new Cesium.PerInstanceColorAppearance({ flat: true, translucent: true }),
-                      classificationType: Cesium.ClassificationType.CESIUM_3D_TILE, asynchronous: true
-                  });
-                  pillarPrimitives.add(tnp); entry.childPrims.push(tnp);
-              }
-          } else {
-              var cI = buildOutlineInstances(children, ACTIVE_COLOR, null, lineWidth);
-              if (cI.length > 0) {
-                  var cp = new Cesium.ClassificationPrimitive({
-                      geometryInstances: cI,
-                      appearance: new Cesium.PerInstanceColorAppearance({ flat: true, translucent: true }),
-                      classificationType: Cesium.ClassificationType.CESIUM_3D_TILE, asynchronous: true
-                  });
-                  pillarPrimitives.add(cp); entry.childPrims.push(cp);
-              }
+          var cI = buildOutlineInstances(children, ACTIVE_COLOR, null, lineWidth);
+          if (cI.length > 0) {
+              var cp = new Cesium.ClassificationPrimitive({
+                  geometryInstances: cI,
+                  appearance: new Cesium.PerInstanceColorAppearance({ flat: true, translucent: true }),
+                  classificationType: Cesium.ClassificationType.CESIUM_3D_TILE, asynchronous: true
+              });
+              pillarPrimitives.add(cp); entry.childPrims.push(cp);
           }
 
-          // 점유 셀
+          // 점유 셀 (내 땅: 녹색, 남 땅: 적색)
           if (typeof occupiedTokens !== 'undefined' && occupiedTokens.length > 0) {
-              var OCC_COLOR = new Cesium.Color(0.9, 0.25, 0.15, 0.45);
-              var occI = [];
+              var MY_OCC_COLOR = new Cesium.Color(0.15, 0.75, 0.35, 0.35);
+              var OTHER_OCC_COLOR = new Cesium.Color(0.9, 0.25, 0.15, 0.3);
+              var myOccI = [];
+              var otherOccI = [];
               children.forEach(function(cid) {
-                  if (occupiedTokens.indexOf(s2.cellid.toToken(cid)) === -1) return;
+                  var tk = s2.cellid.toToken(cid);
+                  if (occupiedTokens.indexOf(tk) === -1) return;
                   var oC = s2.Cell.fromCellID(cid), oP = [];
                   for (var i = 0; i < 4; i++) { var v = oC.vertex(i), vr = Math.sqrt(v.x**2+v.y**2+v.z**2);
                       oP.push(Cesium.Cartesian3.fromRadians(Math.atan2(v.y,v.x),Math.asin(v.z/vr),0,Cesium.Ellipsoid.MOON)); }
-                  occI.push(new Cesium.GeometryInstance({ geometry: new Cesium.PolygonGeometry({
+                  var isMine = (typeof myOccupiedTokens !== 'undefined') && myOccupiedTokens.indexOf(tk) !== -1;
+                  var inst = new Cesium.GeometryInstance({ geometry: new Cesium.PolygonGeometry({
                       polygonHierarchy: new Cesium.PolygonHierarchy(oP), ellipsoid: Cesium.Ellipsoid.MOON,
                       height: -15000, extrudedHeight: 15000, granularity: Cesium.Math.toRadians(10) }),
-                      attributes: { color: Cesium.ColorGeometryInstanceAttribute.fromColor(OCC_COLOR) } }));
+                      attributes: { color: Cesium.ColorGeometryInstanceAttribute.fromColor(isMine ? MY_OCC_COLOR : OTHER_OCC_COLOR) } });
+                  if (isMine) myOccI.push(inst); else otherOccI.push(inst);
               });
-              if (occI.length > 0) {
-                  var op = new Cesium.ClassificationPrimitive({ geometryInstances: occI,
-                      appearance: new Cesium.PerInstanceColorAppearance({ flat: true, translucent: true }),
-                      classificationType: Cesium.ClassificationType.CESIUM_3D_TILE, asynchronous: true });
-                  pillarPrimitives.add(op); entry.childPrims.push(op);
-              }
+              [myOccI, otherOccI].forEach(function(arr) {
+                  if (arr.length > 0) {
+                      var op = new Cesium.ClassificationPrimitive({ geometryInstances: arr,
+                          appearance: new Cesium.PerInstanceColorAppearance({ flat: true, translucent: true }),
+                          classificationType: Cesium.ClassificationType.CESIUM_3D_TILE, asynchronous: true });
+                      pillarPrimitives.add(op); entry.childPrims.push(op);
+                  }
+              });
           }
 
-          // 히트박스
+          // 히트박스 — 항상 L16(children) 단위
           var hitI = [];
           children.forEach(function(cid) {
               var hC = s2.Cell.fromCellID(cid), hP = [];
@@ -297,6 +278,11 @@ export const CESIUM_GRID = `
           if (entry.colorPrim) {
               try { pillarPrimitives.remove(entry.colorPrim); } catch(e) {}
           }
+          if (entry.colorPrims) {
+              entry.colorPrims.forEach(function(cp) {
+                  try { pillarPrimitives.remove(cp); } catch(e) {}
+              });
+          }
           delete _occRendered[token];
       }
 
@@ -314,74 +300,61 @@ export const CESIUM_GRID = `
               var occMap = buildOccupationMapM1(targetLevel);
               var levelDiff = 16 - targetLevel;
               var maxSubCells = Math.pow(4, levelDiff);
-              var colorInstances = [];
               children.forEach(function(cid) {
                   var cnt = occMap[s2.cellid.toToken(cid)] || 0;
                   if (cnt > 0) {
-                      var hc = s2.Cell.fromCellID(cid);
-                      var center = hc.center();
-                      var cr = Math.sqrt(center.x*center.x+center.y*center.y+center.z*center.z);
-                      var labelPos = Cesium.Cartesian3.fromRadians(
-                          Math.atan2(center.y, center.x), Math.asin(center.z / cr), 0, Cesium.Ellipsoid.MOON
-                      );
-                      entry.entities.push(viewer.entities.add({
-                          position: labelPos,
-                          label: {
-                              text: cnt.toString(), font: 'bold 12px sans-serif',
-                              fillColor: Cesium.Color.WHITE, outlineColor: Cesium.Color.BLACK, outlineWidth: 3,
-                              style: Cesium.LabelStyle.FILL_AND_OUTLINE,
-                              horizontalOrigin: Cesium.HorizontalOrigin.CENTER, verticalOrigin: Cesium.VerticalOrigin.CENTER,
-                              heightReference: Cesium.HeightReference.CLAMP_TO_GROUND,
-                              disableDepthTestDistance: Number.POSITIVE_INFINITY,
-                              scaleByDistance: new Cesium.NearFarScalar(5000, 1.0, 500000, 0.3),
-                          }
-                      }));
                       var ratio = Math.min(cnt / maxSubCells, 1.0);
+                      // 색상: 비율에 따라 녹→황→적, alpha로 진함 표현
                       var fillR = ratio < 0.5 ? ratio * 2 : 1.0;
                       var fillG = ratio < 0.5 ? 1.0 : 1.0 - (ratio - 0.5) * 2;
-                      var fillColor = new Cesium.Color(fillR, fillG, 0.1, 0.15 + ratio * 0.15);
+                      var fillColor = new Cesium.Color(fillR, fillG, 0.1, 0.15 + ratio * 0.25);
                       var cellObj = s2.Cell.fromCellID(cid); var cPos = [];
                       for (var vi = 0; vi < 4; vi++) {
                           var v = cellObj.vertex(vi); var vr = Math.sqrt(v.x**2+v.y**2+v.z**2);
                           cPos.push(Cesium.Cartesian3.fromRadians(Math.atan2(v.y,v.x), Math.asin(v.z/vr), 0, Cesium.Ellipsoid.MOON));
                       }
-                      colorInstances.push(new Cesium.GeometryInstance({
-                          geometry: new Cesium.PolygonGeometry({
-                              polygonHierarchy: new Cesium.PolygonHierarchy(cPos), ellipsoid: Cesium.Ellipsoid.MOON,
-                              height: -15000, extrudedHeight: 15000, granularity: Math.PI
+                      var cp = new Cesium.ClassificationPrimitive({
+                          geometryInstances: new Cesium.GeometryInstance({
+                              geometry: new Cesium.PolygonGeometry({
+                                  polygonHierarchy: new Cesium.PolygonHierarchy(cPos), ellipsoid: Cesium.Ellipsoid.MOON,
+                                  height: -15000, extrudedHeight: 15000, granularity: Math.PI
+                              }),
+                              attributes: { color: Cesium.ColorGeometryInstanceAttribute.fromColor(fillColor) }
                           }),
-                          attributes: { color: Cesium.ColorGeometryInstanceAttribute.fromColor(fillColor) }
-                      }));
+                          appearance: new Cesium.PerInstanceColorAppearance({ flat: true, translucent: true }),
+                          classificationType: Cesium.ClassificationType.CESIUM_3D_TILE, asynchronous: true
+                      });
+                      pillarPrimitives.add(cp);
+                      if (!entry.colorPrims) entry.colorPrims = [];
+                      entry.colorPrims.push(cp);
                   }
               });
-              if (colorInstances.length > 0) {
-                  entry.colorPrim = new Cesium.ClassificationPrimitive({
-                      geometryInstances: colorInstances,
-                      appearance: new Cesium.PerInstanceColorAppearance({ flat: true, translucent: true }),
-                      classificationType: Cesium.ClassificationType.CESIUM_3D_TILE, asynchronous: true
-                  });
-                  pillarPrimitives.add(entry.colorPrim);
-              }
           } else {
+              // L16: 점유 셀 (내 땅: 녹색, 남 땅: 적색)
               children.forEach(function(cid) {
-                  if (occupiedTokens.indexOf(s2.cellid.toToken(cid)) !== -1) {
-                      var hc = s2.Cell.fromCellID(cid); var center = hc.center();
-                      var cr = Math.sqrt(center.x*center.x+center.y*center.y+center.z*center.z);
-                      var labelPos = Cesium.Cartesian3.fromRadians(
-                          Math.atan2(center.y, center.x), Math.asin(center.z / cr), 0, Cesium.Ellipsoid.MOON
-                      );
-                      entry.entities.push(viewer.entities.add({
-                          position: labelPos,
-                          label: {
-                              text: '✓', font: 'bold 10px sans-serif',
-                              fillColor: new Cesium.Color(1, 0.3, 0.2, 0.9), outlineColor: Cesium.Color.BLACK, outlineWidth: 2,
-                              style: Cesium.LabelStyle.FILL_AND_OUTLINE,
-                              horizontalOrigin: Cesium.HorizontalOrigin.CENTER, verticalOrigin: Cesium.VerticalOrigin.CENTER,
-                              heightReference: Cesium.HeightReference.CLAMP_TO_GROUND,
-                              disableDepthTestDistance: Number.POSITIVE_INFINITY,
-                              scaleByDistance: new Cesium.NearFarScalar(500, 1.0, 50000, 0.3),
-                          }
-                      }));
+                  var tk = s2.cellid.toToken(cid);
+                  if (occupiedTokens.indexOf(tk) !== -1) {
+                      var isMine = (typeof myOccupiedTokens !== 'undefined') && myOccupiedTokens.indexOf(tk) !== -1;
+                      var occColor = isMine ? new Cesium.Color(0.15, 0.75, 0.35, 0.35) : new Cesium.Color(0.9, 0.25, 0.15, 0.3);
+                      var cellObj = s2.Cell.fromCellID(cid); var cPos = [];
+                      for (var vi = 0; vi < 4; vi++) {
+                          var v = cellObj.vertex(vi); var vr = Math.sqrt(v.x**2+v.y**2+v.z**2);
+                          cPos.push(Cesium.Cartesian3.fromRadians(Math.atan2(v.y,v.x), Math.asin(v.z/vr), 0, Cesium.Ellipsoid.MOON));
+                      }
+                      var cp = new Cesium.ClassificationPrimitive({
+                          geometryInstances: new Cesium.GeometryInstance({
+                              geometry: new Cesium.PolygonGeometry({
+                                  polygonHierarchy: new Cesium.PolygonHierarchy(cPos), ellipsoid: Cesium.Ellipsoid.MOON,
+                                  height: -15000, extrudedHeight: 15000, granularity: Math.PI
+                              }),
+                              attributes: { color: Cesium.ColorGeometryInstanceAttribute.fromColor(occColor) }
+                          }),
+                          appearance: new Cesium.PerInstanceColorAppearance({ flat: true, translucent: true }),
+                          classificationType: Cesium.ClassificationType.CESIUM_3D_TILE, asynchronous: true
+                      });
+                      pillarPrimitives.add(cp);
+                      if (!entry.colorPrims) entry.colorPrims = [];
+                      entry.colorPrims.push(cp);
                   }
               });
           }
@@ -390,10 +363,12 @@ export const CESIUM_GRID = `
 
       // 증분 업데이트: 기존 셀 유지 + 새 셀 추가 + 안 보이는 셀 제거
       function updateDynamicGrid() {
+          // 모드1(occupation) 전용 — test1/test2에서는 실행하지 않음
+          if (typeof mainMode !== 'undefined' && (mainMode === 'test1' || mainMode === 'test2' || mainMode === 'test3')) return;
           var lastCellId = selectionStack.length === 0 ? null : selectionStack[selectionStack.length - 1];
           if (!lastCellId) return;
           var currentLevel = s2.cellid.level(lastCellId);
-          if (currentLevel === 0 || currentLevel >= 16) return;
+          if (currentLevel === 0 || currentLevel >= 15) return;
 
           var parentLevel = currentLevel;
           var targetLevel = currentLevel + 4;
@@ -443,35 +418,53 @@ export const CESIUM_GRID = `
       // ═══════════════════════════════════════════════════
       // render() — 그리드 렌더링 진입점 (클릭/줌 완료 시)
       // ═══════════════════════════════════════════════════
-      function render(syncMode) {
+      function render(syncMode, forceRebuild) {
+          // 모드1(occupation) 전용 — test1/test2에서는 렌더링하지 않음
+          if (typeof mainMode !== 'undefined' && (mainMode === 'test1' || mainMode === 'test2' || mainMode === 'test3')) return;
           var lastCellId = selectionStack.length === 0 ? null : selectionStack[selectionStack.length - 1];
           var currentLevel = lastCellId ? s2.cellid.level(lastCellId) : 0;
 
-          // 항상 parent outlines + hitboxes 클리어 (lv0 polyline 즉시 제거)
-          parentPrimitives.removeAll();
-          if (typeof gridPrimitives !== 'undefined') gridPrimitives.removeAll();
-          // _renderedCells의 parent/hit 참조 무효화
-          Object.keys(_renderedCells).forEach(function(token) {
-              _renderedCells[token].parentPrims = [];
-              _renderedCells[token].hitPrims = [];
-          });
-
+          // 0단계/15+단계/exploration: 즉시 전체 클리어 (이전과 동일)
           if (typeof mainMode !== 'undefined' && mainMode === 'exploration') {
+              parentPrimitives.removeAll();
+              if (typeof gridPrimitives !== 'undefined') gridPrimitives.removeAll();
               if (typeof pillarPrimitives !== 'undefined') pillarPrimitives.removeAll();
               clearRenderedCells();
               clearAllOccRendered();
               return;
           }
 
-          if (currentLevel === 0 || currentLevel >= 16) {
+          if (currentLevel === 0 || currentLevel >= 15) {
+              parentPrimitives.removeAll();
+              if (typeof gridPrimitives !== 'undefined') gridPrimitives.removeAll();
+              Object.keys(_renderedCells).forEach(function(token) {
+                  _renderedCells[token].parentPrims = [];
+                  _renderedCells[token].hitPrims = [];
+              });
               if (typeof pillarPrimitives !== 'undefined') pillarPrimitives.removeAll();
               clearRenderedCells();
               renderLine(syncMode);
               return;
           }
-          // 1~3단계: pillarPrimitives 유지 (자식 그리드 보이는 상태)
-          // flyToCell 완료 후 onFlightDone이 증분 업데이트
-          updateUI();
+
+          // 1~3단계
+          // forceRebuild이거나, _renderedCells가 비어있으면(0→1 단계전환 등) 전체 재빌드
+          var needsRebuild = forceRebuild || Object.keys(_renderedCells).length === 0;
+          if (needsRebuild) {
+              parentPrimitives.removeAll();
+              if (typeof gridPrimitives !== 'undefined') gridPrimitives.removeAll();
+              Object.keys(_renderedCells).forEach(function(token) {
+                  _renderedCells[token].parentPrims = [];
+                  _renderedCells[token].hitPrims = [];
+              });
+              pillarPrimitives.removeAll();
+              clearRenderedCells();
+              clearAllOccRendered();
+              updateDynamicGrid();
+          } else {
+              // 같은 단계 내 CELL_CLICKED → flyToCell 경로: 부모 유지, updateUI만
+              updateUI();
+          }
       }
 
       // ═══════════════════════════════════════════════════
@@ -482,7 +475,7 @@ export const CESIUM_GRID = `
           const currentLevel = lastCellId ? s2.cellid.level(lastCellId) : 0;
 
           // 0단계/16단계만 parentPrimitives 클리어 (1~3단계는 증분 업데이트가 관리)
-          if (currentLevel === 0 || currentLevel >= 16) {
+          if (currentLevel === 0 || currentLevel >= 15) {
               parentPrimitives.removeAll();
           }
           var displayedCellCount = 0;
@@ -542,7 +535,7 @@ export const CESIUM_GRID = `
           }
 
           // ═══ 16단계: 단일 셀 면 채우기 ═══
-          if (currentLevel >= 16) {
+          if (currentLevel >= 15) {
               var cell16 = s2.Cell.fromCellID(lastCellId);
               var pos16 = [];
               for (var vi = 0; vi < 4; vi++) { var v = cell16.vertex(vi), vr = Math.sqrt(v.x**2+v.y**2+v.z**2);
@@ -593,7 +586,7 @@ export const CESIUM_GRID = `
 
       // L15 그룹 굵은 아웃라인 인스턴스 배열
       function buildThickOutline(groupCells, lineWidth) {
-          var THICK_COLOR = new Cesium.Color(0.15, 0.45, 0.95, 0.5);
+          var THICK_COLOR = Cesium.Color.WHITE.withAlpha(0.4);
           var instances = [];
           groupCells.forEach(function(gid) {
               var gCell = s2.Cell.fromCellID(gid), gcc = gCell.center();
@@ -627,6 +620,7 @@ export const CESIUM_GRID = `
           var cLonDeg = Cesium.Math.toDegrees(cLon).toFixed(4);
           var cLatDeg = Cesium.Math.toDegrees(cLat).toFixed(4);
           var token = s2.cellid.toToken(lastCellId);
+          var cellLevel = s2.cellid.level(lastCellId);
           var seed = parseInt(token.substring(0, 6), 16) || 0;
           var feo = (((seed * 7 + 13) % 100) / 10).toFixed(1);
           var tio2 = (((seed * 3 + 7) % 50) / 10).toFixed(1);
@@ -636,10 +630,11 @@ export const CESIUM_GRID = `
           sendToRN('CELL_SELECTED', {
               cellId: token, token: token,
               lat: parseFloat(cLatDeg), lng: parseFloat(cLonDeg),
-              level: 16, childLevel: 16,
-              unit: '1 Block = 1 Mag', magCount: 1, magTokens: [token],
+              level: cellLevel, childLevel: 16,
+              unit: '1 Block = 1 Mag',
+              magCount: 1, magTokens: [token],
               minerals: { feo: feo + '%', tio2: tio2 + '%', waterIce: waterIce + '%', surfaceTemp: tempK + 'K' },
-              price: '$' + price, area: '~0.8 km\u00B2'
+              price: '$' + price, area: '~0.8 km²'
           });
       }
 
@@ -649,11 +644,7 @@ export const CESIUM_GRID = `
       function flyToCell(targetCellId, onMidFlight) {
           if (currentAnimFrame) { cancelAnimationFrame(currentAnimFrame); currentAnimFrame = null; }
           _isFlying = true;
-          // 부모 굵은선 즉시 제거 (줌인 시 자연스러운 전환)
-          parentPrimitives.removeAll();
-          Object.keys(_renderedCells).forEach(function(token) {
-              _renderedCells[token].parentPrims = [];
-          });
+          // 부모 아웃라인은 유지 → onFlightDone의 지연 제거에서 자연스럽게 전환
           const cell = s2.Cell.fromCellID(targetCellId);
           const center = cell.center();
           const r = Math.sqrt(center.x ** 2 + center.y ** 2 + center.z ** 2);
@@ -668,12 +659,12 @@ export const CESIUM_GRID = `
           if (level === 0) baseHeight = 3500000;
           else if (level <= 4) baseHeight = 250000;
           else if (level <= 8) baseHeight = 15000;
-          else if (level <= 12) baseHeight = 1000;
-          else if (level >= 16) baseHeight = 100;
+          else if (level <= 12) baseHeight = 600;
+          else if (level >= 15) baseHeight = 50;
           else baseHeight = 1500;
 
           const targetHeight = Math.max(baseHeight, surfaceHeight + baseHeight);
-          var latOffset = (level >= 16) ? Cesium.Math.toRadians(0.00116) : 0;
+          var latOffset = (level >= 15) ? Cesium.Math.toRadians(0.00116) : 0;
           const targetPosition = Cesium.Cartesian3.fromRadians(lon, lat - latOffset, targetHeight, Cesium.Ellipsoid.MOON);
           const startPosition = Cesium.Cartesian3.clone(viewer.camera.position);
           const startHeading = viewer.camera.heading, startPitch = viewer.camera.pitch;
@@ -737,9 +728,11 @@ export const CESIUM_GRID = `
       viewer.camera.percentageChanged = 0.01; // 초기값
       viewer.camera.changed.addEventListener(function() {
           if (_isFlying || _isTransitioning) return;
+          // 모드1(occupation) 전용 — test1/test2에서는 카메라 추적하지 않음
+          if (typeof mainMode !== 'undefined' && mainMode !== 'occupation') return;
           var lastCellId = selectionStack.length === 0 ? null : selectionStack[selectionStack.length - 1];
           var currentLevel = lastCellId ? s2.cellid.level(lastCellId) : 0;
-          if (currentLevel === 0 || currentLevel >= 16) return;
+          if (currentLevel === 0 || currentLevel >= 15) return;
           if (_camDebounceTimer) clearTimeout(_camDebounceTimer);
           _camDebounceTimer = setTimeout(function() {
               _camDebounceTimer = null;

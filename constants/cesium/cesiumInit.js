@@ -39,6 +39,7 @@ export const CESIUM_INIT = `
       let showThermalGrid = false;
       let thermalGridDataLoaded = false;
       let thermalGridCsvContent = null;
+      let thermalGridParsed = []; // 파싱된 환경 데이터 (1도)
       let isDayTempMode = true;
 
       // --- Gravity Anomaly Map ---
@@ -46,6 +47,7 @@ export const CESIUM_INIT = `
       let showGravityMap = false;
       let gravityDataLoaded = false;
       let gravityCsvContent = null;
+      let gravityParsed = []; // 파싱된 중력 데이터 (1도)
       let gravityGridMode = false;
 
       // --- Neutron (Hydrogen) Map ---
@@ -53,7 +55,10 @@ export const CESIUM_INIT = `
       let showNeutronMap = false;
       let neutronDataLoaded = false;
       let neutronCsvContent = null;
+      let neutronParsed = []; // 파싱된 중성자 데이터 (1도)
       let neutronGridMode = false;
+      let highlightedEnvCell = null; // 환경 하이라이트 셀
+      let envHighlightEntity = null; // 환경 셀 하이라이트 Entity (별도)
 
       const viewer = new Cesium.Viewer('cesiumContainer', {
         globe: new Cesium.Globe(moonEllipsoid),
@@ -387,6 +392,10 @@ export const CESIUM_INIT = `
 
       function resetExplorer() {
         if (currentAnimFrame) { cancelAnimationFrame(currentAnimFrame); currentAnimFrame = null; }
+        // TR(테스트2모드) 전용 리소스 정리
+        if (typeof _spreadAnimFrame !== 'undefined' && _spreadAnimFrame) { cancelAnimationFrame(_spreadAnimFrame); _spreadAnimFrame = null; }
+        if (typeof stopCameraTracking === 'function') stopCameraTracking();
+        if (typeof _isFlyingTo !== 'undefined') _isFlyingTo = false;
         selectionStack = [];
         currentZoomLevel = 0;
         lastRenderedDepth = 0;
@@ -399,21 +408,84 @@ export const CESIUM_INIT = `
         if (typeof plGridPrimitives !== 'undefined' && plGridPrimitives) plGridPrimitives.removeAll();
         // TR primitive도 정리
         if (typeof trGridPrimitives !== 'undefined' && trGridPrimitives) trGridPrimitives.removeAll();
-        if (mainMode === 'occupation3') {
+        if (mainMode === 'test2') {
             renderTerrain();
-        } else if (mainMode === 'occupation2') {
+        } else if (mainMode === 'test1') {
             renderPolyline();
         } else {
             render();
         }
         updateUI();
         sendToRN('CELL_DESELECTED', {});
+        // lookAt 해제 (테스트2모드에서 필요)
+        try { viewer.camera.lookAtTransform(Cesium.Matrix4.IDENTITY); } catch(e) {}
+        // 진행 중인 카메라 비행 중단 후 초기 뷰로 이동
+        viewer.camera.cancelFlight();
         if(moonTileset) viewer.camera.flyToBoundingSphere(moonTileset.boundingSphere, { duration: 1.0 });
+      }
+
+      function resetAndFlyTo(lat, lng) {
+        console.log('[Init] resetAndFlyTo called:', lat, lng);
+        // 1. 애니메이션 프레임 정리
+        if (currentAnimFrame) { cancelAnimationFrame(currentAnimFrame); currentAnimFrame = null; }
+        // TR(테스트2모드) 전용 리소스 정리
+        if (typeof _spreadAnimFrame !== 'undefined' && _spreadAnimFrame) { cancelAnimationFrame(_spreadAnimFrame); _spreadAnimFrame = null; }
+        if (typeof stopCameraTracking === 'function') stopCameraTracking();
+        if (typeof _isFlyingTo !== 'undefined') _isFlyingTo = false;
+        // 2. 상태 초기화
+        selectionStack = [];
+        currentZoomLevel = 0;
+        lastRenderedDepth = 0;
+        // 3. 프리미티브 정리
+        parentPrimitives.removeAll();
+        pillarPrimitives.removeAll();
+        selectionPrimitives.removeAll();
+        window.selectionPrimMap = {};
+        window.multiSelectedL16 = [];
+        if (typeof plGridPrimitives !== 'undefined' && plGridPrimitives) plGridPrimitives.removeAll();
+        if (typeof trGridPrimitives !== 'undefined' && trGridPrimitives) trGridPrimitives.removeAll();
+        // 4. 모드별 그리드 재렌더
+        if (mainMode === 'test2') {
+            renderTerrain();
+        } else if (mainMode === 'test1') {
+            renderPolyline();
+        } else {
+            render();
+        }
+        updateUI();
+        sendToRN('CELL_DESELECTED', {});
+        // 5. lookAt 해제 (테스트2모드에서 필요)
+        try { viewer.camera.lookAtTransform(Cesium.Matrix4.IDENTITY); } catch(e) {}
+        // 6. 진행 중인 카메라 비행 중단
+        viewer.camera.cancelFlight();
+        // 7. 지정 위치로 이동 (flyToBoundingSphere 없이 바로)
+        var _mr = Cesium.Ellipsoid.MOON.maximumRadius;
+        var dest = Cesium.Cartesian3.fromRadians(
+            Cesium.Math.toRadians(lng),
+            Cesium.Math.toRadians(lat),
+            _mr + 50000,
+            Cesium.Ellipsoid.MOON
+        );
+        viewer.camera.flyTo({
+            destination: dest,
+            orientation: {
+                heading: 0,
+                pitch: Cesium.Math.toRadians(-60),
+                roll: 0
+            },
+            duration: 2.0
+        });
+        console.log('[Init] resetAndFlyTo flyTo started to:', lat, lng);
       }
 
       function goBack() {
         if (selectionStack.length === 0) return;
         window.multiSelectedL16 = [];
+        // 셀 선택 하이라이트 정리
+        if (typeof selectionPrimitives !== 'undefined' && selectionPrimitives) {
+            selectionPrimitives.removeAll();
+        }
+        window.selectionPrimMap = {};
         var wasBlockLevel = s2.cellid.level(selectionStack[selectionStack.length - 1]) >= 15;
         selectionStack.pop();
         lastRenderedDepth = 0;
@@ -421,9 +493,9 @@ export const CESIUM_INIT = `
 
         if (selectionStack.length > 0) {
           // 아직 뎁스가 남아있으면 해당 모드별 렌더링
-          if (mainMode === 'occupation3') {
+          if (mainMode === 'test2') {
               renderTerrain();
-          } else if (mainMode === 'occupation2') {
+          } else if (mainMode === 'test1') {
               renderPolyline();
           } else {
               render();
@@ -432,10 +504,12 @@ export const CESIUM_INIT = `
           if (wasBlockLevel) {
               sendToRN('CELL_DESELECTED', {});
           }
-          if (mainMode === 'occupation3') {
-              var backLevel = s2.cellid.level(selectionStack[selectionStack.length - 1]);
-              flyToCellTR(selectionStack[selectionStack.length - 1], backLevel >= 8);
-          } else if (mainMode === 'occupation2') {
+          if (mainMode === 'test2') {
+              flyToCellTR(selectionStack[selectionStack.length - 1], function() {
+                  renderDynamicGrid();
+                  startCameraTracking();
+              });
+          } else if (mainMode === 'test1') {
               flyToCellPL(selectionStack[selectionStack.length - 1]);
           } else {
               flyToCell(selectionStack[selectionStack.length - 1]);
@@ -444,33 +518,20 @@ export const CESIUM_INIT = `
           // 스택이 완전히 비었 → 초기화면으로 복귀
           // terrain/polyline 애니메이션 정리
           if (currentAnimFrame) { cancelAnimationFrame(currentAnimFrame); currentAnimFrame = null; }
-          // 일반 그리드로 초기화
-          render();
+          // 모드별 그리드로 초기화
+          if (mainMode === 'test2') {
+              renderTerrain();
+          } else if (mainMode === 'test1') {
+              renderPolyline();
+          } else {
+              render();
+          }
           updateUI();
           sendToRN('CELL_DESELECTED', {});
           // lookAt 해제 후 현재 방향 유지하면서 줌아웃
           try { viewer.camera.lookAtTransform(Cesium.Matrix4.IDENTITY); } catch(e) {}
-          // 현재 카메라가 바라보는 지점 기준으로 높이만 올림
-          var camPos = viewer.camera.positionCartographic;
-          if (camPos) {
-            var _mr = Cesium.Ellipsoid.MOON.maximumRadius;
-            var dest = Cesium.Cartesian3.fromRadians(
-              camPos.longitude, camPos.latitude,
-              _mr * 2.5,
-              Cesium.Ellipsoid.MOON
-            );
-            viewer.camera.flyTo({
-              destination: dest,
-              orientation: {
-                heading: viewer.camera.heading,
-                pitch: Cesium.Math.toRadians(-90),
-                roll: 0
-              },
-              duration: 1.2
-            });
-          } else if (moonTileset) {
-            viewer.camera.flyToBoundingSphere(moonTileset.boundingSphere, { duration: 1.0 });
-          }
+          viewer.camera.cancelFlight();
+          if (moonTileset) viewer.camera.flyToBoundingSphere(moonTileset.boundingSphere, { duration: 1.0 });
         }
       }
 `;

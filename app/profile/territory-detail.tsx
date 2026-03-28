@@ -7,6 +7,7 @@ import { useRouter, useLocalSearchParams } from 'expo-router';
 import { Text } from '@/components/Themed';
 import { Ionicons } from '@expo/vector-icons';
 import { WebView } from 'react-native-webview';
+import ARSurfaceViewer from '@/components/ARSurfaceViewer';
 import { createCesiumHtml } from '@/constants/cesium/CesiumHtml';
 
 const { width } = Dimensions.get('window');
@@ -37,7 +38,22 @@ const MINERAL_INFO: Record<string, { name: string; icon: string; color: string; 
     'CaO': { name: '칼슘', icon: '🦴', color: '#FFCC80', desc: '시멘트, 건설 자재' },
     'Al₂O₃': { name: '알루미늄', icon: '🪶', color: '#90CAF9', desc: '경량 구조재' },
     'U': { name: '우라늄', icon: '☢️', color: '#EF5350', desc: '원자력 에너지' },
+    'Th': { name: '토륨', icon: '🟠', color: '#FF8A65', desc: '방사성 열원' },
+    'K': { name: '칼륨', icon: '🟣', color: '#BA68C8', desc: '방사성 원소' },
+    'Na₂O': { name: '나트륨', icon: '🟡', color: '#FFD54F', desc: '광물 성분' },
+    'Cr₂O₃': { name: '크롬', icon: '⚙️', color: '#78909C', desc: '내열 합금' },
+    'MnO': { name: '망간', icon: '🔘', color: '#A1887F', desc: '철강 체련' },
 };
+
+// 위경도 기반 결정적 수치 생성 (seed hash)
+function getResourceValue(lat: number, lng: number, resourceKey: string): number {
+    const seed = Math.abs(lat * 1000 + lng * 100 + resourceKey.charCodeAt(0) * 7 + resourceKey.length * 13);
+    const hash = ((seed * 2654435761) >>> 0) % 10000;
+    return parseFloat((hash / 500).toFixed(1)); // 0.0 ~ 20.0 wt%
+}
+
+const ALL_RESOURCES = Object.keys(MINERAL_INFO);
+const DEFAULT_VISIBLE = 5;
 
 // 보유 기간 계산
 function daysSince(dateStr: string): number {
@@ -77,7 +93,7 @@ export default function TerritoryDetailScreen() {
     const territory: Territory = useMemo(() => ({
         id: params.token || '',
         token: params.token || '',
-        level: Number(params.level) || 15,
+        level: Number(params.level) || 16,
         lat: Number(params.lat) || 0,
         lng: Number(params.lng) || 0,
         area: params.area || '0',
@@ -88,7 +104,8 @@ export default function TerritoryDetailScreen() {
     }), [params]);
 
     const days = daysSince(territory.occupiedDate);
-    const sc = territory.score || 0;
+    const [resourceExpanded, setResourceExpanded] = useState(false);
+    const [showARSurface, setShowARSurface] = useState(false);
 
     useEffect(() => {
         Animated.timing(fadeAnim, { toValue: 1, duration: 600, useNativeDriver: true }).start();
@@ -99,15 +116,11 @@ export default function TerritoryDetailScreen() {
         const flyScript = `
             (function() {
                 var attempts = 0;
-                var maxAttempts = 60; // 30초간 재시도
+                var maxAttempts = 60;
                 function waitAndFly() {
                     attempts++;
-                    if (attempts > maxAttempts) {
-                        console.log('[Detail] Gave up waiting for tileset');
-                        return;
-                    }
-                    // viewer와 tileset 모두 준비될 때까지 대기
-                    if (!window.viewer || !window.tilesetReady) {
+                    if (attempts > maxAttempts) return;
+                    if (!window.viewer || !window.tilesetReady || !window.s2) {
                         setTimeout(waitAndFly, 500);
                         return;
                     }
@@ -115,68 +128,57 @@ export default function TerritoryDetailScreen() {
                     var viewer = window.viewer;
                     var lat = ${territory.lat};
                     var lng = ${territory.lng};
+                    var token = '${territory.token}';
                     var latRad = Cesium.Math.toRadians(lat);
                     var lngRad = Cesium.Math.toRadians(lng);
                     
-                    // 모든 자동 회전 완전 차단
                     window._autoRotate = false;
-                    var origRotate = viewer.camera.rotate.bind(viewer.camera);
-                    viewer.camera.rotate = function() {}; // 자동 회전 no-op
+                    viewer.camera.rotate = function() {};
                     
-                    // Moon Ellipsoid 기반 좌표 계산
-                    var moonRadius = Cesium.Ellipsoid.MOON.maximumRadius;
-                    var altitude = 3000; // 3km 상공
-                    var r = moonRadius + altitude;
+                    // S2 셀 ID 구하기: 위경도 → S2 Point → CellId → L16 parent
                     var cosLat = Math.cos(latRad);
+                    var sinLat = Math.sin(latRad);
+                    var cosLng = Math.cos(lngRad);
+                    var sinLng = Math.sin(lngRad);
+                    var s2Point = new s2.Point(cosLat * cosLng, cosLat * sinLng, sinLat);
+                    var leafId = s2.cellid.fromPoint(s2Point);
+                    var cellId = s2.cellid.parent(leafId, ${territory.level});
+                    var cell = s2.Cell.fromCellID(cellId);
+                    
+                    // 4개 vertex 추출 → Cesium Cartesian3 (달 표면)
+                    var moonR = Cesium.Ellipsoid.MOON.maximumRadius;
+                    var polyPositions = [];
+                    for (var i = 0; i < 4; i++) {
+                        var v = cell.vertex(i);
+                        var r = Math.sqrt(v.x*v.x + v.y*v.y + v.z*v.z);
+                        var vLon = Math.atan2(v.y, v.x);
+                        var vLat = Math.asin(v.z / r);
+                        polyPositions.push(Cesium.Cartesian3.fromRadians(vLon, vLat, 0, Cesium.Ellipsoid.MOON));
+                    }
+                    
+                    // 카메라: 셀 중심 1km 상공에서 수직 하강 뷰
+                    var center = cell.center();
+                    var cR = Math.sqrt(center.x*center.x + center.y*center.y + center.z*center.z);
+                    var cLon = Math.atan2(center.y, center.x);
+                    var cLat = Math.asin(center.z / cR);
+                    var altitude = 10000;
+                    var destR = moonR + altitude;
                     var dest = new Cesium.Cartesian3(
-                        r * cosLat * Math.cos(lngRad),
-                        r * cosLat * Math.sin(lngRad),
-                        r * Math.sin(latRad)
+                        destR * Math.cos(cLat) * Math.cos(cLon),
+                        destR * Math.cos(cLat) * Math.sin(cLon),
+                        destR * Math.sin(cLat)
                     );
                     
-                    // 표면 기준점 (법선 벡터 계산용)
-                    var surfR = moonRadius;
-                    var surfPoint = new Cesium.Cartesian3(
-                        surfR * cosLat * Math.cos(lngRad),
-                        surfR * cosLat * Math.sin(lngRad),
-                        surfR * Math.sin(latRad)
-                    );
-                    
-                    // 카메라 이동 (거의 수직으로 내려다봄)
                     viewer.camera.flyTo({
                         destination: dest,
-                        orientation: {
-                            heading: 0,
-                            pitch: Cesium.Math.toRadians(-80),
-                            roll: 0
-                        },
+                        orientation: { heading: 0, pitch: Cesium.Math.toRadians(-85), roll: 0 },
                         duration: 1.5,
                         complete: function() {
-                            console.log('[Detail] Camera flyTo complete');
+                            console.log('[Detail] Camera flyTo complete - S2 L${territory.level} cell');
                         }
                     });
                     
-                    // 셀 하이라이트 (L15 ≈ 약 0.005°)
-                    var d = 0.004;
-                    var polyPositions = [];
-                    var corners = [
-                        [lng - d, lat - d],
-                        [lng + d, lat - d],
-                        [lng + d, lat + d],
-                        [lng - d, lat + d]
-                    ];
-                    corners.forEach(function(c) {
-                        var cLatR = Cesium.Math.toRadians(c[1]);
-                        var cLngR = Cesium.Math.toRadians(c[0]);
-                        var cCosLat = Math.cos(cLatR);
-                        polyPositions.push(new Cesium.Cartesian3(
-                            surfR * cCosLat * Math.cos(cLngR),
-                            surfR * cCosLat * Math.sin(cLngR),
-                            surfR * Math.sin(cLatR)
-                        ));
-                    });
-                    
-                    // 반투명 채움
+                    // 반투명 채움 (S2 셀 영역)
                     viewer.entities.add({
                         polygon: {
                             hierarchy: new Cesium.PolygonHierarchy(polyPositions),
@@ -188,7 +190,7 @@ export default function TerritoryDetailScreen() {
                         }
                     });
                     
-                    // 외곽선 강조
+                    // 외곽선 강조 (닫힌 루프)
                     var linePositions = polyPositions.concat([polyPositions[0]]);
                     viewer.entities.add({
                         polyline: {
@@ -198,9 +200,8 @@ export default function TerritoryDetailScreen() {
                         }
                     });
                     
-                    console.log('[Detail] Highlight added at', lat, lng);
+                    console.log('[Detail] S2 cell highlight:', s2.cellid.toToken(cellId), 'at', lat, lng);
                 }
-                // 시작 (1초 후부터 시도)
                 setTimeout(waitAndFly, 1000);
             })();
             true;
@@ -260,17 +261,15 @@ export default function TerritoryDetailScreen() {
                 contentContainerStyle={styles.contentInner}
                 showsVerticalScrollIndicator={false}
             >
-                {/* ── 토큰 + 직접관리 뱃지 ── */}
+                {/* ── MAG ID + 면적/위경도 (개척모드 셀 카드와 동일) ── */}
                 <View style={styles.tokenSection}>
                     <View style={{ flex: 1 }}>
-                        <Text style={styles.tokenId}>{territory.token}</Text>
-                        <Text style={styles.tokenSub}>
-                            L{territory.level} · {territory.area} km²
+                        <Text style={styles.tokenId}>
+                            {'MAG-L' + territory.level + '-' + territory.token}
                         </Text>
-                    </View>
-                    <View style={styles.manageBadge}>
-                        <View style={styles.manageDot} />
-                        <Text style={styles.manageText}>직접 관리</Text>
+                        <Text style={styles.tokenSub}>
+                            {'면적: ' + territory.area + ' km²  ·  ' + Math.abs(territory.lat).toFixed(2) + '°' + (territory.lat >= 0 ? 'N' : 'S') + ' ' + Math.abs(territory.lng).toFixed(2) + '°' + (territory.lng >= 0 ? 'E' : 'W')}
+                        </Text>
                     </View>
                 </View>
 
@@ -279,9 +278,9 @@ export default function TerritoryDetailScreen() {
 
                 {/* ── 소유 정보 ── */}
                 <View style={styles.sectionCard}>
-                    <Text style={styles.sectionTitle}>소유 정보</Text>
+                    <Text style={styles.sectionTitle}>개척 정보</Text>
                     <View style={styles.infoRow}>
-                        <Text style={styles.infoLabel}>점유일</Text>
+                        <Text style={styles.infoLabel}>개척일</Text>
                         <Text style={styles.infoValue}>{territory.occupiedDate}</Text>
                     </View>
                     <View style={styles.infoDivider} />
@@ -294,82 +293,51 @@ export default function TerritoryDetailScreen() {
                     </View>
                     <View style={styles.infoDivider} />
                     <View style={styles.infoRow}>
-                        <Text style={styles.infoLabel}>점유 비용</Text>
+                        <Text style={styles.infoLabel}>개척 비용</Text>
                         <Text style={styles.infoValue}>{territory.magCost} Mag</Text>
                     </View>
-                    <View style={styles.infoDivider} />
-                    <View style={styles.infoRow}>
-                        <Text style={styles.infoLabel}>구성</Text>
-                        <Text style={styles.infoValue}>L16 × 4셀 번들</Text>
-                    </View>
+
+
                 </View>
 
-                {/* ── 자원 잠재 가치 ── */}
-                {sc > 0 && (
-                    <View style={styles.sectionCard}>
-                        <View style={styles.scoreTitleRow}>
-                            <Text style={styles.sectionTitle}>자원 잠재 가치</Text>
-                            <View style={[styles.scoreLabelBadge, { backgroundColor: scoreColor(sc) + '18' }]}>
-                                <Text style={[styles.scoreLabelText, { color: scoreColor(sc) }]}>{scoreLabel(sc)}</Text>
-                            </View>
-                        </View>
-                        <View style={styles.scoreDisplay}>
-                            <Text style={[styles.scoreBig, { color: scoreColor(sc) }]}>{sc}</Text>
-                            <Text style={styles.scoreMax}>/100</Text>
-                        </View>
-                        <View style={styles.scoreBarBg}>
-                            <Animated.View style={[styles.scoreBarFill, {
-                                width: `${sc}%`,
-                                backgroundColor: scoreColor(sc),
-                            }]} />
-                        </View>
-                    </View>
-                )}
-
-                {/* ── 자원 현황 ── */}
-                {territory.minerals && territory.minerals.length > 0 && (
-                    <View style={styles.sectionCard}>
-                        <Text style={styles.sectionTitle}>자원 현황</Text>
-                        {territory.minerals.map((m, i) => {
-                            const info = MINERAL_INFO[m];
-                            // 시뮬레이션 농도 (wt%)
-                            const concentration = (Math.random() * 20 + 2).toFixed(1);
-                            const barWidth = Math.min(parseFloat(concentration) * 4, 100);
-                            return (
-                                <View key={i} style={styles.mineralRow}>
-                                    <View style={styles.mineralLeft}>
-                                        <Text style={styles.mineralIcon}>{info?.icon || '🔬'}</Text>
-                                        <View>
-                                            <Text style={styles.mineralFormula}>{m}</Text>
-                                            <Text style={styles.mineralName}>{info?.name || '미확인'}</Text>
-                                        </View>
-                                    </View>
-                                    <View style={styles.mineralRight}>
-                                        <View style={styles.mineralBarBg}>
-                                            <View style={[styles.mineralBarFill, { width: `${barWidth}%`, backgroundColor: info?.color || '#999' }]} />
-                                        </View>
-                                        <Text style={styles.mineralPct}>{concentration} wt%</Text>
+                {/* ── 자원 현황 (전체 노출, 접기/펼치기) ── */}
+                <View style={styles.sectionCard}>
+                    <Text style={styles.sectionTitle}>자원 현황</Text>
+                    {ALL_RESOURCES.slice(0, resourceExpanded ? ALL_RESOURCES.length : DEFAULT_VISIBLE).map((m, i) => {
+                        const info = MINERAL_INFO[m];
+                        const concentration = getResourceValue(territory.lat, territory.lng, m);
+                        const barWidth = Math.min(concentration * 4, 100);
+                        return (
+                            <View key={i} style={styles.mineralRow}>
+                                <View style={styles.mineralLeft}>
+                                    <Text style={styles.mineralIcon}>{info?.icon || '🔬'}</Text>
+                                    <View>
+                                        <Text style={styles.mineralFormula}>{m}</Text>
+                                        <Text style={styles.mineralName}>{info?.name || '미확인'}</Text>
                                     </View>
                                 </View>
-                            );
-                        })}
-                        {territory.minerals.length > 0 && (
-                            <Text style={styles.mineralNote}>※ 원격 탐사 추정치, 실측과 차이 있을 수 있음</Text>
-                        )}
-                    </View>
-                )}
-
-                {/* ── 탐사 데이터 CTA ── */}
-                <TouchableOpacity style={styles.exploreCta} activeOpacity={0.7}>
-                    <View style={styles.exploreLeft}>
-                        <Ionicons name="earth-outline" size={22} color="#4A90D9" />
-                        <View>
-                            <Text style={styles.exploreTitle}>탐사 데이터 보기</Text>
-                            <Text style={styles.exploreSub}>위성 관측 기반 상세 분석</Text>
-                        </View>
-                    </View>
-                    <Ionicons name="chevron-forward" size={18} color="#BDBDBD" />
-                </TouchableOpacity>
+                                <View style={styles.mineralRight}>
+                                    <View style={styles.mineralBarBg}>
+                                        <View style={[styles.mineralBarFill, { width: `${barWidth}%`, backgroundColor: info?.color || '#999' }]} />
+                                    </View>
+                                    <Text style={styles.mineralPct}>{concentration} wt%</Text>
+                                </View>
+                            </View>
+                        );
+                    })}
+                    {ALL_RESOURCES.length > DEFAULT_VISIBLE && (
+                        <TouchableOpacity
+                            style={styles.expandBtn}
+                            onPress={() => setResourceExpanded(!resourceExpanded)}
+                            activeOpacity={0.6}
+                        >
+                            <Text style={styles.expandBtnText}>
+                                {resourceExpanded ? `접기 ▲` : `나머지 ${ALL_RESOURCES.length - DEFAULT_VISIBLE}개 더보기 ▼`}
+                            </Text>
+                        </TouchableOpacity>
+                    )}
+                    <Text style={styles.mineralNote}>※ 원격 탐사 추정치, 실측과 차이 있을 수 있음</Text>
+                </View>
 
                 {/* ── 빠른 액션 그리드 ── */}
                 <View style={styles.actionGrid}>
@@ -377,14 +345,26 @@ export default function TerritoryDetailScreen() {
                         style={styles.actionCard}
                         onPress={() => {
                             router.back();
-                            setTimeout(() => router.push({ pathname: '/(tabs)', params: { lat: territory.lat, lng: territory.lng } }), 300);
+                            setTimeout(() => router.push({
+                                pathname: '/(tabs)',
+                                params: {
+                                    lat: String(territory.lat),
+                                    lng: String(territory.lng),
+                                    cellToken: territory.token,
+                                    cellLevel: String(territory.level),
+                                }
+                            }), 300);
                         }}
                         activeOpacity={0.7}
                     >
                         <Ionicons name="navigate-outline" size={24} color="#4A90D9" />
                         <Text style={styles.actionText}>지도에서 보기</Text>
                     </TouchableOpacity>
-                    <TouchableOpacity style={styles.actionCard} activeOpacity={0.7}>
+                    <TouchableOpacity
+                        style={styles.actionCard}
+                        onPress={() => setShowARSurface(true)}
+                        activeOpacity={0.7}
+                    >
                         <Ionicons name="cube-outline" size={24} color="#66BB6A" />
                         <Text style={styles.actionText}>AR로 보기</Text>
                     </TouchableOpacity>
@@ -392,6 +372,17 @@ export default function TerritoryDetailScreen() {
 
                 <View style={{ height: 40 }} />
             </Animated.ScrollView>
+
+            {/* AR 표면 뷰어 모달 */}
+            {showARSurface && (
+                <ARSurfaceViewer
+                    lat={territory.lat}
+                    lng={territory.lng}
+                    token={territory.token}
+                    level={territory.level}
+                    onClose={() => setShowARSurface(false)}
+                />
+            )}
         </SafeAreaView>
     );
 }
@@ -424,18 +415,11 @@ const styles = StyleSheet.create({
 
     // ── 토큰 섹션 ──
     tokenSection: {
-        flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+        flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between',
         paddingHorizontal: 20, marginBottom: 4,
     },
-    tokenId: { fontSize: 22, fontWeight: '800', color: '#1A1A1A', fontFamily: 'monospace', letterSpacing: 0.5 },
-    tokenSub: { fontSize: 13, color: '#9E9E9E', marginTop: 2 },
-    manageBadge: {
-        flexDirection: 'row', alignItems: 'center', gap: 5,
-        backgroundColor: '#E8F5E9', borderRadius: 8,
-        paddingVertical: 6, paddingHorizontal: 10,
-    },
-    manageDot: { width: 6, height: 6, borderRadius: 3, backgroundColor: '#66BB6A' },
-    manageText: { fontSize: 12, fontWeight: '600', color: '#66BB6A' },
+    tokenId: { fontSize: 15, fontWeight: '700', color: '#111', letterSpacing: 0.5 },
+    tokenSub: { fontSize: 13, color: '#666', marginTop: 4 },
 
     urnText: {
         fontSize: 11, color: '#BDBDBD', fontFamily: 'monospace',
@@ -486,6 +470,11 @@ const styles = StyleSheet.create({
     mineralBarFill: { height: 6, borderRadius: 3 },
     mineralPct: { fontSize: 12, fontWeight: '700', color: '#666', width: 55, textAlign: 'right' },
     mineralNote: { fontSize: 10, color: '#BDBDBD', marginTop: 10, fontStyle: 'italic' },
+    expandBtn: {
+        alignItems: 'center', paddingVertical: 12, marginTop: 4,
+        borderTopWidth: 1, borderTopColor: '#F0F0F0',
+    },
+    expandBtnText: { fontSize: 13, fontWeight: '600', color: '#4A90D9' },
 
     // ── 탐사 CTA ──
     exploreCta: {

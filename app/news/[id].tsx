@@ -3,7 +3,7 @@ import { useState, useEffect } from 'react';
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity, SafeAreaView, StatusBar } from 'react-native';
 import { Image } from 'expo-image';
 import { Ionicons } from '@expo/vector-icons';
-import { NEWS_DATA, SCRAPPED_NEWS, NewsItem } from '@/constants/MockData';
+import { NEWS_DATA, SCRAPPED_NEWS, COSMOS_NEWS_DATA, NewsItem } from '@/constants/MockData';
 import { addScrapContent, removeScrapContent, isContentScrapped } from '@/constants/scrapStore';
 
 export default function NewsDetailScreen() {
@@ -13,6 +13,7 @@ export default function NewsDetailScreen() {
 
     const newsItem: NewsItem | undefined =
         NEWS_DATA.find(item => item.id.toString() === id) ||
+        COSMOS_NEWS_DATA.find(item => item.id.toString() === id) ||
         SCRAPPED_NEWS.find(item => item.id.toString() === id);
 
     useEffect(() => {

@@ -66,15 +66,15 @@ function angleBetween(a: Vec3, b: Vec3): number {
 // ═══════════════════════════════════════════════════════════
 // 설정 상수
 // ═══════════════════════════════════════════════════════════
-const SENSOR_INTERVAL = 16;       // 센서 폴링 간격 (ms)
-const COMPUTE_INTERVAL = 16;      // compute 호출 간격 (ms) — ~60fps 출력
+const SENSOR_INTERVAL = 32;       // 센서 폴링 간격 (ms) — ~30fps
+const COMPUTE_INTERVAL = 32;      // compute 호출 간격 (ms) — ~30fps 출력
 
 // 적응형 스무딩 파라미터
-const INPUT_ALPHA = 0.5;          // 센서 입력 low-pass (고정, 원시 노이즈 제거용)
-const ALPHA_MIN = 0.04;           // 정지 시 스무딩 강도 (매우 부드러움, 떨림 억제)
-const ALPHA_MAX = 0.6;            // 이동 시 스무딩 강도 (빠른 반응)
-const DEAD_ZONE_DEG = 0.3;        // 이 각도 미만의 변화는 무시 (떨림 차단)
-const MOTION_THRESHOLD_DEG = 2.0; // 이 각도 이상 변화하면 "움직이는 중"으로 판단
+const INPUT_ALPHA = 0.35;         // 센서 입력 low-pass (원시 노이즈 제거용)
+const ALPHA_MIN = 0.02;           // 정지 시 스무딩 강도 (매우 부드러움, 떨림 억제)
+const ALPHA_MAX = 0.5;            // 이동 시 스무딩 강도 (빠른 반응)
+const DEAD_ZONE_DEG = 0.8;        // 이 각도 미만의 변화는 무시 (떨림 차단)
+const MOTION_THRESHOLD_DEG = 3.5; // 이 각도 이상 변화하면 "움직이는 중"으로 판단
 
 // ═══════════════════════════════════════════════════════════
 export function useDeviceOrientation(updateInterval: number = SENSOR_INTERVAL): DeviceOrientation {

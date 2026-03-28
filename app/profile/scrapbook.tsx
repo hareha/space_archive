@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import {
     StyleSheet, View, Text, TouchableOpacity, ScrollView,
-    SafeAreaView, StatusBar, Alert,
+    SafeAreaView, StatusBar, Alert, Image,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
@@ -11,6 +11,7 @@ import {
     removeScrapArea, removeScrapContent,
     type ScrapArea, type ScrapContent,
 } from '@/constants/scrapStore';
+import { NEWS_DATA, COSMOS_NEWS_DATA, type NewsItem } from '@/constants/MockData';
 
 type MainTab = 'area' | 'content';
 type AreaFilter = 'all' | 'landing' | 'feature';
@@ -58,6 +59,13 @@ export default function ScrapbookScreen() {
 
     const landingCount = areas.filter(a => a.type === 'landing').length;
     const featureCount = areas.filter(a => a.type === 'feature').length;
+
+    // 뉴스 데이터에서 이미지 조회
+    const allNews = [...COSMOS_NEWS_DATA, ...NEWS_DATA];
+    const getNewsImage = (newsId: string): string | null => {
+        const found = allNews.find(n => n.id.toString() === newsId);
+        return found?.imageUrl || null;
+    };
 
     // ─── 삭제 ───
     const handleDeleteArea = async (id: string) => {
@@ -154,21 +162,20 @@ export default function ScrapbookScreen() {
                                     key={area.id}
                                     style={st.areaCard}
                                     onPress={() => {
-                                        // 착륙지/지형 상세로 이동
+                                        // 탐사모드로 이동 + 해당 지점 선택
                                         router.push({
-                                            pathname: '/(tabs)/moon',
-                                            params: { flyTo: `${area.lat},${area.lng}`, flyName: area.name }
+                                            pathname: '/(tabs)',
+                                            params: {
+                                                highlightLat: String(area.lat),
+                                                highlightLng: String(area.lng),
+                                                highlightName: area.name,
+                                                scrapType: area.type,
+                                                scrapName: area.name,
+                                            }
                                         });
                                     }}
                                     activeOpacity={0.7}
                                 >
-                                    <View style={st.areaThumb}>
-                                        <Ionicons
-                                            name={area.type === 'landing' ? 'rocket-outline' : 'planet-outline'}
-                                            size={22}
-                                            color="#9CA3AF"
-                                        />
-                                    </View>
                                     <View style={st.areaInfo}>
                                         <Text style={st.areaName}>{area.name}</Text>
                                         <Text style={st.areaCoord}>
@@ -218,7 +225,9 @@ export default function ScrapbookScreen() {
                                 <Text style={st.emptySubText}>인사이트 기사에서 스크랩해보세요</Text>
                             </View>
                         ) : (
-                            sortedContents.map(content => (
+                            sortedContents.map(content => {
+                                const imgUrl = getNewsImage(content.newsId);
+                                return (
                                 <TouchableOpacity
                                     key={content.newsId}
                                     style={st.contentCard}
@@ -227,9 +236,17 @@ export default function ScrapbookScreen() {
                                     }}
                                     activeOpacity={0.7}
                                 >
-                                    <View style={st.contentThumb}>
-                                        <Ionicons name="image-outline" size={22} color="#9CA3AF" />
-                                    </View>
+                                    {imgUrl ? (
+                                        <Image
+                                            source={{ uri: imgUrl }}
+                                            style={st.contentThumbImg}
+                                            resizeMode="cover"
+                                        />
+                                    ) : (
+                                        <View style={st.contentThumb}>
+                                            <Ionicons name="image-outline" size={22} color="#9CA3AF" />
+                                        </View>
+                                    )}
                                     <View style={st.contentInfo}>
                                         <Text style={st.contentTitle} numberOfLines={2}>{content.title}</Text>
                                         <Text style={st.contentSummary} numberOfLines={1}>{content.summary}</Text>
@@ -241,7 +258,8 @@ export default function ScrapbookScreen() {
                                         <Ionicons name="trash-outline" size={18} color="#9CA3AF" />
                                     </TouchableOpacity>
                                 </TouchableOpacity>
-                            ))
+                                );
+                            })
                         )}
                     </ScrollView>
                 </>
@@ -334,4 +352,8 @@ const st = StyleSheet.create({
     contentInfo: { flex: 1 },
     contentTitle: { fontSize: 15, fontWeight: '700', color: '#1A1A1A', marginBottom: 4, lineHeight: 22 },
     contentSummary: { fontSize: 12, color: '#9CA3AF' },
+    contentThumbImg: {
+        width: 80, height: 60, borderRadius: 8, marginRight: 14,
+        backgroundColor: '#F5F5F5',
+    },
 });

@@ -6,7 +6,7 @@ import { Ionicons } from '@expo/vector-icons';
 
 const CHECKLIST = [
     '보유 ell 및 탐사 이력 삭제에 동의합니다.',
-    '점유 구역 즉시 해제에 동의합니다.',
+    '개척 구역 즉시 해제에 동의합니다.',
     '탈퇴 후 계정 복구가 불가함을 확인합니다.',
 ];
 
@@ -57,7 +57,7 @@ export default function WithdrawScreen() {
                     <Text style={styles.warningTitle}> 탈퇴 전 꼭 확인하세요</Text>
                     <View style={styles.warningList}>
                         <Text style={styles.warningItem}>• 보유 중인 ell 및 탐사 이력이 모두 삭제됩니다.</Text>
-                        <Text style={styles.warningItem}>• 점유 중인 구역은 즉시 해제되며 복구 불가합니다.</Text>
+                        <Text style={styles.warningItem}>• 개척 중인 구역은 즉시 해제되며 복구 불가합니다.</Text>
                     </View>
                 </View>
 

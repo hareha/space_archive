@@ -4,16 +4,16 @@ import {
   Dimensions, Animated, PanResponder, Switch,
 } from 'react-native';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
-import { SafeAreaView } from 'react-native-safe-area-context';
-import { LANDING_SITES, LandingSite, sortByYear, sortByCountry, getContactColor, COUNTRY_NAMES } from '@/constants/LandingSiteData';
-import { LUNAR_FEATURES, LunarFeature, sortByType, sortBySize, getFeatureTypeColor, getFeatureTypeEmoji, formatArea, isFarSide } from '@/constants/LunarFeatureData';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
+import { LANDING_SITES, LandingSite, getContactColor, COUNTRY_NAMES } from '@/constants/LandingSiteData';
+import { LUNAR_FEATURES, LunarFeature, getFeatureTypeColor, getFeatureTypeEmoji, formatArea, isFarSide } from '@/constants/LunarFeatureData';
 
 const { height: SCREEN_H, width: SCREEN_W } = Dimensions.get('window');
 
 // snap points: top값 기준 (딱 2개만) — SAT_PANEL과 동일한 방식
 export const PANEL_SCREEN_H = SCREEN_H;
 export const SNAP_MIN = SCREEN_H * 0.70;  // 최소: top=80% (높이 20%)
-export const SNAP_MAX = SCREEN_H * 0.40;  // 최대: top=40% (높이 60%)
+export const SNAP_MAX = SCREEN_H * 0.55;  // 최대: top=55% (높이 45%)
 
 type ActiveCategory = 'satellite' | 'landing' | 'terrain' | null;
 
@@ -45,8 +45,9 @@ export default function ExplorationListPanel({
   onSelectSatellite, onSelectLandingSite, onSelectFeature,
 }: ExplorationListPanelProps) {
   const [activeCategory, setActiveCategory] = useState<ActiveCategory>(null);
-  const [landingSortMode, setLandingSortMode] = useState<'year' | 'country'>('year');
-  const [featureSortMode, setFeatureSortMode] = useState<'type' | 'size'>('type');
+  const [agencyFilter, setAgencyFilter] = useState<string>('전체');
+  const [landingCountryFilter, setLandingCountryFilter] = useState<string>('전체');
+  const [featureTypeFilter, setFeatureTypeFilter] = useState<string>('전체');
 
   // 패널 애니메이션 (top값: 초기=화면 밖)
   const panelHeight = useRef(new Animated.Value(SCREEN_H)).current;
@@ -100,13 +101,20 @@ export default function ExplorationListPanel({
         });
       },
       onPanResponderMove: (_, g) => {
-        const newTop = Math.max(SNAP_MAX, Math.min(SNAP_MIN, currentHeight.current + g.dy));
+        const safeTop = 54; // safe area fallback
+        const newTop = Math.max(safeTop, Math.min(SNAP_MIN, currentHeight.current + g.dy));
         panelHeight.setValue(newTop);
       },
       onPanResponderRelease: (_, g) => {
         const raw = currentHeight.current + g.dy;
-        const mid = (SNAP_MIN + SNAP_MAX) / 2;
-        snapToRef.current(raw < mid ? SNAP_MAX : SNAP_MIN);
+        const safeTop = 54;
+        if (raw < SNAP_MAX * 0.5) {
+          // 화면 상단 가까이 드래그 → safeArea top
+          snapToRef.current(safeTop);
+        } else {
+          const mid = (SNAP_MIN + SNAP_MAX) / 2;
+          snapToRef.current(raw < mid ? SNAP_MAX : SNAP_MIN);
+        }
       },
     })
   ).current;
@@ -123,8 +131,8 @@ export default function ExplorationListPanel({
   };
 
   // 정렬된 데이터
-  const sortedLandingSites = landingSortMode === 'year' ? sortByYear(LANDING_SITES) : sortByCountry(LANDING_SITES);
-  const sortedFeatures = featureSortMode === 'type' ? sortByType(LUNAR_FEATURES) : sortBySize(LUNAR_FEATURES);
+  const filteredLandingSites = landingCountryFilter === '전체' ? LANDING_SITES : LANDING_SITES.filter(s => s.country === landingCountryFilter);
+  const filteredFeatures = featureTypeFilter === '전체' ? LUNAR_FEATURES : LUNAR_FEATURES.filter(f => f.typeKr === featureTypeFilter);
 
   if (!visible && currentHeight.current >= SCREEN_H) return null;
 
@@ -195,7 +203,7 @@ export default function ExplorationListPanel({
           onPress={() => handleCategoryTap('terrain')}
           activeOpacity={0.7}
         >
-          <Text style={[styles.categoryTitle, { color: '#A3A3A3' }]}>대표 지형</Text>
+          <Text style={[styles.categoryTitle, { color: '#A3A3A3' }]}>주요 지형</Text>
           <View style={styles.toggleRow}>
             <Text style={styles.toggleLabel}>{showTerrain ? 'On' : 'off'}</Text>
             <TouchableOpacity
@@ -214,10 +222,24 @@ export default function ExplorationListPanel({
         {/* === 위성 리스트 === */}
         {activeCategory === 'satellite' && (
           <View style={styles.listSection}>
+            {/* 기관 필터 버튼 */}
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 12 }} contentContainerStyle={{ gap: 8 }}>
+              {['전체', 'NASA', 'KARI', 'ISRO', 'CNSA'].map((agency) => (
+                <TouchableOpacity
+                  key={agency}
+                  onPress={() => setAgencyFilter(agency)}
+                  style={[styles.sortChip, agencyFilter === agency && styles.sortChipActive]}
+                >
+                  <Text style={[styles.sortChipText, agencyFilter === agency && styles.sortChipTextActive]}>{agency}</Text>
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
             {isLoadingSatellite && (
               <Text style={{ color: '#FCD34D', fontSize: 13, textAlign: 'center', paddingVertical: 20 }}>위성 데이터 로딩 중...</Text>
             )}
-            {satelliteData.map((sat: any, idx: number) => (
+            {satelliteData
+              .filter((sat: any) => agencyFilter === '전체' || sat.agencyCode === agencyFilter)
+              .map((sat: any, idx: number) => (
               <TouchableOpacity
                 key={sat.id || idx}
                 style={styles.listItem}
@@ -229,13 +251,15 @@ export default function ExplorationListPanel({
                   <Text style={styles.listItemTitle}>
                     {sat.nameKo !== sat.name ? `${sat.nameKo} (${sat.name})` : sat.name}
                   </Text>
-                  <Text style={styles.listItemSub}>{sat.country}</Text>
+                  <Text style={styles.listItemSub}>{sat.agency || sat.country}</Text>
                 </View>
                 <Ionicons name="chevron-forward" size={16} color="#4B5563" />
               </TouchableOpacity>
             ))}
-            {!isLoadingSatellite && satelliteData.length === 0 && (
-              <Text style={{ color: '#6B7280', fontSize: 13, textAlign: 'center', paddingVertical: 30 }}>위성 토글을 ON하면 데이터가 로드됩니다</Text>
+            {!isLoadingSatellite && satelliteData.filter((sat: any) => agencyFilter === '전체' || sat.agencyCode === agencyFilter).length === 0 && (
+              <Text style={{ color: '#6B7280', fontSize: 13, textAlign: 'center', paddingVertical: 30 }}>
+                {agencyFilter === '전체' ? '위성 토글을 ON하면 데이터가 로드됩니다' : `${agencyFilter} 소속 위성이 없습니다`}
+              </Text>
             )}
           </View>
         )}
@@ -243,21 +267,19 @@ export default function ExplorationListPanel({
         {/* === 착륙지 리스트 === */}
         {activeCategory === 'landing' && (
           <View style={styles.listSection}>
-            <View style={styles.sortRow}>
-              <TouchableOpacity
-                onPress={() => setLandingSortMode('year')}
-                style={[styles.sortChip, landingSortMode === 'year' && styles.sortChipActive]}
-              >
-                <Text style={[styles.sortChipText, landingSortMode === 'year' && styles.sortChipTextActive]}>연도순</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                onPress={() => setLandingSortMode('country')}
-                style={[styles.sortChip, landingSortMode === 'country' && styles.sortChipActive]}
-              >
-                <Text style={[styles.sortChipText, landingSortMode === 'country' && styles.sortChipTextActive]}>국가순</Text>
-              </TouchableOpacity>
-            </View>
-            {sortedLandingSites.map((site, idx) => (
+            {/* 국가별 필터 버튼 */}
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 12 }} contentContainerStyle={{ gap: 8 }}>
+              {['전체', 'USA', 'URS', 'CHN', 'IND', 'JPN', 'RUS', 'EUR', 'ISR'].map((c) => (
+                <TouchableOpacity
+                  key={c}
+                  onPress={() => setLandingCountryFilter(c)}
+                  style={[styles.sortChip, landingCountryFilter === c && styles.sortChipActive]}
+                >
+                  <Text style={[styles.sortChipText, landingCountryFilter === c && styles.sortChipTextActive]}>{c}</Text>
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+            {filteredLandingSites.map((site, idx) => (
               <TouchableOpacity
                 key={`${site.officialName}-${idx}`}
                 style={styles.listItem}
@@ -274,27 +296,28 @@ export default function ExplorationListPanel({
                 <Ionicons name="chevron-forward" size={16} color="#60A5FA" />
               </TouchableOpacity>
             ))}
+            {filteredLandingSites.length === 0 && (
+              <Text style={{ color: '#6B7280', fontSize: 13, textAlign: 'center', paddingVertical: 30 }}>{landingCountryFilter} 소속 착륙 지점이 없습니다</Text>
+            )}
           </View>
         )}
 
         {/* === 지형 리스트 === */}
         {activeCategory === 'terrain' && (
           <View style={styles.listSection}>
-            <View style={styles.sortRow}>
-              <TouchableOpacity
-                onPress={() => setFeatureSortMode('type')}
-                style={[styles.sortChip, featureSortMode === 'type' && styles.sortChipActive]}
-              >
-                <Text style={[styles.sortChipText, featureSortMode === 'type' && styles.sortChipTextActive]}>유형순</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                onPress={() => setFeatureSortMode('size')}
-                style={[styles.sortChip, featureSortMode === 'size' && styles.sortChipActive]}
-              >
-                <Text style={[styles.sortChipText, featureSortMode === 'size' && styles.sortChipTextActive]}>크기순</Text>
-              </TouchableOpacity>
-            </View>
-            {sortedFeatures.map((feat) => (
+            {/* 유형별 필터 버튼 */}
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 12 }} contentContainerStyle={{ gap: 8, flexWrap: 'wrap' }}>
+              {['전체', '충돌구', '만', '바다', '산맥', '단층', '소용돌이', '계곡', '열구', '산', '분지'].map((t) => (
+                <TouchableOpacity
+                  key={t}
+                  onPress={() => setFeatureTypeFilter(t)}
+                  style={[styles.sortChip, featureTypeFilter === t && styles.sortChipActive]}
+                >
+                  <Text style={[styles.sortChipText, featureTypeFilter === t && styles.sortChipTextActive]}>{t}</Text>
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+            {filteredFeatures.map((feat) => (
               <TouchableOpacity
                 key={feat.id}
                 style={styles.listItem}
@@ -314,6 +337,9 @@ export default function ExplorationListPanel({
                 <Ionicons name="chevron-forward" size={16} color={getFeatureTypeColor(feat.typeKr)} />
               </TouchableOpacity>
             ))}
+            {filteredFeatures.length === 0 && (
+              <Text style={{ color: '#6B7280', fontSize: 13, textAlign: 'center', paddingVertical: 30 }}>{featureTypeFilter} 유형 지형이 없습니다</Text>
+            )}
           </View>
         )}
 

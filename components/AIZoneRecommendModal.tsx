@@ -14,7 +14,7 @@ import { recommendZones, type AIAnswers, type RecommendResult } from '@/constant
 interface Props {
   visible: boolean;
   onClose: () => void;
-  onSelectZone: (lat: number, lng: number, name: string) => void;
+  onSelectZone: (lat: number, lng: number, name: string, diameterKm?: number) => void;
 }
 
 // ─── 5개 질문 정의 ───
@@ -290,7 +290,7 @@ export default function AIZoneRecommendModal({ visible, onClose, onSelectZone }:
               <TouchableOpacity
                 style={s.detailBtn}
                 onPress={() => {
-                  onSelectZone(r.feature.lat, r.feature.lng, r.feature.name_kr);
+                  onSelectZone(r.feature.lat, r.feature.lng, r.feature.name_kr, r.feature.diameter_km);
                   onClose();
                 }}
               >
