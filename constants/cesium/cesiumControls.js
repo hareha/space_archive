@@ -1510,7 +1510,7 @@ function updateAppMode(payload) {
     } else if (mainMode === 'test1') {
         // 점유 모드(모드2): 내장 rotation 활성화
         viewer.scene.screenSpaceCameraController.enableRotate = true;
-        // 점유 모드(모드2): 모드1/TR 그리드 숨기기, PL은 cesiumControlsTest1.js가 독립 관리
+        // 점유 모드(모드2): 모드1/TR 그리드 숨기기, PL은 cesiumControlsOld.js가 독립 관리
         if (typeof gridPrimitives !== 'undefined' && gridPrimitives) gridPrimitives.show = false;
         if (typeof pillarPrimitives !== 'undefined' && pillarPrimitives) pillarPrimitives.show = false;
         if (typeof parentPrimitives !== 'undefined' && parentPrimitives) parentPrimitives.show = false;
@@ -1520,7 +1520,7 @@ function updateAppMode(payload) {
     } else if (mainMode === 'test2') {
         // 점유 모드(모드3): 내장 rotation 활성화
         viewer.scene.screenSpaceCameraController.enableRotate = true;
-        // 점유 모드(모드3): 모드1/2 그리드 숨기기, TR은 cesiumControlsTest2.js가 독립 관리
+        // 점유 모드(모드3): 모드1/2 그리드 숨기기, TR은 cesiumControlsOccupation.js가 독립 관리
         // ClassificationPrimitive는 show=false를 무시하고 3D Tile에 투영되므로 반드시 removeAll()로 완전 제거
         if (typeof gridPrimitives !== 'undefined' && gridPrimitives) { gridPrimitives.removeAll(); gridPrimitives.show = false; }
         if (typeof pillarPrimitives !== 'undefined' && pillarPrimitives) { pillarPrimitives.removeAll(); pillarPrimitives.show = false; }

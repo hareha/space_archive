@@ -1,10 +1,10 @@
-// cesiumGridTest1.js — Polyline 기반 그리드 렌더링 (테스트1모드 전용)
-// 점유모드1과 완전 독립. mainMode === 'test1' 일 때만 사용됨.
+// cesiumGridOld.js — 구버전 개척모드 그리드 (Polyline 기반)
+// 기존 테스트1모드 — 현재 미사용
 
-export const CESIUM_GRID_TEST1 = `
+export const CESIUM_GRID_OLD = `
       // ═══════════════════════════════════════════════════
-      // Polyline Grid Renderer (cesiumGridTest1.js)
-      // 테스트1모드 전용 — 점유모드1과 완전 독립
+      // Old Polyline Grid Renderer (cesiumGridOld.js)
+      // 구버전 — Polyline 기반, 현재 미사용
       // ═══════════════════════════════════════════════════
       const PL_FIXED_HEIGHT = 10000;
       const plGridPrimitives = viewer.scene.primitives.add(new Cesium.PrimitiveCollection());

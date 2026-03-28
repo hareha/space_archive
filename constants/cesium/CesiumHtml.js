@@ -7,10 +7,10 @@ import { CESIUM_GRID } from './cesiumGrid.js';
 import { CESIUM_MAPS } from './cesiumMaps.js';
 import { CESIUM_LANDMARKS } from './cesiumLandmarks.js';
 import { CESIUM_CONTROLS } from './cesiumControls.js';
-import { CESIUM_GRID_TEST1 } from './cesiumGridTest1.js';
-import { CESIUM_CONTROLS_TEST1 } from './cesiumControlsTest1.js';
-import { CESIUM_GRID_TEST2 } from './cesiumGridTest2.js';
-import { CESIUM_CONTROLS_TEST2 } from './cesiumControlsTest2.js';
+import { CESIUM_GRID_OLD } from './cesiumGridOld.js';
+import { CESIUM_CONTROLS_OLD } from './cesiumControlsOld.js';
+import { CESIUM_GRID_OCCUPATION } from './cesiumGridOccupation.js';
+import { CESIUM_CONTROLS_OCCUPATION } from './cesiumControlsOccupation.js';
 
 
 
@@ -65,10 +65,10 @@ ${CESIUM_INIT}
 ${CESIUM_GRID}
 ${CESIUM_MAPS}
 ${CESIUM_LANDMARKS}
-${CESIUM_GRID_TEST1}
-${CESIUM_CONTROLS_TEST1}
-${CESIUM_GRID_TEST2}
-${CESIUM_CONTROLS_TEST2}
+${CESIUM_GRID_OLD}
+${CESIUM_CONTROLS_OLD}
+${CESIUM_GRID_OCCUPATION}
+${CESIUM_CONTROLS_OCCUPATION}
 
 
 ${CESIUM_CONTROLS}

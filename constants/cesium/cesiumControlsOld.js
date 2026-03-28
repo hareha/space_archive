@@ -1,10 +1,10 @@
-// cesiumControlsTest1.js — Polyline 모드 컨트롤 (테스트1모드 전용)
-// 점유모드1과 완전 독립. monkey-patch 없음.
+// cesiumControlsOld.js — 구버전 개척모드 컨트롤 (Polyline 기반)
+// 기존 테스트1모드 — 현재 미사용
 
-export const CESIUM_CONTROLS_TEST1 = `
+export const CESIUM_CONTROLS_OLD = `
       // ═══════════════════════════════════════════════════
-      // Polyline Mode Controller (cesiumControlsTest1.js)
-      // 테스트1모드 전용 — 독립 함수 정의, monkey-patch 없음
+      // Old Occupation Mode Controller (cesiumControlsOld.js)
+      // 구버전 — Polyline 기반, 현재 미사용
       // ═══════════════════════════════════════════════════
 
       // --- PL 전용 flashCell (독립 정의) ---

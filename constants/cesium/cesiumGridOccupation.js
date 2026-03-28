@@ -1,7 +1,7 @@
-// cesiumGridTest2.js — 테스트2모드 전용 동적 그리드
+// cesiumGridOccupation.js — 개척 모드 전용 동적 그리드
 // 카메라 look-at 기반 실시간 9셀 그리드
 
-export const CESIUM_GRID_TEST2 = `
+export const CESIUM_GRID_OCCUPATION = `
       // ═══════════════════════════════════════════════════
       // Terrain Grid — 실시간 카메라 look-at 방식
       // ═══════════════════════════════════════════════════

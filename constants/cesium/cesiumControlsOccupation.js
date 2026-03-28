@@ -1,10 +1,10 @@
-// cesiumControlsTest2.js — Terrain 모드 컨트롤 (테스트2모드 전용)
+// cesiumControlsOccupation.js — 개척 모드 컨트롤
 // 점유모드1·2와 완전 독립. monkey-patch 없음.
 
-export const CESIUM_CONTROLS_TEST2 = `
+export const CESIUM_CONTROLS_OCCUPATION = `
       // ═══════════════════════════════════════════════════
-      // Terrain Mode Controller (cesiumControlsTest2.js)
-      // 테스트2모드 전용 — 독립 함수 정의, monkey-patch 없음
+      // Occupation Mode Controller (cesiumControlsOccupation.js)
+      // 개척모드 전용 — 독립 함수 정의, monkey-patch 없음
       // ═══════════════════════════════════════════════════
 
       // --- TR 전용 flash PrimitiveCollection (모드1 flashPrimitives와 완전 분리) ---
