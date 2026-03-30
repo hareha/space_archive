@@ -1,17 +1,22 @@
-import React, { useRef, useEffect, useState, useMemo } from 'react';
+import React, { useRef, useEffect, useState, useMemo, useCallback } from 'react';
 import {
     StyleSheet, View, ScrollView, TouchableOpacity, StatusBar,
-    SafeAreaView, Dimensions, Animated,
+    Dimensions, Animated, LayoutAnimation, UIManager, Platform,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { Text } from '@/components/Themed';
 import { Ionicons } from '@expo/vector-icons';
 import { WebView } from 'react-native-webview';
 import ARSurfaceViewer from '@/components/ARSurfaceViewer';
 import { createCesiumHtml } from '@/constants/cesium/CesiumHtml';
+import { Asset } from 'expo-asset';
+import * as FileSystem from 'expo-file-system/legacy';
+import { LANDING_MODELS } from '@/constants/landingModels';
+import { useDeviceOrientation } from '@/hooks/useDeviceOrientation';
 
 const { width } = Dimensions.get('window');
-const MAP_HEIGHT = 260;
+const MAP_HEIGHT = 280;
 
 // ─── 구역 데이터 (my-territories와 공유) ───
 interface Territory {
@@ -57,10 +62,12 @@ const DEFAULT_VISIBLE = 5;
 
 // 보유 기간 계산
 function daysSince(dateStr: string): number {
+    if (!dateStr) return 0;
     const [y, m, d] = dateStr.split('.').map(Number);
     const past = new Date(y, m - 1, d);
-    const now = new Date(2026, 2, 16); // 현재 시뮬레이션 날짜
-    return Math.floor((now.getTime() - past.getTime()) / (1000 * 60 * 60 * 24));
+    const now = new Date();
+    const diff = Math.floor((now.getTime() - past.getTime()) / (1000 * 60 * 60 * 24));
+    return Math.max(0, diff);
 }
 
 function scoreColor(score: number) {
@@ -88,6 +95,20 @@ export default function TerritoryDetailScreen() {
 
     const webviewRef = useRef<WebView>(null);
     const fadeAnim = useRef(new Animated.Value(0)).current;
+    const scrollViewRef = useRef<any>(null);
+    const initTimers = useRef<ReturnType<typeof setTimeout>[]>([]);  // onWebViewLoad의 예약 타이머
+    const [scrollEnabled, setScrollEnabled] = useState(true);
+    const [cesiumHtmlUri, setCesiumHtmlUri] = useState<string | null>(null);
+    const [firstPersonMode, setFirstPersonMode] = useState(false);
+    const [fpReady, setFpReady] = useState(false);
+    const [cesiumReady, setCesiumReady] = useState(false);
+    // LayoutAnimation 활성화 (Android)
+    useEffect(() => {
+        if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
+            UIManager.setLayoutAnimationEnabledExperimental(true);
+        }
+    }, []);
+    const deviceOrientation = useDeviceOrientation(32);
 
     // 파라미터 → 구역 객체
     const territory: Territory = useMemo(() => ({
@@ -109,130 +130,188 @@ export default function TerritoryDetailScreen() {
 
     useEffect(() => {
         Animated.timing(fadeAnim, { toValue: 1, duration: 600, useNativeDriver: true }).start();
+        // Cesium HTML을 file://로 저장 (GLB file:// 로드 허용)
+        (async () => {
+            try {
+                const htmlContent = createCesiumHtml('', '');
+                const htmlPath = FileSystem.documentDirectory + 'cesium_territory.html';
+                await FileSystem.writeAsStringAsync(htmlPath, htmlContent, { encoding: FileSystem.EncodingType.UTF8 });
+                setCesiumHtmlUri(htmlPath);
+            } catch (e) { console.warn('[TerritoryDetail] HTML save error:', e); }
+        })();
     }, []);
 
-    // CesiumJS 로드 후 해당 좌표로 카메라 이동 + 셀 하이라이트
-    const onWebViewLoad = () => {
-        const flyScript = `
-            (function() {
-                var attempts = 0;
-                var maxAttempts = 60;
-                function waitAndFly() {
-                    attempts++;
-                    if (attempts > maxAttempts) return;
-                    if (!window.viewer || !window.tilesetReady || !window.s2) {
-                        setTimeout(waitAndFly, 500);
-                        return;
-                    }
-                    
-                    var viewer = window.viewer;
-                    var lat = ${territory.lat};
-                    var lng = ${territory.lng};
-                    var token = '${territory.token}';
-                    var latRad = Cesium.Math.toRadians(lat);
-                    var lngRad = Cesium.Math.toRadians(lng);
-                    
-                    window._autoRotate = false;
-                    viewer.camera.rotate = function() {};
-                    
-                    // S2 셀 ID 구하기: 위경도 → S2 Point → CellId → L16 parent
-                    var cosLat = Math.cos(latRad);
-                    var sinLat = Math.sin(latRad);
-                    var cosLng = Math.cos(lngRad);
-                    var sinLng = Math.sin(lngRad);
-                    var s2Point = new s2.Point(cosLat * cosLng, cosLat * sinLng, sinLat);
-                    var leafId = s2.cellid.fromPoint(s2Point);
-                    var cellId = s2.cellid.parent(leafId, ${territory.level});
-                    var cell = s2.Cell.fromCellID(cellId);
-                    
-                    // 4개 vertex 추출 → Cesium Cartesian3 (달 표면)
-                    var moonR = Cesium.Ellipsoid.MOON.maximumRadius;
-                    var polyPositions = [];
-                    for (var i = 0; i < 4; i++) {
-                        var v = cell.vertex(i);
-                        var r = Math.sqrt(v.x*v.x + v.y*v.y + v.z*v.z);
-                        var vLon = Math.atan2(v.y, v.x);
-                        var vLat = Math.asin(v.z / r);
-                        polyPositions.push(Cesium.Cartesian3.fromRadians(vLon, vLat, 0, Cesium.Ellipsoid.MOON));
-                    }
-                    
-                    // 카메라: 셀 중심 1km 상공에서 수직 하강 뷰
-                    var center = cell.center();
-                    var cR = Math.sqrt(center.x*center.x + center.y*center.y + center.z*center.z);
-                    var cLon = Math.atan2(center.y, center.x);
-                    var cLat = Math.asin(center.z / cR);
-                    var altitude = 10000;
-                    var destR = moonR + altitude;
-                    var dest = new Cesium.Cartesian3(
-                        destR * Math.cos(cLat) * Math.cos(cLon),
-                        destR * Math.cos(cLat) * Math.sin(cLon),
-                        destR * Math.sin(cLat)
-                    );
-                    
-                    viewer.camera.flyTo({
-                        destination: dest,
-                        orientation: { heading: 0, pitch: Cesium.Math.toRadians(-85), roll: 0 },
-                        duration: 1.5,
-                        complete: function() {
-                            console.log('[Detail] Camera flyTo complete - S2 L${territory.level} cell');
-                        }
-                    });
-                    
-                    // 반투명 채움 (S2 셀 영역)
-                    viewer.entities.add({
-                        polygon: {
-                            hierarchy: new Cesium.PolygonHierarchy(polyPositions),
-                            material: new Cesium.Color(0.29, 0.56, 0.85, 0.45),
-                            outline: true,
-                            outlineColor: new Cesium.Color(0.29, 0.56, 0.85, 1.0),
-                            outlineWidth: 2,
-                            perPositionHeight: true,
-                        }
-                    });
-                    
-                    // 외곽선 강조 (닫힌 루프)
-                    var linePositions = polyPositions.concat([polyPositions[0]]);
-                    viewer.entities.add({
-                        polyline: {
-                            positions: linePositions,
-                            width: 3,
-                            material: new Cesium.Color(0.4, 0.7, 1.0, 1.0),
-                        }
-                    });
-                    
-                    console.log('[Detail] S2 cell highlight:', s2.cellid.toToken(cellId), 'at', lat, lng);
+    // 착륙선 3D 모델 로드 및 배치 (index.tsx와 동일한 SET_MODEL_URI 방식)
+    const loadLandingModels = async () => {
+        async function injectGlb(requirePath: any, modelName: string) {
+            try {
+                const asset = await Asset.fromModule(requirePath).downloadAsync();
+                if (!asset.localUri) return;
+                const destPath = FileSystem.documentDirectory + modelName + '.glb';
+                const fileInfo = await FileSystem.getInfoAsync(destPath);
+                if (!fileInfo.exists) {
+                    await FileSystem.copyAsync({ from: asset.localUri, to: destPath });
                 }
-                setTimeout(waitAndFly, 1000);
-            })();
-            true;
-        `;
+                const uri = destPath;
+                const msg: any = { type: 'SET_MODEL_URI', model: modelName, uri };
+                if (modelName === 'apollo') {
+                    msg.sites = LANDING_MODELS.map((m: any) => ({ lat: m.lat, lng: m.lng, height: m.height, scale: m.scale }));
+                }
+                webviewRef.current?.postMessage(JSON.stringify(msg));
+                console.log(`[TerritoryDetail] ${modelName} GLB injected via SET_MODEL_URI`);
+            } catch (e) { console.warn(`[TerritoryDetail] ${modelName} GLB load error:`, e); }
+        }
+
+        await injectGlb(require('../../assets/3d/apollo_11_lunar_module.glb'), 'apollo');
+        await injectGlb(require('../../assets/3d/danuri.glb'), 'danuri');
+        await injectGlb(require('../../assets/3d/chandrayaan.glb'), 'chandrayaan');
+        await injectGlb(require('../../assets/3d/capstone.glb'), 'capstone');
+        await injectGlb(require('../../assets/3d/lro.glb'), 'lro');
+    };
+
+    // 자이로 → WebView 전송
+    useEffect(() => {
+        if (!firstPersonMode || !fpReady) return;
+        webviewRef.current?.postMessage(JSON.stringify({
+            type: 'GYRO_UPDATE',
+            azimuth: deviceOrientation.azimuth,
+            altitude: deviceOrientation.altitude,
+        }));
+    }, [firstPersonMode, fpReady, deviceOrientation.azimuth, deviceOrientation.altitude]);
+
+    const FP_LAYOUT_DURATION = 600; // ms, 천천히 확장
+
+    const enterFirstPerson = useCallback(() => {
+        setFpReady(false);
+
+        // 0) onWebViewLoad에서 예약한 타이머(GO_TO_LOCATION, HIGHLIGHT 등) 전부 취소
+        initTimers.current.forEach(t => clearTimeout(t));
+        initTimers.current = [];
+
+        // 1) 즉시: 진행 중인 카메라 이동(lookAt orbit등) 취소
+        webviewRef.current?.postMessage(JSON.stringify({ type: 'CANCEL_FLIGHTS' }));
+
+        // 2) 천천히 화면 확장 (LayoutAnimation — 네이티브 스레드)
+        LayoutAnimation.configureNext({
+            duration: FP_LAYOUT_DURATION,
+            update: { type: LayoutAnimation.Types.easeInEaseOut, property: LayoutAnimation.Properties.scaleY },
+            delete: { type: LayoutAnimation.Types.easeInEaseOut, property: LayoutAnimation.Properties.opacity },
+        });
+        setFirstPersonMode(true);
+        setScrollEnabled(false);
+
+        // 3) 화면 확장 완료 후 → Cesium 줌인 시작 (확장과 줌인 겹치지 않음)
+        const sendMsg = () => {
+            webviewRef.current?.postMessage(JSON.stringify({
+                type: 'FIRST_PERSON_ENTER',
+                lat: territory.lat,
+                lng: territory.lng,
+                token: territory.token,
+            }));
+        };
         setTimeout(() => {
-            webviewRef.current?.injectJavaScript(flyScript);
-        }, 500);
+            if (cesiumReady) {
+                sendMsg();
+            } else {
+                const retryId = setInterval(() => {
+                    if (webviewRef.current) {
+                        sendMsg();
+                        clearInterval(retryId);
+                    }
+                }, 500);
+                setTimeout(() => clearInterval(retryId), 10000);
+            }
+        }, FP_LAYOUT_DURATION);
+    }, [territory.lat, territory.lng, territory.token, cesiumReady]);
+
+    const exitFirstPerson = useCallback(() => {
+        setFpReady(false);
+        // 천천히 화면 축소 (LayoutAnimation — 네이티브 스레드)
+        LayoutAnimation.configureNext({
+            duration: FP_LAYOUT_DURATION,
+            update: { type: LayoutAnimation.Types.easeInEaseOut, property: LayoutAnimation.Properties.scaleY },
+            create: { type: LayoutAnimation.Types.easeInEaseOut, property: LayoutAnimation.Properties.opacity },
+        });
+        setFirstPersonMode(false);
+        setScrollEnabled(true);
+        webviewRef.current?.postMessage(JSON.stringify({
+            type: 'FIRST_PERSON_EXIT',
+            lat: territory.lat,
+            lng: territory.lng,
+        }));
+    }, [territory.lat, territory.lng]);
+
+    const onWebViewMessage = useCallback((event: any) => {
+        try {
+            const data = JSON.parse(event.nativeEvent.data);
+            if (data.type === 'FP_READY') {
+                setFpReady(true);
+            }
+            if (data.type === 'CESIUM_READY' || data.type === 'DEBUG_LOG') {
+                setCesiumReady(true);
+            }
+        } catch (e) {}
+    }, []);
+
+    // CesiumJS 로드 → 셀 하이라이트 + lookAt orbit 뷰 + 착륙선 모델
+    const onWebViewLoad = () => {
+        setCesiumReady(true);
+        // 기존 타이머 초기화
+        initTimers.current.forEach(t => clearTimeout(t));
+        initTimers.current = [];
+
+        // 1단계: S2 셀 하이라이트
+        initTimers.current.push(setTimeout(() => {
+            webviewRef.current?.postMessage(JSON.stringify({
+                type: 'HIGHLIGHT_CELL',
+                token: territory.token,
+            }));
+        }, 1500));
+
+        // 2단계: 해당 위치로 orbit 뷰
+        initTimers.current.push(setTimeout(() => {
+            webviewRef.current?.postMessage(JSON.stringify({
+                type: 'GO_TO_LOCATION',
+                payload: {
+                    lat: territory.lat,
+                    lng: territory.lng,
+                    orbit: true,
+                },
+            }));
+        }, 2000));
+
+        // 3단계: 착륙선 모델 배치 (Cesium 초기화 후)
+        initTimers.current.push(setTimeout(() => {
+            loadLandingModels();
+        }, 2000));
     };
 
     return (
-        <SafeAreaView style={styles.container}>
-            <StatusBar barStyle="dark-content" />
+        <View style={{ flex: 1, backgroundColor: '#000' }}>
+            <StatusBar barStyle={firstPersonMode ? 'light-content' : 'dark-content'} />
 
-            {/* 헤더 */}
-            <View style={styles.headerBar}>
-                <TouchableOpacity onPress={() => router.back()} style={styles.backBtn}>
-                    <Ionicons name="arrow-back" size={22} color="#1A1A1A" />
-                </TouchableOpacity>
-                <Text style={styles.headerTitle}>구역 상세</Text>
-                <View style={{ width: 38 }} />
-            </View>
+            {/* ── 헤더 — 1인칭 시 숨김 (LayoutAnimation이 자연스럽게 전환) ── */}
+            {!firstPersonMode && (
+                <SafeAreaView edges={['top']} style={{ backgroundColor: '#FFFFFF' }}>
+                    <View style={styles.headerBar}>
+                        <TouchableOpacity onPress={() => router.back()} style={styles.backBtn}>
+                            <Ionicons name="arrow-back" size={22} color="#1A1A1A" />
+                        </TouchableOpacity>
+                        <Text style={styles.headerTitle}>구역 상세</Text>
+                        <View style={{ width: 38 }} />
+                    </View>
+                </SafeAreaView>
+            )}
 
-            {/* ═══ 달 3D 프리뷰 (CesiumJS) ═══ */}
-            <View style={styles.mapContainer}>
+            {/* ── WebView 영역 — 1인칭 시 flex:1로 전체화면 (LayoutAnimation 전환) ── */}
+            <View style={firstPersonMode ? { flex: 1 } : { height: MAP_HEIGHT }}>
                 <WebView
                     ref={webviewRef}
                     originWhitelist={['*']}
-                    source={{ html: createCesiumHtml('', ''), baseUrl: 'https://moon.com' }}
-                    style={styles.webview}
+                    source={cesiumHtmlUri ? { uri: cesiumHtmlUri } : { html: '<html><body style="background:#000"></body></html>' }}
+                    style={{ flex: 1 }}
                     onLoadEnd={onWebViewLoad}
-                    onMessage={() => {}}
+                    onMessage={onWebViewMessage}
                     injectedJavaScript={`
                         if (!window.ReactNativeWebView) {
                             window.ReactNativeWebView = { postMessage: function() {} };
@@ -246,132 +325,144 @@ export default function TerritoryDetailScreen() {
                     allowFileAccess={true}
                     allowFileAccessFromFileURLs={true}
                     allowUniversalAccessFromFileURLs={true}
+                    allowingReadAccessToURL={'file:///'}
                 />
-                {/* 좌표 오버레이 */}
-                <View style={styles.coordOverlay}>
-                    <Text style={styles.coordText}>
-                        {Math.abs(territory.lat).toFixed(2)}°{territory.lat >= 0 ? 'N' : 'S'}{' '}
-                        {Math.abs(territory.lng).toFixed(2)}°{territory.lng >= 0 ? 'E' : 'W'}
-                    </Text>
-                </View>
+                {/* 1인칭 뷰 버튼 (평상시) */}
+                {!firstPersonMode && (
+                    <TouchableOpacity onPress={enterFirstPerson} style={styles.fpButton}>
+                        <Ionicons name="eye" size={18} color="#fff" />
+                        <Text style={styles.fpButtonText}>1인칭</Text>
+                    </TouchableOpacity>
+                )}
+                {/* 1인칭 모드 UI */}
+                {firstPersonMode && (
+                    <>
+                        <TouchableOpacity onPress={exitFirstPerson} style={styles.fpBackBtn}>
+                            <Ionicons name="arrow-back" size={24} color="#fff" />
+                        </TouchableOpacity>
+                        {!fpReady && (
+                            <View style={styles.fpLoadingOverlay}>
+                                <Text style={styles.fpLoadingText}>지표면으로 이동 중...</Text>
+                            </View>
+                        )}
+                    </>
+                )}
             </View>
 
-            <Animated.ScrollView
-                style={[styles.contentScroll, { opacity: fadeAnim }]}
-                contentContainerStyle={styles.contentInner}
-                showsVerticalScrollIndicator={false}
-            >
-                {/* ── MAG ID + 면적/위경도 (개척모드 셀 카드와 동일) ── */}
-                <View style={styles.tokenSection}>
-                    <View style={{ flex: 1 }}>
-                        <Text style={styles.tokenId}>
-                            {'MAG-L' + territory.level + '-' + territory.token}
-                        </Text>
-                        <Text style={styles.tokenSub}>
-                            {'면적: ' + territory.area + ' km²  ·  ' + Math.abs(territory.lat).toFixed(2) + '°' + (territory.lat >= 0 ? 'N' : 'S') + ' ' + Math.abs(territory.lng).toFixed(2) + '°' + (territory.lng >= 0 ? 'E' : 'W')}
-                        </Text>
-                    </View>
-                </View>
-
-                {/* URN */}
-                <Text style={styles.urnText}>urn:mag:301:{territory.level}:{territory.token}</Text>
-
-                {/* ── 소유 정보 ── */}
-                <View style={styles.sectionCard}>
-                    <Text style={styles.sectionTitle}>개척 정보</Text>
-                    <View style={styles.infoRow}>
-                        <Text style={styles.infoLabel}>개척일</Text>
-                        <Text style={styles.infoValue}>{territory.occupiedDate}</Text>
-                    </View>
-                    <View style={styles.infoDivider} />
-                    <View style={styles.infoRow}>
-                        <Text style={styles.infoLabel}>보유 기간</Text>
-                        <View style={styles.daysRow}>
-                            <Text style={styles.daysValue}>{days}</Text>
-                            <Text style={styles.daysUnit}>일째</Text>
+            {/* ── 스크롤 컨텐츠 — 1인칭 시 숨김 (LayoutAnimation 전환) ── */}
+            {!firstPersonMode && (
+            <View style={{ flex: 1, backgroundColor: '#FFFFFF' }}>
+                <Animated.ScrollView
+                    ref={scrollViewRef}
+                    style={[styles.contentScroll, { opacity: fadeAnim }]}
+                    contentContainerStyle={styles.contentInner}
+                    showsVerticalScrollIndicator={false}
+                    scrollEnabled={scrollEnabled}
+                >
+                    {/* ── MAG ID + 면적/위경도 ── */}
+                    <View style={styles.tokenSection}>
+                        <View style={{ flex: 1 }}>
+                            <Text style={styles.tokenId}>
+                                {'MAG-L' + territory.level + '-' + territory.token}
+                            </Text>
+                            <Text style={styles.tokenSub}>
+                                {(() => { const v = parseFloat(territory.area); return isNaN(v) ? '1,740' : v.toLocaleString(); })() + ' m²  ·  ' + Math.abs(territory.lat).toFixed(2) + '°' + (territory.lat >= 0 ? 'N' : 'S') + ' ' + Math.abs(territory.lng).toFixed(2) + '°' + (territory.lng >= 0 ? 'E' : 'W')}
+                            </Text>
                         </View>
                     </View>
-                    <View style={styles.infoDivider} />
-                    <View style={styles.infoRow}>
-                        <Text style={styles.infoLabel}>개척 비용</Text>
-                        <Text style={styles.infoValue}>{territory.magCost} Mag</Text>
+
+                    {/* URN */}
+                    <Text style={styles.urnText}>urn:mag:301:{territory.level}:{territory.token}</Text>
+
+                    {/* ── 소유 정보 ── */}
+                    <View style={styles.sectionCard}>
+                        <Text style={styles.sectionTitle}>개척 정보</Text>
+                        <View style={styles.infoRow}>
+                            <Text style={styles.infoLabel}>개척일</Text>
+                            <Text style={styles.infoValue}>{territory.occupiedDate}</Text>
+                        </View>
+                        <View style={styles.infoDivider} />
+                        <View style={styles.infoRow}>
+                            <Text style={styles.infoLabel}>보유 기간</Text>
+                            <View style={styles.daysRow}>
+                                <Text style={styles.daysValue}>{days}</Text>
+                                <Text style={styles.daysUnit}>일째</Text>
+                            </View>
+                        </View>
+                        <View style={styles.infoDivider} />
+                        <View style={styles.infoRow}>
+                            <Text style={styles.infoLabel}>개척 비용</Text>
+                            <Text style={styles.infoValue}>{territory.magCost} Mag</Text>
+                        </View>
                     </View>
 
-
-                </View>
-
-                {/* ── 자원 현황 (전체 노출, 접기/펼치기) ── */}
-                <View style={styles.sectionCard}>
-                    <Text style={styles.sectionTitle}>자원 현황</Text>
-                    {ALL_RESOURCES.slice(0, resourceExpanded ? ALL_RESOURCES.length : DEFAULT_VISIBLE).map((m, i) => {
-                        const info = MINERAL_INFO[m];
-                        const concentration = getResourceValue(territory.lat, territory.lng, m);
-                        const barWidth = Math.min(concentration * 4, 100);
-                        return (
-                            <View key={i} style={styles.mineralRow}>
-                                <View style={styles.mineralLeft}>
-                                    <Text style={styles.mineralIcon}>{info?.icon || '🔬'}</Text>
-                                    <View>
-                                        <Text style={styles.mineralFormula}>{m}</Text>
-                                        <Text style={styles.mineralName}>{info?.name || '미확인'}</Text>
+                    {/* ── 자원 현황 ── */}
+                    <View style={styles.sectionCard}>
+                        <Text style={styles.sectionTitle}>자원 현황</Text>
+                        {ALL_RESOURCES.slice(0, resourceExpanded ? ALL_RESOURCES.length : DEFAULT_VISIBLE).map((m, i) => {
+                            const info = MINERAL_INFO[m];
+                            const concentration = getResourceValue(territory.lat, territory.lng, m);
+                            const barWidth = Math.min(concentration * 4, 100);
+                            return (
+                                <View key={i} style={styles.mineralRow}>
+                                    <View style={styles.mineralLeft}>
+                                        <Text style={styles.mineralIcon}>{info?.icon || '🔬'}</Text>
+                                        <View>
+                                            <Text style={styles.mineralFormula}>{m}</Text>
+                                            <Text style={styles.mineralName}>{info?.name || '미확인'}</Text>
+                                        </View>
+                                    </View>
+                                    <View style={styles.mineralRight}>
+                                        <View style={styles.mineralBarBg}>
+                                            <View style={[styles.mineralBarFill, { width: `${barWidth}%`, backgroundColor: info?.color || '#999' }]} />
+                                        </View>
+                                        <Text style={styles.mineralPct}>{concentration} wt%</Text>
                                     </View>
                                 </View>
-                                <View style={styles.mineralRight}>
-                                    <View style={styles.mineralBarBg}>
-                                        <View style={[styles.mineralBarFill, { width: `${barWidth}%`, backgroundColor: info?.color || '#999' }]} />
-                                    </View>
-                                    <Text style={styles.mineralPct}>{concentration} wt%</Text>
-                                </View>
-                            </View>
-                        );
-                    })}
-                    {ALL_RESOURCES.length > DEFAULT_VISIBLE && (
+                            );
+                        })}
+                        {ALL_RESOURCES.length > DEFAULT_VISIBLE && (
+                            <TouchableOpacity
+                                style={styles.expandBtn}
+                                onPress={() => setResourceExpanded(!resourceExpanded)}
+                                activeOpacity={0.6}
+                            >
+                                <Text style={styles.expandBtnText}>
+                                    {resourceExpanded ? `접기 ▲` : `나머지 ${ALL_RESOURCES.length - DEFAULT_VISIBLE}개 더보기 ▼`}
+                                </Text>
+                            </TouchableOpacity>
+                        )}
+                        <Text style={styles.mineralNote}>※ 원격 탐사 추정치, 실측과 차이 있을 수 있음</Text>
+                    </View>
+
+                    {/* ── 빠른 액션 ── */}
+                    <View style={{ paddingHorizontal: 16 }}>
                         <TouchableOpacity
-                            style={styles.expandBtn}
-                            onPress={() => setResourceExpanded(!resourceExpanded)}
-                            activeOpacity={0.6}
+                            style={styles.actionCardFull}
+                            onPress={() => {
+                                router.navigate({
+                                    pathname: '/(tabs)',
+                                    params: {
+                                        lat: String(territory.lat),
+                                        lng: String(territory.lng),
+                                        cellToken: territory.token,
+                                        cellLevel: String(territory.level),
+                                        mode: 'test2',
+                                    }
+                                });
+                            }}
+                            activeOpacity={0.7}
                         >
-                            <Text style={styles.expandBtnText}>
-                                {resourceExpanded ? `접기 ▲` : `나머지 ${ALL_RESOURCES.length - DEFAULT_VISIBLE}개 더보기 ▼`}
-                            </Text>
+                            <Ionicons name="navigate-outline" size={20} color="#fff" />
+                            <Text style={styles.actionFullText}>지도에서 보기</Text>
                         </TouchableOpacity>
-                    )}
-                    <Text style={styles.mineralNote}>※ 원격 탐사 추정치, 실측과 차이 있을 수 있음</Text>
-                </View>
+                    </View>
 
-                {/* ── 빠른 액션 그리드 ── */}
-                <View style={styles.actionGrid}>
-                    <TouchableOpacity
-                        style={styles.actionCard}
-                        onPress={() => {
-                            router.back();
-                            setTimeout(() => router.push({
-                                pathname: '/(tabs)',
-                                params: {
-                                    lat: String(territory.lat),
-                                    lng: String(territory.lng),
-                                    cellToken: territory.token,
-                                    cellLevel: String(territory.level),
-                                }
-                            }), 300);
-                        }}
-                        activeOpacity={0.7}
-                    >
-                        <Ionicons name="navigate-outline" size={24} color="#4A90D9" />
-                        <Text style={styles.actionText}>지도에서 보기</Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity
-                        style={styles.actionCard}
-                        onPress={() => setShowARSurface(true)}
-                        activeOpacity={0.7}
-                    >
-                        <Ionicons name="cube-outline" size={24} color="#66BB6A" />
-                        <Text style={styles.actionText}>AR로 보기</Text>
-                    </TouchableOpacity>
-                </View>
+                    <View style={{ height: 40 }} />
+                </Animated.ScrollView>
+            </View>
+            )}
 
-                <View style={{ height: 40 }} />
-            </Animated.ScrollView>
 
             {/* AR 표면 뷰어 모달 */}
             {showARSurface && (
@@ -383,7 +474,7 @@ export default function TerritoryDetailScreen() {
                     onClose={() => setShowARSurface(false)}
                 />
             )}
-        </SafeAreaView>
+        </View>
     );
 }
 
@@ -395,35 +486,31 @@ const styles = StyleSheet.create({
         flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
         paddingHorizontal: 16, paddingVertical: 12,
         borderBottomWidth: 1, borderBottomColor: '#F0F0F0',
+        backgroundColor: '#FFFFFF',
+        zIndex: 20,
     },
     backBtn: { padding: 8 },
     headerTitle: { fontSize: 17, fontWeight: '700', color: '#1A1A1A' },
 
-    // ── 맵 ──
-    mapContainer: { height: MAP_HEIGHT, backgroundColor: '#111' },
+    // ── 맵 (CesiumJS WebView) ──
+    mapContainer: { height: MAP_HEIGHT, backgroundColor: 'transparent', overflow: 'hidden', borderRadius: 0 },
     webview: { flex: 1 },
-    coordOverlay: {
-        position: 'absolute', bottom: 10, left: 12,
-        backgroundColor: 'rgba(0,0,0,0.55)', borderRadius: 6,
-        paddingVertical: 4, paddingHorizontal: 10,
-    },
-    coordText: { fontSize: 12, fontWeight: '600', color: '#fff', fontFamily: 'monospace' },
 
     // ── 스크롤 컨텐츠 ──
     contentScroll: { flex: 1 },
-    contentInner: { paddingTop: 20, paddingBottom: 30 },
+    contentInner: { paddingBottom: 30 },
 
     // ── 토큰 섹션 ──
     tokenSection: {
         flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between',
-        paddingHorizontal: 20, marginBottom: 4,
+        paddingHorizontal: 20, paddingTop: 20, marginBottom: 4,
     },
-    tokenId: { fontSize: 15, fontWeight: '700', color: '#111', letterSpacing: 0.5 },
-    tokenSub: { fontSize: 13, color: '#666', marginTop: 4 },
+    tokenId: { fontSize: 17, fontWeight: '700', color: '#111', letterSpacing: 0.3 },
+    tokenSub: { fontSize: 13, color: '#999', marginTop: 6 },
 
     urnText: {
         fontSize: 11, color: '#BDBDBD', fontFamily: 'monospace',
-        paddingHorizontal: 20, marginBottom: 20,
+        paddingHorizontal: 20, marginTop: 2, marginBottom: 24,
     },
 
     // ── 섹션 카드 ──
@@ -497,5 +584,30 @@ const styles = StyleSheet.create({
         backgroundColor: '#F7F7FA', borderRadius: 14,
         paddingVertical: 20,
     },
+    actionCardFull: {
+        flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8,
+        backgroundColor: '#4A90D9', borderRadius: 14,
+        paddingVertical: 16,
+    },
+    actionFullText: { fontSize: 15, fontWeight: '700', color: '#FFFFFF' },
     actionText: { fontSize: 13, fontWeight: '600', color: '#333' },
+    fpButton: {
+        position: 'absolute', bottom: 12, right: 12,
+        flexDirection: 'row', alignItems: 'center', gap: 4,
+        backgroundColor: 'rgba(0,0,0,0.65)', paddingHorizontal: 10, paddingVertical: 6,
+        borderRadius: 20,
+    },
+    fpButtonText: { color: '#fff', fontSize: 11, fontWeight: '600' },
+
+    fpBackBtn: {
+        position: 'absolute', top: 56, left: 16,
+        width: 40, height: 40, borderRadius: 20,
+        backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', alignItems: 'center',
+    },
+    fpLoadingOverlay: {
+        ...StyleSheet.absoluteFillObject,
+        justifyContent: 'center', alignItems: 'center',
+        backgroundColor: 'rgba(0,0,0,0.4)',
+    },
+    fpLoadingText: { color: '#fff', fontSize: 16, fontWeight: '600' },
 });

@@ -140,20 +140,19 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     await AsyncStorage.removeItem(AUTH_SESSION_KEY);
   }, []);
 
-  // SNS 로그인 (나중에 연동)
+  // SNS 로그인 (임시: 모든 SNS 버튼 → 주인공 계정 로그인)
   const loginWithSNS = useCallback(async (provider: 'kakao' | 'apple' | 'naver' | 'facebook') => {
     // TODO: SNS_AUTH - 실제 SNS SDK 연동 시 구현
-    const providerNames: Record<string, string> = {
-      kakao: '카카오',
-      apple: 'Apple',
-      naver: '네이버',
-      facebook: 'Facebook',
-    };
-    Alert.alert(
-      `${providerNames[provider]} 로그인`,
-      '추후 업데이트에서 지원될 예정입니다.\n이메일로 로그인해 주세요.',
-      [{ text: '확인' }]
-    );
+    try {
+      const heroUser = await getUser(HERO_USER.id);
+      if (heroUser) {
+        const authUser = dbUserToAuthUser(heroUser);
+        setUser(authUser);
+        await AsyncStorage.setItem(AUTH_SESSION_KEY, JSON.stringify({ userId: heroUser.id }));
+      }
+    } catch (e) {
+      console.error('[Auth] SNS login error:', e);
+    }
   }, []);
 
   // 유저 정보 새로고침

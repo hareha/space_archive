@@ -253,6 +253,7 @@ export const CESIUM_INIT = `
 
 
         
+
         // Hide Loading Overlay (fade out)
         const loader = document.getElementById('loadingOverlay');
         if(loader) {
@@ -406,8 +407,30 @@ export const CESIUM_INIT = `
         window.multiSelectedL16 = [];
         // PL primitive도 정리
         if (typeof plGridPrimitives !== 'undefined' && plGridPrimitives) plGridPrimitives.removeAll();
-        // TR primitive도 정리
+        // TR primitive 완전 정리
         if (typeof trGridPrimitives !== 'undefined' && trGridPrimitives) trGridPrimitives.removeAll();
+        if (typeof trNeighborPrimitives !== 'undefined' && trNeighborPrimitives) trNeighborPrimitives.removeAll();
+        if (typeof trFlashPrimitives !== 'undefined' && trFlashPrimitives) trFlashPrimitives.removeAll();
+        if (typeof trAccumulatedPrimitives !== 'undefined' && trAccumulatedPrimitives) trAccumulatedPrimitives.removeAll();
+        window.trSelectionPrimMap = {};
+        // _renderedCellMap의 labelCol 정리 (viewer.scene.primitives에 직접 추가된 것)
+        if (typeof _renderedCellMap !== 'undefined') {
+            for (var rk in _renderedCellMap) {
+                if (_renderedCellMap[rk] && _renderedCellMap[rk].labelCol) {
+                    try { viewer.scene.primitives.remove(_renderedCellMap[rk].labelCol); } catch(e) {}
+                }
+            }
+            _renderedCellMap = {};
+        }
+        // 점유 팝업/하이라이트 정리
+        if (typeof _removeOccInfoLabel === 'function') _removeOccInfoLabel();
+        var _popupEl = document.getElementById('occInfoPopup');
+        if (_popupEl) _popupEl.style.display = 'none';
+        window._occInfoPos = null;
+        if (window._occHighlightPrim) {
+            try { if (typeof trGridPrimitives !== 'undefined') trGridPrimitives.remove(window._occHighlightPrim); } catch(e) {}
+            window._occHighlightPrim = null;
+        }
         if (mainMode === 'test2') {
             renderTerrain();
         } else if (mainMode === 'test1') {
@@ -421,7 +444,14 @@ export const CESIUM_INIT = `
         try { viewer.camera.lookAtTransform(Cesium.Matrix4.IDENTITY); } catch(e) {}
         // 진행 중인 카메라 비행 중단 후 초기 뷰로 이동
         viewer.camera.cancelFlight();
-        if(moonTileset) viewer.camera.flyToBoundingSphere(moonTileset.boundingSphere, { duration: 1.0 });
+        if(moonTileset) {
+            _isFlyingTo = true;
+            viewer.camera.flyToBoundingSphere(moonTileset.boundingSphere, {
+                duration: 1.0,
+                complete: function() { _isFlyingTo = false; },
+                cancel: function() { _isFlyingTo = false; }
+            });
+        }
       }
 
       function resetAndFlyTo(lat, lng) {
@@ -458,12 +488,11 @@ export const CESIUM_INIT = `
         try { viewer.camera.lookAtTransform(Cesium.Matrix4.IDENTITY); } catch(e) {}
         // 6. 진행 중인 카메라 비행 중단
         viewer.camera.cancelFlight();
-        // 7. 지정 위치로 이동 (flyToBoundingSphere 없이 바로)
-        var _mr = Cesium.Ellipsoid.MOON.maximumRadius;
+        // 7. 지정 위치로 이동 (0레벨 글로벌 뷰에서 약간 줌인한 수준)
         var dest = Cesium.Cartesian3.fromRadians(
             Cesium.Math.toRadians(lng),
             Cesium.Math.toRadians(lat),
-            _mr + 50000,
+            1500000,
             Cesium.Ellipsoid.MOON
         );
         viewer.camera.flyTo({
@@ -531,7 +560,14 @@ export const CESIUM_INIT = `
           // lookAt 해제 후 현재 방향 유지하면서 줌아웃
           try { viewer.camera.lookAtTransform(Cesium.Matrix4.IDENTITY); } catch(e) {}
           viewer.camera.cancelFlight();
-          if (moonTileset) viewer.camera.flyToBoundingSphere(moonTileset.boundingSphere, { duration: 1.0 });
+          if (moonTileset) {
+              _isFlyingTo = true;
+              viewer.camera.flyToBoundingSphere(moonTileset.boundingSphere, {
+                  duration: 1.0,
+                  complete: function() { _isFlyingTo = false; },
+                  cancel: function() { _isFlyingTo = false; }
+              });
+          }
         }
       }
 `;

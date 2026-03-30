@@ -1,5 +1,5 @@
-import React from 'react';
-import { View, TouchableOpacity, StyleSheet, Image, Text } from 'react-native';
+import React, { useState, useRef, useEffect } from 'react';
+import { View, TouchableOpacity, StyleSheet, Image, Text, Animated } from 'react-native';
 import { Tabs } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -85,23 +85,57 @@ function CustomTabBar({ state, descriptors, navigation }: BottomTabBarProps) {
 }
 
 export default function TabLayout() {
+    const [showSplash, setShowSplash] = useState(true);
+    const splashOpacity = useRef(new Animated.Value(1)).current;
+
+    useEffect(() => {
+        const timer = setTimeout(() => {
+            Animated.timing(splashOpacity, {
+                toValue: 0,
+                duration: 600,
+                useNativeDriver: true,
+            }).start(() => setShowSplash(false));
+        }, 1500);
+        return () => clearTimeout(timer);
+    }, []);
+
     return (
-        <Tabs
-            tabBar={(props) => <CustomTabBar {...props} />}
-            screenOptions={{
-                headerShown: false,
-                tabBarStyle: {
-                    backgroundColor: 'transparent',
-                    borderTopWidth: 0,
-                    elevation: 0,
-                },
-            }}
-        >
-            <Tabs.Screen name="moon" />
-            <Tabs.Screen name="index" />
-            <Tabs.Screen name="mypage" />
-            <Tabs.Screen name="two" options={{ href: null }} />
-        </Tabs>
+        <View style={{ flex: 1 }}>
+            <Tabs
+                tabBar={(props) => <CustomTabBar {...props} />}
+                screenOptions={{
+                    headerShown: false,
+                    tabBarStyle: {
+                        backgroundColor: 'transparent',
+                        borderTopWidth: 0,
+                        elevation: 0,
+                    },
+                }}
+            >
+                <Tabs.Screen name="moon" />
+                <Tabs.Screen name="index" />
+                <Tabs.Screen name="mypage" />
+                <Tabs.Screen name="two" options={{ href: null }} />
+            </Tabs>
+
+            {/* 스플래시 — 바텀탭 포함 전체 화면 가림 */}
+            {showSplash && (
+                <Animated.View
+                    pointerEvents="none"
+                    style={{
+                        position: 'absolute', top: 0, left: 0, right: 0, bottom: 0,
+                        zIndex: 99999, backgroundColor: '#fff', opacity: splashOpacity,
+                        alignItems: 'center', justifyContent: 'center',
+                    }}
+                >
+                    <Image
+                        source={require('../../assets/images/splash.png')}
+                        style={{ width: '100%', height: '100%' }}
+                        resizeMode="contain"
+                    />
+                </Animated.View>
+            )}
+        </View>
     );
 }
 

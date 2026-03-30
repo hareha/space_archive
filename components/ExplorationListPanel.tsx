@@ -355,9 +355,9 @@ const styles = StyleSheet.create({
     bottom: 0,
     left: 0,
     right: 0,
-    backgroundColor: '#111827',
-    borderTopLeftRadius: 24,
-    borderTopRightRadius: 24,
+    backgroundColor: '#15171C',
+    borderTopLeftRadius: 14,
+    borderTopRightRadius: 14,
     overflow: 'hidden',
     zIndex: 20,
     shadowColor: '#000',
@@ -368,14 +368,14 @@ const styles = StyleSheet.create({
   },
   handleArea: {
     alignItems: 'center',
-    paddingTop: 14,
-    paddingBottom: 10,
+    paddingTop: 8,
+    paddingBottom: 6,
   },
   handleBar: {
-    width: 40,
+    width: 48,
     height: 4,
-    backgroundColor: '#4B5563',
-    borderRadius: 2,
+    backgroundColor: 'rgba(255,255,255,0.2)',
+    borderRadius: 1,
   },
   headerRow: {
     flexDirection: 'row',
@@ -400,7 +400,7 @@ const styles = StyleSheet.create({
   categoryCard: {
     flex: 1,
     backgroundColor: 'rgba(255,255,255,0.04)',
-    borderRadius: 14,
+    borderRadius: 10,
     paddingVertical: 12,
     paddingHorizontal: 10,
     borderWidth: 1,
@@ -428,12 +428,12 @@ const styles = StyleSheet.create({
     width: 36,
     height: 20,
     borderRadius: 10,
-    backgroundColor: '#374151',
+    backgroundColor: '#2A2C30',
     justifyContent: 'center',
     paddingHorizontal: 2,
   },
   toggleTrackOn: {
-    backgroundColor: '#3B82F6',
+    backgroundColor: '#2175FA',
   },
   toggleThumb: {
     width: 16,
@@ -468,7 +468,7 @@ const styles = StyleSheet.create({
     borderColor: '#374151',
   },
   sortChipActive: {
-    backgroundColor: '#1F2937',
+    backgroundColor: '#2A2C30',
   },
   sortChipText: {
     color: '#6B7280',

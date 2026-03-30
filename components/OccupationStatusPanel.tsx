@@ -90,7 +90,7 @@ export default function OccupationStatusPanel({
   };
 
   return (
-    <SafeAreaView style={{ flex: 1, backgroundColor: '#111827' }}>
+    <SafeAreaView style={{ flex: 1, backgroundColor: '#15171C' }}>
       {/* 헤더: 뒤로가기 + 지형명 */}
       <View style={st.header}>
         <TouchableOpacity onPress={onBack} style={st.backBtn}>

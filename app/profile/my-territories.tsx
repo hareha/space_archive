@@ -6,6 +6,7 @@ import {
 import { useRouter } from 'expo-router';
 import { Text } from '@/components/Themed';
 import { Ionicons } from '@expo/vector-icons';
+import { useEll, type PurchasedTerritory } from '@/components/EllContext';
 
 const { width } = Dimensions.get('window');
 const GRID_COLS = 3;
@@ -58,7 +59,6 @@ function getLatBandKey(t: Territory): string {
     return 'sp';
 }
 
-// ═══════════════════════════════════════
 // 데이터
 // ═══════════════════════════════════════
 interface Territory {
@@ -74,24 +74,7 @@ interface Territory {
     score?: number;
 }
 
-const MY_TERRITORIES: Territory[] = [
-    // 북극 (60°~90°N) — 3구역
-    { id: 'T001', token: '25d45a3f', level: 16, lat: 73.0, lng: 16.2, area: '0.19', magCost: 4, occupiedDate: '2025.11.20', minerals: ['He-3', 'H₂O'], score: 94 },
-    { id: 'T002', token: '25d45a45', level: 16, lat: 71.4, lng: 15.8, area: '0.18', magCost: 4, occupiedDate: '2025.11.21', minerals: ['He-3'], score: 91 },
-    { id: 'T003', token: '27b1c8d3', level: 16, lat: 74.6, lng: -30.1, area: '0.17', magCost: 4, occupiedDate: '2026.01.05', minerals: ['H₂O', 'FeO'], score: 88 },
-    // 북위 (0°~60°N) — 3구역 (아폴로 11호 근처 등)
-    { id: 'T004', token: '4c5e7a19', level: 16, lat: 0.67, lng: 23.47, area: '0.23', magCost: 4, occupiedDate: '2025.12.15', minerals: ['FeO', 'TiO₂'], score: 87 },
-    { id: 'T005', token: '4d3f2b71', level: 16, lat: 18.2, lng: -54.3, area: '0.22', magCost: 4, occupiedDate: '2026.01.10', minerals: ['TiO₂', 'MgO'], score: 72 },
-    { id: 'T006', token: '5a7e9c03', level: 16, lat: 45.6, lng: 88.2, area: '0.20', magCost: 4, occupiedDate: '2026.02.01', minerals: ['MgO'], score: 68 },
-    // 남위 (0°~60°S) — 3구역
-    { id: 'T007', token: '89a4d6b5', level: 16, lat: -21.3, lng: -16.6, area: '0.22', magCost: 4, occupiedDate: '2026.02.28', minerals: ['SiO₂', 'CaO'], score: 54 },
-    { id: 'T008', token: '8b2c1e47', level: 16, lat: -43.3, lng: -11.2, area: '0.20', magCost: 4, occupiedDate: '2026.03.05', minerals: ['Al₂O₃', 'FeO', 'U'], score: 93 },
-    { id: 'T009', token: '9e3d7f29', level: 16, lat: -15.7, lng: 45.8, area: '0.22', magCost: 4, occupiedDate: '2026.03.08', minerals: ['TiO₂'], score: 70 },
-    // 남극 (60°~90°S) — 3구역 (Shackleton 근처 등)
-    { id: 'T010', token: 'b14a5c83', level: 16, lat: -65.4, lng: -22.1, area: '0.17', magCost: 4, occupiedDate: '2026.03.10', minerals: ['H₂O', 'He-3'], score: 96 },
-    { id: 'T011', token: 'b37e2d15', level: 16, lat: -71.8, lng: 50.3, area: '0.16', magCost: 4, occupiedDate: '2026.03.11', minerals: ['H₂O'], score: 92 },
-    { id: 'T012', token: 'b5c8f1a7', level: 16, lat: -75.2, lng: -80.6, area: '0.15', magCost: 4, occupiedDate: '2026.03.12', minerals: ['He-3', 'Al₂O₃'], score: 90 },
-];
+// (하드코딩된 MY_TERRITORIES 제거 — EllContext에서 실제 구매 데이터 사용)
 
 // ─── 그룹 생성 ───
 interface GroupData {
@@ -117,17 +100,13 @@ function buildGroups(
         return {
             def,
             items,
-            totalArea: items.reduce((s, i) => s + parseFloat(i.area), 0),
+            totalArea: items.reduce((s, i) => { const v = parseFloat(i.area); return s + (isNaN(v) ? 1740 : v); }, 0),
             owned: items.length > 0,
         };
     });
 }
 
-// ─── 통계 ───
-const TOTAL_COUNT = MY_TERRITORIES.length;
-const TOTAL_MAG = MY_TERRITORIES.reduce((s, t) => s + t.magCost, 0);
-const TOTAL_AREA = MY_TERRITORIES.reduce((s, t) => s + parseFloat(t.area), 0);
-
+// ─── 통계 (동적) ───
 function scoreColor(score: number) {
     if (score >= 80) return '#4A90D9';
     if (score >= 60) return '#66BB6A';
@@ -149,6 +128,19 @@ type ClassifyMode = 'face' | 'quadrant';
 
 export default function MyTerritoriesScreen() {
     const router = useRouter();
+    const { purchasedTerritories, totalOccupied, totalMagSpent, totalArea } = useEll();
+
+    // PurchasedTerritory → Territory 변환
+    const MY_TERRITORIES: Territory[] = useMemo(() => purchasedTerritories.map(pt => ({
+        ...pt,
+        minerals: [],
+        score: 0,
+    })), [purchasedTerritories]);
+
+    const TOTAL_COUNT = MY_TERRITORIES.length;
+    const TOTAL_MAG = totalMagSpent;
+    const TOTAL_AREA_VAL = totalArea;
+
     const [viewMode, setViewMode] = useState<'list' | 'grid'>('list');
     const [classify, setClassify] = useState<ClassifyMode>('quadrant');
     const [expandedKey, setExpandedKey] = useState<string | null>(null);
@@ -212,7 +204,7 @@ export default function MyTerritoriesScreen() {
                     <View style={styles.dashDivider} />
                     <DashCell label="개척 Mag" value={String(TOTAL_MAG)} unit="Mag" />
                     <View style={styles.dashDivider} />
-                    <DashCell label="총 면적" value={TOTAL_AREA.toFixed(1)} unit="km²" />
+                    <DashCell label="총 면적" value={TOTAL_COUNT === 0 ? '-' : (isNaN(TOTAL_AREA_VAL) ? (TOTAL_COUNT * 1740).toLocaleString() : TOTAL_AREA_VAL.toLocaleString())} unit="m²" />
                 </View>
 
                 {/* ── 분류 기준 (위경도만) ── */}
@@ -236,7 +228,7 @@ export default function MyTerritoriesScreen() {
                                 <View style={{ flex: 1 }}>
                                     <Text style={[styles.groupName, !isOwned && styles.groupNameDim]}>{group.def.label}</Text>
                                     {isOwned ? (
-                                        <Text style={styles.groupMeta}>{group.items.length}구역 · {group.totalArea.toFixed(1)} km²</Text>
+                                        <Text style={styles.groupMeta}>{group.items.length}구역 · {isNaN(group.totalArea) ? (group.items.length * 1740).toLocaleString() : group.totalArea.toLocaleString()} m²</Text>
                                     ) : (
                                         <Text style={styles.groupMetaDim}>미개척</Text>
                                     )}

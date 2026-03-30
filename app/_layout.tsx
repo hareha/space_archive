@@ -9,8 +9,10 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 
 import { useColorScheme } from '@/components/useColorScheme';
 import OnboardingScreen from '@/components/OnboardingScreen';
+import OnboardingScreenB from '@/components/OnboardingScreenB';
 import { OnboardingProvider, useOnboarding } from '@/components/OnboardingContext';
 import { AuthProvider } from '@/components/AuthContext';
+import { EllProvider } from '@/components/EllContext';
 
 export {
   // Catch any errors thrown by the Layout component.
@@ -49,7 +51,9 @@ export default function RootLayout() {
   return (
     <OnboardingProvider>
       <AuthProvider>
-        <RootLayoutNav />
+        <EllProvider>
+          <RootLayoutNav />
+        </EllProvider>
       </AuthProvider>
     </OnboardingProvider>
   );
@@ -57,8 +61,7 @@ export default function RootLayout() {
 
 function RootLayoutNav() {
   const colorScheme = useColorScheme();
-  const { showOnboarding, setShowOnboarding } = useOnboarding();
-  // null = 아직 확인 중
+  const { showOnboarding, setShowOnboarding, showOnboardingB, setShowOnboardingB } = useOnboarding();
   const [checked, setChecked] = useState(false);
 
   useEffect(() => {
@@ -84,6 +87,11 @@ function RootLayoutNav() {
     }
     setShowOnboarding(false);
   };
+
+  // B안 온보딩 다시보기
+  if (showOnboardingB) {
+    return <OnboardingScreenB onComplete={() => setShowOnboardingB(false)} />;
+  }
 
   // 온보딩 표시 (첫 실행 or 다시보기 모두 동일)
   if (showOnboarding) {

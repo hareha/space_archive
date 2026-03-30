@@ -152,6 +152,53 @@ export const CESIUM_CONTROLS_OCCUPATION = `
           currentAnimFrame = requestAnimationFrame(animFrame);
       }
 
+      // --- 점유 셀 정보 팝업 (HTML 오버레이) ---
+      var _occPopupEl = document.getElementById('occInfoPopup');
+      var _occPreRenderHandler = null;
+
+      function _showOccPopup(cartesian3Pos, token, lat, lng, isMine) {
+          // 기존 팝업 닫기
+          _hideOccPopup();
+          window._occInfoToken = token;
+          window._occInfoPos = cartesian3Pos;
+
+          // 팝업 내용 설정
+          var statusEl = document.getElementById('occStatusText');
+          statusEl.textContent = isMine ? 'MY TERRITORY' : 'OCCUPIED';
+          statusEl.className = 'occ-status ' + (isMine ? 'mine' : 'other');
+          document.getElementById('occTokenText').textContent = token;
+          document.getElementById('occCoordText').textContent = lat.toFixed(4) + ', ' + lng.toFixed(4);
+          // 소유자 정보는 RN 응답 후 표시
+          document.getElementById('occOwnerRow').style.display = 'none';
+
+          // preRender에서 매 프레임 2D 위치 갱신
+          _occPreRenderHandler = viewer.scene.preRender.addEventListener(function() {
+              if (!window._occInfoPos || !_occPopupEl) return;
+              var screenPos = Cesium.SceneTransforms.wgs84ToWindowCoordinates(viewer.scene, window._occInfoPos);
+              if (screenPos) {
+                  _occPopupEl.style.left = screenPos.x + 'px';
+                  _occPopupEl.style.top = (screenPos.y - 18) + 'px';
+                  _occPopupEl.style.display = 'block';
+              } else {
+                  _occPopupEl.style.display = 'none';
+              }
+          });
+      }
+
+      function _hideOccPopup() {
+          if (_occPopupEl) _occPopupEl.style.display = 'none';
+          if (_occPreRenderHandler) { _occPreRenderHandler(); _occPreRenderHandler = null; }
+          // 점유 셀 하이라이트 제거
+          if (window._occHighlightPrim) {
+              try { trGridPrimitives.remove(window._occHighlightPrim); } catch(e) {}
+              window._occHighlightPrim = null;
+          }
+          window._occInfoToken = null;
+          window._occInfoPos = null;
+      }
+      // 하위 호환
+      function _removeOccInfoLabel() { _hideOccPopup(); }
+
       // --- TR 전용 클릭 핸들러 ---
       var trClickHandler = new Cesium.ScreenSpaceEventHandler(viewer.scene.canvas);
       trClickHandler.setInputAction(function(movement) {
@@ -179,25 +226,67 @@ export const CESIUM_CONTROLS_OCCUPATION = `
               if (!targetL16) return;
 
               var targetToken = s2.cellid.toToken(targetL16);
-              flashCellTR(targetL16);
 
-              // 이미 점유된 셀 → 선택하지 않고 정보만 전송
+              // 이미 점유된 셀 → 선택 집계 영향 없이 팝업 표시
               var isOccupied = occupiedTokens.indexOf(targetToken) !== -1;
               var isMyTerritory = (typeof myOccupiedTokens !== 'undefined') && myOccupiedTokens.indexOf(targetToken) !== -1;
               if (isOccupied) {
+                  // 같은 셀 재클릭 → 팝업 닫기
+                  if (window._occInfoToken === targetToken) {
+                      _hideOccPopup();
+                      return;
+                  }
+                  // 셀 중심 좌표 계산
                   var occ2 = s2.Cell.fromCellID(targetL16).center();
                   var occr2 = Math.sqrt(occ2.x**2+occ2.y**2+occ2.z**2);
-                  sendToRN('CELL_SELECTED', {
-                      cellId: targetToken, token: targetToken,
-                      lat: parseFloat((Math.asin(occ2.z / occr2) * 180 / Math.PI).toFixed(2)),
-                      lng: parseFloat((Math.atan2(occ2.y, occ2.x) * 180 / Math.PI).toFixed(2)),
-                      level: 16, childLevel: 16,
-                      magCount: 1, area: '~0.8 km²',
-                      isOccupied: true,
-                      isMyTerritory: isMyTerritory
-                  });
+                  var occLat = parseFloat((Math.asin(occ2.z / occr2) * 180 / Math.PI).toFixed(4));
+                  var occLng = parseFloat((Math.atan2(occ2.y, occ2.x) * 180 / Math.PI).toFixed(4));
+
+                  // 팝업 위치: 셀 중심 지형 높이
+                  var lastCid = selectionStack.length > 0 ? selectionStack[selectionStack.length - 1] : targetL16;
+                  var pLvl = s2.cellid.level(lastCid);
+                  var actualParent = s2.cellid.parent(targetL16, pLvl);
+                  var refVerts = sampleCellVertices(actualParent);
+                  var occLatRad = Math.asin(occ2.z / occr2);
+                  var occLngRad = Math.atan2(occ2.y, occ2.x);
+                  var labelH = interpolateHeight(occLatRad, occLngRad, refVerts) + TR_HEIGHT_OFFSET;
+                  var labelPos = Cesium.Cartesian3.fromRadians(occLngRad, occLatRad, labelH, Cesium.Ellipsoid.MOON);
+
+                  _showOccPopup(labelPos, targetToken, occLat, occLng, isMyTerritory);
+
+                  // 점유 셀 하이라이트 (흰색 반투명)
+                  var occCell = s2.Cell.fromCellID(targetL16);
+                  var occPositions = [];
+                  for (var ovi = 0; ovi < 4; ovi++) {
+                      var ov = occCell.vertex(ovi);
+                      var ovr = Math.sqrt(ov.x**2+ov.y**2+ov.z**2);
+                      occPositions.push(terrainCartesian(Math.asin(ov.z/ovr), Math.atan2(ov.y, ov.x), refVerts));
+                  }
+                  window._occHighlightPrim = trGridPrimitives.add(new Cesium.Primitive({
+                      geometryInstances: new Cesium.GeometryInstance({
+                          geometry: new Cesium.PolygonGeometry({
+                              polygonHierarchy: new Cesium.PolygonHierarchy(occPositions),
+                              ellipsoid: Cesium.Ellipsoid.MOON,
+                              perPositionHeight: true,
+                          }),
+                          attributes: { color: Cesium.ColorGeometryInstanceAttribute.fromColor(
+                              new Cesium.Color(1.0, 1.0, 1.0, 0.25)
+                          )}
+                      }),
+                      appearance: new Cesium.PerInstanceColorAppearance({
+                          flat: true, translucent: true,
+                          renderState: { depthTest: { enabled: false }, depthMask: false }
+                      }),
+                      asynchronous: true,
+                  }));
+
+                  // RN에 소유자 정보 쿼리
+                  sendToRN('QUERY_CELL_OWNER', { token: targetToken, lat: occLat, lng: occLng, isMyTerritory: isMyTerritory });
                   return;
               }
+
+              // 빈 셀 선택 → 점유 셀 정보 라벨 제거
+              _removeOccInfoLabel();
 
               if (!window.multiSelectedL16) window.multiSelectedL16 = [];
 
@@ -251,17 +340,14 @@ export const CESIUM_CONTROLS_OCCUPATION = `
                   unit: window.multiSelectedL16.length + ' Block = ' + window.multiSelectedL16.length + ' Mag',
                   magCount: window.multiSelectedL16.length,
                   price: '$' + window.multiSelectedL16.length,
-                  area: '~' + (0.8 * window.multiSelectedL16.length).toFixed(1) + ' km²',
+                  area: (1740 * window.multiSelectedL16.length).toLocaleString() + ' m²',
                   multiTokens: window.multiSelectedL16.slice(),
                   multiLats: multiLats,
                   multiLngs: multiLngs,
                   isMultiSelect: window.multiSelectedL16.length > 1
               });
 
-              // 선택 플래시 피드백
-              flashCellTR(targetL16);
-
-              // 선택 하이라이트 관리 (개별 primitive)
+              // 선택 하이라이트 관리 (개별 primitive) — 점멸 없이 즉시 적용
               if (!window.trSelectionPrimMap) window.trSelectionPrimMap = {};
 
               if (existingIdx !== -1) {
@@ -271,7 +357,7 @@ export const CESIUM_CONTROLS_OCCUPATION = `
                       delete window.trSelectionPrimMap[targetToken];
                   }
               } else {
-                  // 새 셀 primitive 추가 (파란색 — 선택)
+                  // 새 셀 primitive 추가 (투명 흰색 — 선택)
                   if (!window.trSelectionPrimMap[targetToken]) {
                       var cid = s2.cellid.fromToken(targetToken);
                       var cell = s2.Cell.fromCellID(cid);
@@ -296,7 +382,7 @@ export const CESIUM_CONTROLS_OCCUPATION = `
                                   perPositionHeight: true,
                               }),
                               attributes: { color: Cesium.ColorGeometryInstanceAttribute.fromColor(
-                                  new Cesium.Color(0.15, 0.45, 0.95, 0.45)
+                                  new Cesium.Color(0.95, 0.95, 1.0, 0.3)
                               )}
                           }),
                           appearance: new Cesium.PerInstanceColorAppearance({
@@ -355,30 +441,96 @@ export const CESIUM_CONTROLS_OCCUPATION = `
 
                   function doRenderWhenReady() {
                       if (!window.tilesetReady) {
-
+                          sendToRN('TILESET_LOADING', { status: 'waiting' });
                           setTimeout(doRenderWhenReady, 500);
                           return;
                       }
-
-                      renderTerrain(); // 초기 진입: 전체 초기화
+                      sendToRN('TILESET_READY', {});
+                      renderL0Animated(); // 초기 진입: 확산 애니메이션
                   }
                   doRenderWhenReady();
+
+                  // 더미 구매 셀 토큰 계산 (위도 30°N, 경도 15°E → S2 L16)
+                  try {
+                      var demoLat = Cesium.Math.toRadians(30.0);
+                      var demoLon = Cesium.Math.toRadians(15.0);
+                      var demoPt = {
+                          x: Math.cos(demoLat) * Math.cos(demoLon),
+                          y: Math.cos(demoLat) * Math.sin(demoLon),
+                          z: Math.sin(demoLat)
+                      };
+                      var demoLeaf = s2.cellid.fromPoint(demoPt);
+                      var demoL16 = s2.cellid.parent(demoLeaf, 16);
+                      var demoToken = s2.cellid.toToken(demoL16);
+                      var demoLatDeg = 30.0;
+                      var demoLngDeg = 15.0;
+                      // 정확한 셀 중심 좌표로 교정
+                      var demoCell = s2.Cell.fromCellID(demoL16);
+                      var dc = demoCell.center();
+                      var dcr = Math.sqrt(dc.x*dc.x + dc.y*dc.y + dc.z*dc.z);
+                      demoLatDeg = Cesium.Math.toDegrees(Math.asin(dc.z / dcr));
+                      demoLngDeg = Cesium.Math.toDegrees(Math.atan2(dc.y, dc.x));
+                      sendToRN('DEMO_TOKEN', { token: demoToken, lat: demoLatDeg, lng: demoLngDeg });
+                  } catch(e) { console.warn('[TR] demo token calc failed:', e); }
               }
               if (msg.type === 'EXIT_TEST2_MODE') {
-
+                  // ═══ 개척모드 완전 초기화 ═══
+                  // Primitive 정리
                   trGridPrimitives.removeAll();
                   trNeighborPrimitives.removeAll();
                   trFlashPrimitives.removeAll();
+                  trAccumulatedPrimitives.removeAll();
+
+                  // 선택 상태 초기화
                   window.multiSelectedL16 = [];
                   window.trSelectionPrimMap = {};
+                  selectionStack = [];
+
+                  // 카메라 트래킹/애니메이션 정리
                   stopL0CameraTracking();
-                  // 카메라 틸트 다시 잠그기
+                  stopCameraTracking();
+                  if (_spreadAnimFrame) { cancelAnimationFrame(_spreadAnimFrame); _spreadAnimFrame = null; }
+                  if (_parentFadeFrame) { cancelAnimationFrame(_parentFadeFrame); _parentFadeFrame = null; }
+                  if (_l0AnimFrame) { cancelAnimationFrame(_l0AnimFrame); _l0AnimFrame = null; }
+                  _isFlyingTo = false;
+                  _activeToken = null;
+                  _lastCameraCenterToken = null;
+                  _l0LastToken = null;
+
+                  // 점유 팝업/하이라이트 정리
+                  var popupEl = document.getElementById('occInfoPopup');
+                  if (popupEl) popupEl.style.display = 'none';
+                  window._occInfoPos = null;
+                  if (window._occHighlightPrim) {
+                      try { trGridPrimitives.remove(window._occHighlightPrim); } catch(e) {}
+                      window._occHighlightPrim = null;
+                  }
+
+                  // 점유 라벨 정리 (_renderedCellMap의 labelCol → viewer.scene.primitives에 직접 추가됨)
+                  for (var rk in _renderedCellMap) {
+                      var entry = _renderedCellMap[rk];
+                      if (entry && entry.labelCol) {
+                          try { viewer.scene.primitives.remove(entry.labelCol); } catch(e) {}
+                      }
+                  }
+                  _renderedCellMap = {};
+                  if (typeof _occupationLabels !== 'undefined' && _occupationLabels) {
+                      viewer.scene.primitives.remove(_occupationLabels);
+                      _occupationLabels = null;
+                  }
+
+                  // 카메라 틸트 잠금
                   viewer.scene.screenSpaceCameraController.enableTilt = false;
+
                   // 이벤트 리스너 정리
                   if (_trTileListener && window.moonTileset) {
                       try { window.moonTileset.allTilesLoaded.removeEventListener(_trTileListener); } catch(e) {}
                       _trTileListener = null;
                   }
+
+                  // UI 리셋
+                  updateUI();
+                  sendToRN('CELL_DESELECTED', {});
               }
               if (msg.type === 'SELECT_CENTER_CELL') {
                   if (_isFlyingTo || _gridExpandFrame || _gridShrinkFrame) return; // 애니메이션 중 입력 차단
@@ -428,6 +580,7 @@ export const CESIUM_CONTROLS_OCCUPATION = `
                   if (selectionStack.length === 0) return;
                   if (_isFlyingTo || _gridExpandFrame || _gridShrinkFrame) return; // 애니메이션 중 입력 차단
                   stopCameraTracking();
+                  _removeOccInfoLabel(); // 점유 셀 정보 라벨 제거
                   _isFlyingTo = true;
 
                   // 1) 현재 자식 그리드 참조 + wireframe 좌표 수집
@@ -520,8 +673,203 @@ export const CESIUM_CONTROLS_OCCUPATION = `
 
                   renderTerrain(true); // RECALC: 기존 세부그리드 유지
               }
+              if (msg.type === 'CELL_OWNER_INFO') {
+                  var ownerPayload = msg.payload || {};
+                  if (window._occInfoToken === ownerPayload.token) {
+                      var ownerRow = document.getElementById('occOwnerRow');
+                      var avatarEl = document.getElementById('occAvatar');
+                      var nicknameEl = document.getElementById('occNickname');
+                      if (ownerRow && ownerPayload.nickname) {
+                          ownerRow.style.display = 'flex';
+                          avatarEl.style.background = ownerPayload.avatarColor || '#555';
+                          avatarEl.textContent = (ownerPayload.nickname || '?').charAt(0).toUpperCase();
+                          nicknameEl.textContent = ownerPayload.nickname;
+                      }
+                  }
+              }
+              // ═══ JUMP_TO_CELL: S2 토큰으로 즉시 점프 (드릴다운 없이 바로 그리드 렌더) ═══
+              if (msg.type === 'JUMP_TO_CELL') {
+                  var jumpToken = msg.token;
+                  if (!jumpToken) return;
+                  var jumpCellId = s2.cellid.fromToken(jumpToken);
+                  var jumpLevel = s2.cellid.level(jumpCellId);
 
+                  // 기존 상태 완전 초기화
+                  stopCameraTracking();
+                  stopL0CameraTracking();
+                  if (_spreadAnimFrame) { cancelAnimationFrame(_spreadAnimFrame); _spreadAnimFrame = null; }
+                  if (_parentFadeFrame) { cancelAnimationFrame(_parentFadeFrame); _parentFadeFrame = null; }
+                  if (_l0AnimFrame) { cancelAnimationFrame(_l0AnimFrame); _l0AnimFrame = null; }
+                  trGridPrimitives.removeAll();
+                  trNeighborPrimitives.removeAll();
+                  trFlashPrimitives.removeAll();
+                  trAccumulatedPrimitives.removeAll();
+                  window.multiSelectedL16 = [];
+                  window.trSelectionPrimMap = {};
+                  _isFlyingTo = false;
+                  _activeToken = null;
+                  _lastCameraCenterToken = null;
+                  _l0LastToken = null;
+                  for (var rk in _renderedCellMap) {
+                      var entry = _renderedCellMap[rk];
+                      if (entry && entry.labelCol) {
+                          try { viewer.scene.primitives.remove(entry.labelCol); } catch(e) {}
+                      }
+                  }
+                  _renderedCellMap = {};
 
+                  // selectionStack을 한번에 [L4, L8, L12]로 세팅
+                  selectionStack = [];
+                  var jumpDrillLevels = [4, 8, 12];
+                  for (var jl = 0; jl < jumpDrillLevels.length; jl++) {
+                      if (jumpDrillLevels[jl] <= jumpLevel) {
+                          selectionStack.push(s2.cellid.parent(jumpCellId, jumpDrillLevels[jl]));
+                      }
+                  }
+
+                  // L16 타겟 셀 중심 좌표 (이 셀이 화면 중앙에 오도록)
+                  var targetCell = s2.Cell.fromCellID(jumpCellId);
+                  var tc0 = targetCell.center();
+                  var tcr0 = Math.sqrt(tc0.x*tc0.x + tc0.y*tc0.y + tc0.z*tc0.z);
+                  var lcLon = Math.atan2(tc0.y, tc0.x);
+                  var lcLat = Math.asin(tc0.z / tcr0);
+                  _lastCameraCenterToken = s2.cellid.toToken(selectionStack[selectionStack.length - 1]);
+
+                  // ═══ 카메라: camera.flyTo 한번. maximumHeight로 관통 방지 ═══
+                  var jumpTargetH = 1500; // L12 적정 높이 (타원체 위 1.5km)
+                  viewer.camera.flyTo({
+                      destination: Cesium.Cartesian3.fromRadians(lcLon, lcLat, jumpTargetH, Cesium.Ellipsoid.MOON),
+                      orientation: {
+                          heading: 0,
+                          pitch: Cesium.Math.toRadians(-90),
+                          roll: 0
+                      },
+                      duration: 2.0,
+                      maximumHeight: 200000, // 200km 아치 → 달 위로 넘어감
+                      complete: function() {
+                          // flyTo arc 이후 정확한 위치/방향 강제 보정
+                          viewer.camera.setView({
+                              destination: Cesium.Cartesian3.fromRadians(lcLon, lcLat, jumpTargetH, Cesium.Ellipsoid.MOON),
+                              orientation: {
+                                  heading: 0,
+                                  pitch: Cesium.Math.toRadians(-90),
+                                  roll: 0
+                              }
+                          });
+                          // 도착 → L16 그리드 렌더
+                          renderDynamicGrid(null, 'expand');
+                          startCameraTracking();
+                          // L16 타겟 셀 선택 + 하이라이트 + 팝업
+                          setTimeout(function() {
+                              var tc = s2.Cell.fromCellID(jumpCellId);
+                              var tcC = tc.center();
+                              var tcR = Math.sqrt(tcC.x*tcC.x + tcC.y*tcC.y + tcC.z*tcC.z);
+                              var tcLon = Math.atan2(tcC.y, tcC.x);
+                              var tcLat = Math.asin(tcC.z / tcR);
+                              var latD = Cesium.Math.toDegrees(tcLat);
+                              var lngD = Cesium.Math.toDegrees(tcLon);
+
+                              // 점유 여부 확인
+                              var jIsOccupied = occupiedTokens.indexOf(jumpToken) !== -1;
+                              var jIsMine = (typeof myOccupiedTokens !== 'undefined') && myOccupiedTokens.indexOf(jumpToken) !== -1;
+
+                              if (jIsOccupied) {
+                                  // ── 이미 점유된 셀: 클릭 핸들러와 동일한 점유 라벨 표시 ──
+                                  var lastCid = selectionStack.length > 0 ? selectionStack[selectionStack.length - 1] : jumpCellId;
+                                  var pLvl = s2.cellid.level(lastCid);
+                                  var actualParent = s2.cellid.parent(jumpCellId, pLvl);
+                                  var refVerts = sampleCellVertices(actualParent);
+                                  var labelH = interpolateHeight(tcLat, tcLon, refVerts) + TR_HEIGHT_OFFSET;
+                                  var labelPos = Cesium.Cartesian3.fromRadians(tcLon, tcLat, labelH, Cesium.Ellipsoid.MOON);
+                                  _showOccPopup(labelPos, jumpToken, latD, lngD, jIsMine);
+
+                                  // 점유 셀 하이라이트
+                                  var occCell = s2.Cell.fromCellID(jumpCellId);
+                                  var occPositions = [];
+                                  for (var ovi = 0; ovi < 4; ovi++) {
+                                      var ov = occCell.vertex(ovi);
+                                      var ovr = Math.sqrt(ov.x*ov.x + ov.y*ov.y + ov.z*ov.z);
+                                      occPositions.push(terrainCartesian(Math.asin(ov.z/ovr), Math.atan2(ov.y, ov.x), refVerts));
+                                  }
+                                  window._occHighlightPrim = trGridPrimitives.add(new Cesium.Primitive({
+                                      geometryInstances: new Cesium.GeometryInstance({
+                                          geometry: new Cesium.PolygonGeometry({
+                                              polygonHierarchy: new Cesium.PolygonHierarchy(occPositions),
+                                              ellipsoid: Cesium.Ellipsoid.MOON,
+                                              perPositionHeight: true,
+                                          }),
+                                          attributes: { color: Cesium.ColorGeometryInstanceAttribute.fromColor(
+                                              new Cesium.Color(1.0, 1.0, 1.0, 0.25)
+                                          )}
+                                      }),
+                                      appearance: new Cesium.PerInstanceColorAppearance({
+                                          flat: true, translucent: true,
+                                          renderState: { depthTest: { enabled: false }, depthMask: false }
+                                      }),
+                                      asynchronous: true,
+                                  }));
+
+                                  // RN에 소유자 정보 쿼리 (점유된 셀이므로 구매 UI가 아닌 소유자 정보 표시)
+                                  sendToRN('QUERY_CELL_OWNER', { token: jumpToken, lat: latD, lng: lngD, isMyTerritory: jIsMine });
+                              } else {
+                                  // ── 미점유 셀: 기존 로직 (선택 + 구매 UI) ──
+                                  var cCart = Cesium.Cartesian3.fromRadians(tcLon, tcLat, 0, Cesium.Ellipsoid.MOON);
+                                  _showOccPopup(cCart, jumpToken, latD, lngD, true);
+
+                                  if (!window.multiSelectedL16) window.multiSelectedL16 = [];
+                                  if (window.multiSelectedL16.indexOf(jumpToken) === -1) {
+                                      window.multiSelectedL16.push(jumpToken);
+                                  }
+                                  if (!window.trSelectionPrimMap) window.trSelectionPrimMap = {};
+                                  if (!window.trSelectionPrimMap[jumpToken]) {
+                                      var selPositions = [];
+                                      for (var si = 0; si < 4; si++) {
+                                          var sv = tc.vertex(si);
+                                          var svr = Math.sqrt(sv.x*sv.x + sv.y*sv.y + sv.z*sv.z);
+                                          var svlat = Math.asin(sv.z / svr);
+                                          var svlon = Math.atan2(sv.y, sv.x);
+                                          var lastCid = selectionStack.length > 0 ? selectionStack[selectionStack.length - 1] : jumpCellId;
+                                          var pLvl = s2.cellid.level(lastCid);
+                                          var actualParent = s2.cellid.parent(jumpCellId, pLvl);
+                                          var refV = sampleCellVertices(actualParent);
+                                          selPositions.push(terrainCartesian(svlat, svlon, refV));
+                                      }
+                                      var selPrim = trGridPrimitives.add(new Cesium.Primitive({
+                                          geometryInstances: new Cesium.GeometryInstance({
+                                              geometry: new Cesium.PolygonGeometry({
+                                                  polygonHierarchy: new Cesium.PolygonHierarchy(selPositions),
+                                                  ellipsoid: Cesium.Ellipsoid.MOON,
+                                                  perPositionHeight: true,
+                                              }),
+                                              attributes: { color: Cesium.ColorGeometryInstanceAttribute.fromColor(
+                                                  new Cesium.Color(0.95, 0.95, 1.0, 0.3)
+                                              )}
+                                          }),
+                                          appearance: new Cesium.PerInstanceColorAppearance({
+                                              flat: true, translucent: true,
+                                              renderState: { depthTest: { enabled: false }, depthMask: false }
+                                          }),
+                                          asynchronous: true,
+                                      }));
+                                      window.trSelectionPrimMap[jumpToken] = selPrim;
+                                  }
+                                  sendToRN('CELL_SELECTED', {
+                                      cellId: jumpToken, token: jumpToken,
+                                      lat: latD, lng: lngD, level: 16, childLevel: 16,
+                                      cellCount: 1, unit: '1 Block = 1 Mag', magCount: 1,
+                                      price: '$1', area: '1,740 m²',
+                                      multiTokens: [jumpToken],
+                                      multiLats: [latD], multiLngs: [lngD],
+                                      isMultiSelect: false
+                                  });
+                              }
+
+                              sendToRN('JUMP_COMPLETE', { token: jumpToken });
+                              sendToRN('DEPTH_CHANGED', { depth: selectionStack.length, canGoBack: true });
+                          }, 300);
+                      }
+                  });
+              }
           } catch(e) {
               console.error('[TR] handleTRMessage error:', e);
           }

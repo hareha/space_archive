@@ -20,7 +20,7 @@ import {
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { BlurView } from 'expo-blur';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import Svg, { Circle, Line, G, Text as SvgText } from 'react-native-svg';
 import ThreeOrbitVisualizer from './ThreeOrbitVisualizer';
 
@@ -154,6 +154,7 @@ interface SpacecraftWithPosition extends Spacecraft {
 }
 
 export default function ARMoonViewer({ onClose }: Props) {
+    const insets = useSafeAreaInsets();
     const [permission, requestPermission] = useCameraPermissions();
     const [isMoonAligned, setIsMoonAligned] = useState(false);
     // 달 위치 고정 앵커 (정렬 시점의 기기 방향)
@@ -438,10 +439,14 @@ export default function ARMoonViewer({ onClose }: Props) {
         const azText = absDiffAz > 3 ? (diffAz > 0 ? `→ ${absDiffAz}°` : `← ${absDiffAz}°`) : '';
         const altText = absDiffAlt > 3 ? (diffAlt > 0 ? `↑ ${absDiffAlt}°` : `↓ ${absDiffAlt}°`) : '';
 
-        // 화면 가장자리에 배치
-        const pad = 50;
-        const halfW = SCREEN_WIDTH / 2 - pad;
-        const halfH = SCREEN_HEIGHT / 2 - pad;
+        // 화면 가장자리에 배치 (safeArea 반영)
+        const padX = 50;
+        const padTop = Math.max(50, insets.top + 30);
+        const padBottom = Math.max(50, insets.bottom + 30);
+        const halfW = SCREEN_WIDTH / 2 - padX;
+        const halfHUp = SCREEN_HEIGHT / 2 - padTop;
+        const halfHDown = SCREEN_HEIGHT / 2 - padBottom;
+        const halfH = ny < 0 ? halfHUp : halfHDown;
 
         let t = Infinity;
         if (Math.abs(nx) > 0.001) t = Math.min(t, halfW / Math.abs(nx));
@@ -452,7 +457,7 @@ export default function ARMoonViewer({ onClose }: Props) {
         const rotation = Math.atan2(ny, nx) * (180 / Math.PI) + 90;
 
         return { azText, altText, arrow: { x: edgeX, y: edgeY, rotation } };
-    }, [moonPosition, deviceOrientation, isVisible, moonScreenX, moonScreenY]);
+    }, [moonPosition, deviceOrientation, isVisible, moonScreenX, moonScreenY, insets]);
 
     // 정렬 해제 함수
     const handleResetAlignment = useCallback(() => {
@@ -1221,7 +1226,9 @@ const styles = StyleSheet.create({
         width: 48,
         height: 48,
         alignItems: 'center',
-        justifyContent: 'center'
+        justifyContent: 'center',
+        zIndex: 9999,
+        elevation: 9999,
     },
     edgeArrowText: {
         color: '#40e0d0',

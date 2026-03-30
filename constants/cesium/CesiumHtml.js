@@ -55,6 +55,20 @@ ${CESIUM_STYLES}
 <body>
   <div id="cesiumContainer"></div>
   <div id="debugPanel" style="display:none;">Grid Debug: Loading...</div>
+  <div id="occInfoPopup">
+    <div class="occ-card">
+      <div class="occ-status" id="occStatusText"></div>
+      <div class="occ-row"><span class="occ-label">TOKEN</span></div>
+      <div class="occ-row"><span class="occ-value" id="occTokenText"></span></div>
+      <div class="occ-row" style="margin-top:4px"><span class="occ-label">COORD</span></div>
+      <div class="occ-row"><span class="occ-value" id="occCoordText"></span></div>
+      <div class="occ-owner-row" id="occOwnerRow" style="display:none">
+        <div class="occ-avatar" id="occAvatar"></div>
+        <span class="occ-nickname" id="occNickname"></span>
+      </div>
+    </div>
+    <div class="occ-arrow"></div>
+  </div>
 
   <div id="loadingOverlay">
       <div id="errorDisplay"></div>

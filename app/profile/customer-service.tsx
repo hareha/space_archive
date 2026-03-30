@@ -19,7 +19,7 @@ function MenuRow({ label, sub, onPress }: { label: string; sub?: string; onPress
 
 export default function CustomerServiceScreen() {
     const router = useRouter();
-    const { setShowOnboarding } = useOnboarding();
+    const { setShowOnboarding, setShowOnboardingB } = useOnboarding();
 
     return (
         <SafeAreaView style={styles.container}>
@@ -46,7 +46,8 @@ export default function CustomerServiceScreen() {
                 <View style={styles.menuSection}>
                     <Text style={styles.sectionLabel}>문의하기</Text>
                     <MenuRow label="공지사항" onPress={() => router.push('/profile/notices')} />
-                    <MenuRow label="온보딩 다시보기" onPress={() => setShowOnboarding(true)} />
+                    <MenuRow label="온보딩 다시보기 (A안)" onPress={() => setShowOnboarding(true)} />
+                    <MenuRow label="온보딩 다시보기 (B안)" onPress={() => setShowOnboardingB(true)} />
                 </View>
 
                 {/* 약관 및 정책 */}

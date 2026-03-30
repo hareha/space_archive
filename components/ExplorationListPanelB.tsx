@@ -257,12 +257,12 @@ const st = StyleSheet.create({
   // ── 메뉴 컨테이너 ──
   menuContainer: {
     position: 'absolute', bottom: 0, left: 0, right: 0,
-    backgroundColor: '#111827', borderTopLeftRadius: 24, borderTopRightRadius: 24,
+    backgroundColor: '#15171C', borderTopLeftRadius: 14, borderTopRightRadius: 14,
     overflow: 'hidden', zIndex: 20,
     shadowColor: '#000', shadowOffset: { width: 0, height: -4 }, shadowOpacity: 0.5, shadowRadius: 16, elevation: 20,
   },
-  handleArea: { alignItems: 'center', paddingTop: 14, paddingBottom: 10 },
-  handleBar: { width: 40, height: 4, backgroundColor: '#4B5563', borderRadius: 2 },
+  handleArea: { alignItems: 'center', paddingTop: 8, paddingBottom: 6 },
+  handleBar: { width: 48, height: 4, backgroundColor: 'rgba(255,255,255,0.2)', borderRadius: 1 },
   headerRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 20, paddingBottom: 12 },
   headerTitle: { color: '#F9FAFB', fontSize: 18, fontWeight: '700' },
 
@@ -270,13 +270,13 @@ const st = StyleSheet.create({
   menuRows: { paddingHorizontal: 16, gap: 6, paddingBottom: 16 },
   menuRow: {
     flexDirection: 'row', alignItems: 'center', gap: 10,
-    backgroundColor: 'rgba(255,255,255,0.04)', borderRadius: 12,
+    backgroundColor: 'rgba(255,255,255,0.04)', borderRadius: 10,
     paddingVertical: 12, paddingHorizontal: 14,
     borderWidth: 1, borderColor: 'rgba(255,255,255,0.06)',
   },
   menuLabel: { fontSize: 14, fontWeight: '600' },
-  toggleTrack: { width: 40, height: 22, borderRadius: 11, backgroundColor: '#374151', justifyContent: 'center', paddingHorizontal: 2 },
-  toggleOn: { backgroundColor: '#3B82F6' },
+  toggleTrack: { width: 40, height: 22, borderRadius: 11, backgroundColor: '#2A2C30', justifyContent: 'center', paddingHorizontal: 2 },
+  toggleOn: { backgroundColor: '#2175FA' },
   toggleThumb: { width: 18, height: 18, borderRadius: 9, backgroundColor: '#fff', alignSelf: 'flex-start' },
   toggleThumbOn: { alignSelf: 'flex-end' },
   listBtn: {
@@ -287,14 +287,14 @@ const st = StyleSheet.create({
   // ── 전체 리스트 ──
   listContainer: {
     position: 'absolute', bottom: 0, left: 0, right: 0,
-    backgroundColor: '#111827', borderTopLeftRadius: 24, borderTopRightRadius: 24,
+    backgroundColor: '#15171C', borderTopLeftRadius: 14, borderTopRightRadius: 14,
     overflow: 'hidden', zIndex: 25,
     shadowColor: '#000', shadowOffset: { width: 0, height: -4 }, shadowOpacity: 0.5, shadowRadius: 16, elevation: 25,
   },
 
   // ── 필터 칩 ──
   chip: { paddingHorizontal: 14, paddingVertical: 6, borderRadius: 8, borderWidth: 1, borderColor: '#374151' },
-  chipActive: { backgroundColor: '#1F2937' },
+  chipActive: { backgroundColor: '#2A2C30' },
   chipText: { color: '#6B7280', fontSize: 13, fontWeight: '600' },
   chipTextActive: { color: '#F9FAFB' },
 

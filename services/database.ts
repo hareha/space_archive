@@ -11,6 +11,7 @@
  * TODO: TEMP_AUTH - 나중에 실제 서버 DB로 교체 시 이 파일의 구현만 바꾸면 됩니다.
  */
 import * as SQLite from 'expo-sqlite';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { ALL_USERS } from '@/constants/dummyUsers';
 
 let db: SQLite.SQLiteDatabase | null = null;
@@ -25,7 +26,7 @@ async function getDB(): Promise<SQLite.SQLiteDatabase> {
 
 // ── DB 초기화 (테이블 생성 + 시드 데이터) ──
 // 시드 데이터 버전 — 더미 데이터 변경 시 여기 숫자를 올리면 자동 리셋
-const SEED_VERSION = 4; // S2 토큰 기반으로 cellId 변경
+const SEED_VERSION = 6; // hero 구매내역 초기화 (AsyncStorage 포함)
 
 export async function initDatabase(): Promise<void> {
   const database = await getDB();
@@ -47,6 +48,9 @@ export async function initDatabase(): Promise<void> {
   if (currentVersion !== SEED_VERSION) {
     console.log(`[DB] Seed version changed (${currentVersion} → ${SEED_VERSION}), resetting...`);
     await database.execAsync('DROP TABLE IF EXISTS owned_cells; DROP TABLE IF EXISTS users;');
+    // AsyncStorage의 EllContext 데이터도 같이 초기화
+    await AsyncStorage.multiRemove(['@plusultra_territories', '@plusultra_ell_balance']).catch(() => {});
+    console.log('[DB] AsyncStorage territories/ell cleared');
   }
 
   // 테이블 생성

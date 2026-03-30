@@ -1,6 +1,7 @@
 import { useLocalSearchParams, useRouter, Stack } from 'expo-router';
 import { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, SafeAreaView, StatusBar } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, SafeAreaView, StatusBar, Share } from 'react-native';
+import * as Linking from 'expo-linking';
 import { Image } from 'expo-image';
 import { Ionicons } from '@expo/vector-icons';
 import { NEWS_DATA, SCRAPPED_NEWS, COSMOS_NEWS_DATA, NewsItem } from '@/constants/MockData';
@@ -80,7 +81,15 @@ export default function NewsDetailScreen() {
                     <TouchableOpacity style={styles.actionButton} onPress={toggleScrap}>
                         <Ionicons name={isScrapped ? 'bookmark' : 'bookmark-outline'} size={22} color={isScrapped ? '#3B82F6' : '#1A1A1A'} />
                     </TouchableOpacity>
-                    <TouchableOpacity style={styles.actionButton}>
+                    <TouchableOpacity style={styles.actionButton} onPress={async () => {
+                        if (!newsItem) return;
+                        try {
+                            const deepLink = Linking.createURL('/news', { queryParams: { id: newsItem.id.toString() } });
+                            await Share.share({
+                                message: `📰 ${newsItem.title}\n${newsItem.source} · ${newsItem.publishDate}\n\n${newsItem.summary}\n\n👉 Plus Ultra에서 보기:\n${deepLink}`,
+                            });
+                        } catch (e) { }
+                    }}>
                         <Ionicons name="share-outline" size={22} color="#1A1A1A" />
                     </TouchableOpacity>
                 </View>

@@ -119,23 +119,35 @@ export function createCesiumARHtml() {
         var moonTileset = await Cesium.Cesium3DTileset.fromUrl(resource);
         viewer.scene.primitives.add(moonTileset);
 
-        // 초기 카메라: 멀리서 시작 (달이 작게 보임)
+        // 초기 카메라: 적도 옆면에서 멀리 시작
         var bs = moonTileset.boundingSphere;
-        viewer.camera.flyToBoundingSphere(bs, {
-          duration: 0,
-          offset: new Cesium.HeadingPitchRange(0, -0.0, bs.radius * 15)
+        var farDist = bs.radius * 15;
+        var nearDist = bs.radius * 3;
+
+        // 카메라를 X축 방향(적도)에 배치, Z축을 위로
+        viewer.camera.setView({
+          destination: new Cesium.Cartesian3(farDist, 0, 0),
+          orientation: {
+            direction: new Cesium.Cartesian3(-1, 0, 0),
+            up: new Cesium.Cartesian3(0, 0, 1)
+          }
         });
 
         // 줌인 함수 (RN에서 호출)
         window.startZoomIn = function() {
-          viewer.camera.flyToBoundingSphere(bs, {
+          viewer.camera.flyTo({
+            destination: new Cesium.Cartesian3(nearDist, 0, 0),
+            orientation: {
+              direction: new Cesium.Cartesian3(-1, 0, 0),
+              up: new Cesium.Cartesian3(0, 0, 1)
+            },
             duration: 2.5,
-            offset: new Cesium.HeadingPitchRange(0, -0.0, bs.radius * 3),
             easingFunction: Cesium.EasingFunction.CUBIC_IN_OUT,
             complete: function() {
-              viewer.camera.lookAt(
-                bs.center,
-                new Cesium.HeadingPitchRange(viewer.camera.heading, viewer.camera.pitch, bs.radius * 3)
+              // IDENTITY 프레임에서 카메라를 X축 위에 배치 → 적도 측면뷰 유지
+              viewer.camera.lookAtTransform(
+                Cesium.Matrix4.IDENTITY,
+                new Cesium.Cartesian3(nearDist, 0, 0)
               );
             }
           });
@@ -217,28 +229,110 @@ export function createCesiumARHtml() {
           }));
         }
 
-        // 점유 구역 표시 (색칠만)
-        function showTerritories(cellTokens) {
-          var ownedLv4Set = {};
-          cellTokens.forEach(function(token) {
-            try {
-              var cellId = s2.cellid.fromToken(token);
-              var lv4Parent = s2.cellid.parent(cellId, 4);
-              var lv4Token = s2.cellid.toToken(lv4Parent);
-              ownedLv4Set[lv4Token] = lv4Parent;
-            } catch(e) {}
-          });
-
-          var color = Cesium.Color.fromCssColorString('rgba(59, 130, 246, 0.45)');
-          Object.keys(ownedLv4Set).forEach(function(token) {
-            fillCell(ownedLv4Set[token], color);
-          });
-
+        // 점유 구역 표시 — 실제 소유 영역에 글로우 마커
+        function showTerritories(cellTokens, regions) {
+          // regions가 있으면 영역별 마커 표시
+          if (regions && regions.length > 0) {
+            regions.forEach(function(region) {
+              var lat = region.lat * Math.PI / 180;
+              var lng = region.lng * Math.PI / 180;
+              var pos = Cesium.Cartesian3.fromRadians(lng, lat, 0, moonEllipsoid);
+              
+              // 글로우 원형 (영역 크기 = 셀 수에 비례, 최소 0.5도 ~ 최대 3도)
+              var radiusDeg = Math.max(0.5, Math.min(3, Math.sqrt(region.count) * 0.15));
+              var halfR = radiusDeg;
+              var latDeg = region.lat;
+              var lngDeg = region.lng;
+              
+              // 글로우 원형 채우기
+              var glowRect = Cesium.Rectangle.fromDegrees(
+                lngDeg - halfR, latDeg - halfR, lngDeg + halfR, latDeg + halfR
+              );
+              var glowGeom = new Cesium.RectangleGeometry({
+                rectangle: glowRect,
+                ellipsoid: moonEllipsoid,
+                height: 500
+              });
+              fillPrimitives.add(new Cesium.Primitive({
+                geometryInstances: new Cesium.GeometryInstance({ geometry: glowGeom }),
+                appearance: new Cesium.MaterialAppearance({
+                  material: new Cesium.Material({
+                    fabric: {
+                      type: 'Color',
+                      uniforms: { color: new Cesium.Color(0.23, 0.51, 0.97, 0.35) }
+                    }
+                  }),
+                  renderState: {
+                    depthTest: { enabled: true },
+                    blending: Cesium.BlendingState.ALPHA_BLEND
+                  }
+                }),
+                show: true
+              }));
+              
+              // 외곽 링
+              var ringRect = Cesium.Rectangle.fromDegrees(
+                lngDeg - halfR * 1.1, latDeg - halfR * 1.1, lngDeg + halfR * 1.1, latDeg + halfR * 1.1
+              );
+              var ringGeom = new Cesium.RectangleOutlineGeometry({
+                rectangle: ringRect,
+                ellipsoid: moonEllipsoid,
+                height: 600
+              });
+              fillPrimitives.add(new Cesium.Primitive({
+                geometryInstances: new Cesium.GeometryInstance({
+                  geometry: ringGeom,
+                  attributes: {
+                    color: Cesium.ColorGeometryInstanceAttribute.fromColor(
+                      new Cesium.Color(0.23, 0.51, 0.97, 0.8)
+                    )
+                  }
+                }),
+                appearance: new Cesium.PerInstanceColorAppearance({
+                  flat: true, translucent: true
+                }),
+                show: true
+              }));
+              
+              // 셀 수 라벨
+              fillPrimitives._entities = fillPrimitives._entities || [];
+              var label = viewer.entities.add({
+                position: Cesium.Cartesian3.fromRadians(lng, lat, 3000, moonEllipsoid),
+                label: {
+                  text: region.count + ' Mag',
+                  font: '11px sans-serif',
+                  fillColor: Cesium.Color.WHITE,
+                  outlineColor: Cesium.Color.BLACK,
+                  outlineWidth: 2,
+                  style: Cesium.LabelStyle.FILL_AND_OUTLINE,
+                  verticalOrigin: Cesium.VerticalOrigin.BOTTOM,
+                  pixelOffset: new Cesium.Cartesian2(0, -6),
+                  disableDepthTestDistance: Number.POSITIVE_INFINITY,
+                  scale: 1.0
+                },
+                point: {
+                  pixelSize: 5,
+                  color: new Cesium.Color(0.23, 0.51, 0.97, 1.0),
+                  outlineWidth: 0,
+                  disableDepthTestDistance: Number.POSITIVE_INFINITY
+                }
+              });
+              fillPrimitives._entities.push(label);
+            });
+          }
+          
           territoryVisible = true;
         }
 
         function hideTerritories() {
           fillPrimitives.removeAll();
+          // 라벨 엔티티도 제거
+          if (fillPrimitives._entities) {
+            fillPrimitives._entities.forEach(function(e) {
+              viewer.entities.remove(e);
+            });
+            fillPrimitives._entities = [];
+          }
           territoryVisible = false;
         }
 
@@ -250,7 +344,7 @@ export function createCesiumARHtml() {
                 hideTerritories();
                 sendToRN('TERRITORY_TOGGLED', { visible: false });
               } else {
-                showTerritories(data.cellTokens || []);
+                showTerritories(data.cellTokens || [], data.regions || []);
                 sendToRN('TERRITORY_TOGGLED', { visible: true });
               }
             }

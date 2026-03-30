@@ -1,14 +1,15 @@
 import React, { useState } from 'react';
 import {
     StyleSheet, View, ScrollView, TouchableOpacity,
-    StatusBar, SafeAreaView, Modal
+    StatusBar, SafeAreaView, Modal, ImageBackground,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { Text } from '@/components/Themed';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
-import { LinearGradient } from 'expo-linear-gradient';
+import { BlurView } from 'expo-blur';
 import AR2MoonViewer from '@/components/AR2MoonViewer';
 import { useAuth } from '@/components/AuthContext';
+import { useEll } from '@/components/EllContext';
 import LoginPrompt from '@/components/LoginPrompt';
 
 // ─── 메뉴 아이템 ───
@@ -27,6 +28,7 @@ function MenuRow({ icon, label, onPress }: { icon: string; label: string; onPres
 export default function MyPageScreen() {
     const router = useRouter();
     const { user, isLoggedIn, logout } = useAuth();
+    const { ellBalance, remainingMag, totalOccupied } = useEll();
     const [showLogoutModal, setShowLogoutModal] = useState(false);
     const [showAR, setShowAR] = useState(false);
 
@@ -60,24 +62,28 @@ export default function MyPageScreen() {
 
                 {/* ═══ ② Balance 카드 ═══ */}
                 <View style={styles.balanceWrapper}>
-                    <LinearGradient
-                        colors={['#1A1D2E', '#2A2D42', '#1A1D2E']}
-                        start={{ x: 0, y: 0 }}
-                        end={{ x: 1, y: 1 }}
-                        style={styles.balanceCard}
-                    >
-                        <View style={styles.balanceRow}>
-                            <Text style={styles.balanceValue}>
-                                {(user?.magBalance || 0).toLocaleString()}
-                            </Text>
-                            <Text style={styles.balanceUnit}>ell</Text>
-                        </View>
-                        <Text style={styles.balancePeriod}>2025.03.09 ~ 2025.04.09</Text>
+                    <View style={styles.balanceCardOuter}>
+                        <ImageBackground
+                            source={require('@/assets/images/mypage_background.png')}
+                            style={styles.balanceCard}
+                            imageStyle={styles.balanceBgImage}
+                            resizeMode="cover"
+                        >
+                            <View style={styles.balanceRow}>
+                                <Text style={styles.balanceValue}>
+                                    {ellBalance.toLocaleString()}
+                                </Text>
+                                <Text style={styles.balanceUnit}>ell</Text>
+                            </View>
+                            <Text style={styles.balancePeriod}>2025.03.09 ~ 2025.04.09</Text>
 
-                        <TouchableOpacity style={styles.buyPassBtn} activeOpacity={0.8} onPress={() => router.push('/profile/subscription')}>
-                            <Text style={styles.buyPassText}>+ 이용권 구매하기</Text>
-                        </TouchableOpacity>
-                    </LinearGradient>
+                            <BlurView intensity={30} tint="dark" style={styles.buyPassBlur}>
+                                <TouchableOpacity style={styles.buyPassBtn} activeOpacity={0.8} onPress={() => router.push('/profile/subscription')}>
+                                    <Text style={styles.buyPassText}>+ 이용권 구매하기</Text>
+                                </TouchableOpacity>
+                            </BlurView>
+                        </ImageBackground>
+                    </View>
                 </View>
 
                 {/* ═══ ③ 통계 카드들 ═══ */}
@@ -86,7 +92,7 @@ export default function MyPageScreen() {
                     <View style={styles.statCard}>
                         <Text style={styles.statLabel}>총 개척 구역</Text>
                         <View style={styles.statValArea}>
-                            <Text style={styles.statNumber}>{user?.totalOccupied || 400}</Text>
+                            <Text style={styles.statNumber}>{totalOccupied}</Text>
                             <Text style={styles.statUnit}> Mag</Text>
                         </View>
                     </View>
@@ -95,7 +101,7 @@ export default function MyPageScreen() {
                     <View style={styles.statCard}>
                         <Text style={styles.statLabel}>개척 가능 구역</Text>
                         <View style={styles.statValArea}>
-                            <Text style={styles.statNumber}>36</Text>
+                            <Text style={styles.statNumber}>{remainingMag}</Text>
                             <Text style={styles.statUnit}> Mag</Text>
                         </View>
                     </View>
@@ -182,12 +188,20 @@ const styles = StyleSheet.create({
         paddingHorizontal: 20,
         marginBottom: 20,
     },
+    balanceCardOuter: {
+        borderRadius: 8,
+        overflow: 'hidden',
+        backgroundColor: '#000000',
+    },
     balanceCard: {
-        borderRadius: 2,
         paddingHorizontal: 24,
         paddingTop: 36,
         paddingBottom: 24,
         alignItems: 'center',
+    },
+    balanceBgImage: {
+        opacity: 0.7,
+        borderRadius: 16,
     },
     balanceLabelWrap: {
         marginBottom: 16,
@@ -205,9 +219,8 @@ const styles = StyleSheet.create({
     },
     balanceValue: {
         fontSize: 42,
-        fontWeight: '800',
+        fontWeight: '600',
         color: '#FFFFFF',
-        letterSpacing: -0.5,
     },
     balanceUnit: {
         fontSize: 18,
@@ -216,19 +229,23 @@ const styles = StyleSheet.create({
         marginLeft: 10,
     },
     balancePeriod: {
-        fontSize: 13,
-        color: 'rgba(255,255,255,0.35)',
+        fontSize: 16,
+        color: 'rgba(255,255,255,0.6)',
         marginBottom: 24,
         textAlign: 'center',
     },
+    buyPassBlur: {
+        borderRadius: 8,
+        overflow: 'hidden',
+        alignSelf: 'stretch',
+    },
     buyPassBtn: {
-        backgroundColor: 'rgba(0,0,0,0.3)',
-        borderRadius: 2,
         paddingVertical: 18,
         alignItems: 'center',
         alignSelf: 'stretch',
         borderWidth: 1,
-        borderColor: 'rgba(255,255,255,0.25)',
+        borderColor: '#FFFFFF',
+        borderRadius: 8,
     },
     buyPassText: {
         color: '#FFFFFF',
@@ -246,13 +263,13 @@ const styles = StyleSheet.create({
         backgroundColor: '#F5F6F8',
         paddingHorizontal: 20,
         paddingVertical: 18,
-        borderRadius: 2,
+        borderRadius: 8,
     },
-    statLabel: { fontSize: 13, color: '#888', fontWeight: '400', marginBottom: 12 },
+    statLabel: { fontSize: 13, color: 'rgba(0, 0, 0, 0.75)', fontWeight: '400', marginBottom: 12 },
     statValArea: { flexDirection: 'row', alignItems: 'baseline', justifyContent: 'flex-end' },
-    statNumber: { fontSize: 28, fontWeight: '800', color: '#1A1A1A' },
+    statNumber: { fontSize: 32, fontWeight: '700', color: '#1A1A1A' },
     statNumberSm: { fontSize: 18, fontWeight: '700', color: '#1A1A1A' },
-    statUnit: { fontSize: 14, fontWeight: '500', color: '#ACACAC' },
+    statUnit: { fontSize: 16, fontWeight: '500', color: '#818181ff' },
     statSub: { fontSize: 12, color: '#BDBDBD' },
 
     // ═══ 메뉴 섹션 ═══

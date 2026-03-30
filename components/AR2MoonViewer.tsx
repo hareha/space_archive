@@ -20,7 +20,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useDeviceOrientation } from '@/hooks/useDeviceOrientation';
 import { useMoonPosition, calculateMoonAltAz } from '@/hooks/useMoonPosition';
 import { createCesiumARHtml } from '@/constants/cesium/CesiumARHtml';
-import { HERO_USER } from '@/constants/dummyUsers';
+import { useEll } from '@/components/EllContext';
 import { Vibration } from 'react-native';
 import SunCalc from 'suncalc';
 
@@ -46,6 +46,7 @@ export default function AR2MoonViewer({ onClose }: Props) {
     const [permission, requestPermission] = useCameraPermissions();
     const deviceOrientation = useDeviceOrientation();
     const moonPosition = useMoonPosition(30000); // 30초마다 갱신
+    const { purchasedTerritories } = useEll();
     const insets = useSafeAreaInsets();
 
     // 사용자 위치
@@ -633,7 +634,7 @@ export default function AR2MoonViewer({ onClose }: Props) {
                         </AnimatedSvg>
 
                         {/* ═══ ② 하단: 조도/거리/고도 카드 (포커스 모드에서 숨김) ═══ */}
-                        {!isFocusedMode && <View style={styles.bottomCards}>
+                        {!isFocusedMode && <View style={[styles.bottomCards, { paddingBottom: Math.max(16, insets.bottom + 10) }]}>
                             {/* 조도 (밝기) */}
                             <View style={styles.infoCard}>
                                 <Text style={styles.cardLabel}>밝기</Text>
@@ -674,22 +675,7 @@ export default function AR2MoonViewer({ onClose }: Props) {
                             </View>
                         )}
 
-                        {/* 임시 테스트 버튼 — 포커스 모드 수동 트리거 */}
-                        {!isFocusedMode && (
-                            <TouchableOpacity
-                                style={{
-                                    position: 'absolute', bottom: 120, alignSelf: 'center',
-                                    backgroundColor: 'rgba(59,130,246,0.8)', borderRadius: 12,
-                                    paddingHorizontal: 20, paddingVertical: 12, zIndex: 999,
-                                }}
-                                onPress={() => {
-                                    setIsFocusedMode(true);
-                                    Vibration.vibrate(50);
-                                }}
-                            >
-                                <Text style={{ color: '#fff', fontSize: 14, fontWeight: '700' }}>🔭 포커스 테스트</Text>
-                            </TouchableOpacity>
-                        )}
+
                     </View>
                 </CameraView>
 
@@ -945,13 +931,29 @@ export default function AR2MoonViewer({ onClose }: Props) {
                             <TouchableOpacity
                                 style={[styles.territoryBtn, showTerritory && styles.territoryBtnActive]}
                                 onPress={() => {
-                                    const cellTokens = HERO_USER.ownedCells.map(c => c.cellId);
+                                    if (purchasedTerritories.length === 0) return;
+                                    
+                                    // 실제 구매한 셀을 위치별로 그룹핑
+                                    const cellsByRegion: Record<string, { lat: number; lng: number; count: number; cells: string[] }> = {};
+                                    purchasedTerritories.forEach(c => {
+                                        const key = `${Math.round(c.lat)}_${Math.round(c.lng)}`;
+                                        if (!cellsByRegion[key]) {
+                                            cellsByRegion[key] = { lat: c.lat, lng: c.lng, count: 0, cells: [] };
+                                        }
+                                        cellsByRegion[key].count++;
+                                        cellsByRegion[key].cells.push(c.token);
+                                        cellsByRegion[key].lat = (cellsByRegion[key].lat * (cellsByRegion[key].count - 1) + c.lat) / cellsByRegion[key].count;
+                                        cellsByRegion[key].lng = (cellsByRegion[key].lng * (cellsByRegion[key].count - 1) + c.lng) / cellsByRegion[key].count;
+                                    });
+                                    const regions = Object.values(cellsByRegion);
+                                    const cellTokens = purchasedTerritories.map(c => c.token);
                                     cesiumWebViewRef.current?.injectJavaScript(`
                                         (function() {
                                             var event = new MessageEvent('message', {
                                                 data: JSON.stringify({
                                                     type: 'TOGGLE_TERRITORIES',
-                                                    cellTokens: ${JSON.stringify(cellTokens)}
+                                                    cellTokens: ${JSON.stringify(cellTokens)},
+                                                    regions: ${JSON.stringify(regions)}
                                                 })
                                             });
                                             window.dispatchEvent(event);
@@ -1076,50 +1078,58 @@ const styles = StyleSheet.create({
     // ═══ ② 하단 카드 ═══
     bottomCards: {
         position: 'absolute',
-        bottom: 30,
-        left: 12,
-        right: 12,
+        bottom: 0,
+        left: 0,
+        right: 0,
         flexDirection: 'row',
-        gap: 8,
+        gap: 10,
+        paddingHorizontal: 16,
+        paddingTop: 14,
+        paddingBottom: 16,
+        backgroundColor: 'rgba(0, 0, 0, 0.55)',
     },
     infoCard: {
         flex: 1,
-        backgroundColor: 'rgba(255, 255, 255, 0.92)',
-        borderRadius: 14,
-        paddingVertical: 12,
-        paddingHorizontal: 10,
+        backgroundColor: 'rgba(255, 255, 255, 0.08)',
+        borderRadius: 16,
+        borderWidth: 1,
+        borderColor: 'rgba(255, 255, 255, 0.12)',
+        paddingVertical: 14,
+        paddingHorizontal: 12,
         alignItems: 'center',
     },
     cardLabel: {
-        color: '#666',
+        color: 'rgba(255, 255, 255, 0.5)',
         fontSize: 11,
-        fontWeight: '500',
-        marginBottom: 4,
+        fontWeight: '600',
+        letterSpacing: 0.5,
+        textTransform: 'uppercase',
+        marginBottom: 6,
     },
     cardValueRow: {
         flexDirection: 'row',
         alignItems: 'baseline',
     },
     cardValueLarge: {
-        color: '#1a1a1a',
-        fontSize: 28,
+        color: '#fff',
+        fontSize: 26,
         fontWeight: '800',
         fontVariant: ['tabular-nums'],
     },
     cardUnit: {
-        color: '#888',
+        color: 'rgba(255, 255, 255, 0.5)',
         fontSize: 14,
         fontWeight: '500',
         marginLeft: 2,
     },
     cardValueMed: {
-        color: '#1a1a1a',
+        color: '#fff',
         fontSize: 20,
         fontWeight: '800',
         fontVariant: ['tabular-nums'],
     },
     cardUnitSmall: {
-        color: '#888',
+        color: 'rgba(255, 255, 255, 0.5)',
         fontSize: 12,
         fontWeight: '500',
         marginLeft: 2,

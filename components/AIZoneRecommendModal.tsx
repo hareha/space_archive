@@ -325,7 +325,7 @@ function delay(ms: number) { return new Promise(r => setTimeout(r, ms)); }
 
 // ─── 스타일 ───
 const s = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#111827' },
+  container: { flex: 1, backgroundColor: '#15171C' },
 
   // 설문
   questionContainer: { flex: 1, paddingHorizontal: 28, paddingTop: 20, paddingBottom: 30, justifyContent: 'space-between' },

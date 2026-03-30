@@ -353,16 +353,16 @@ export default function ExplorationListPanelC({
 const st = StyleSheet.create({
   panel: {
     position: 'absolute', bottom: 0, left: 0, right: 0,
-    backgroundColor: '#111827', borderTopLeftRadius: 20, borderTopRightRadius: 20,
+    backgroundColor: '#15171C', borderTopLeftRadius: 14, borderTopRightRadius: 14,
     overflow: 'hidden', zIndex: 20,
     shadowColor: '#000', shadowOffset: { width: 0, height: -4 }, shadowOpacity: 0.5, shadowRadius: 16, elevation: 20,
   },
   handleArea: { alignItems: 'center', paddingTop: 8, paddingBottom: 4 },
-  handleBar: { width: 32, height: 4, backgroundColor: '#4B5563', borderRadius: 2 },
+  handleBar: { width: 48, height: 4, backgroundColor: 'rgba(255,255,255,0.2)', borderRadius: 1 },
   headerRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 14, paddingBottom: 6 },
   headerTitle: { color: '#F9FAFB', fontSize: 15, fontWeight: '700' },
 
-  doneBtn: { backgroundColor: '#3B82F6', paddingHorizontal: 12, paddingVertical: 4, borderRadius: 6 },
+  doneBtn: { backgroundColor: '#2175FA', paddingHorizontal: 12, paddingVertical: 4, borderRadius: 6 },
   doneBtnText: { color: '#fff', fontSize: 12, fontWeight: '700' },
 
   dimOverlay: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.5)', zIndex: 19 } as any,
@@ -371,14 +371,14 @@ const st = StyleSheet.create({
   menuRow: { flexDirection: 'row', gap: 8, paddingHorizontal: 12, paddingBottom: 6 } as any,
   menuCard: {
     flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6,
-    paddingVertical: 12, borderRadius: 12,
+    paddingVertical: 12, borderRadius: 10,
     backgroundColor: 'rgba(255,255,255,0.04)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.06)',
   } as any,
   menuCardActive: { backgroundColor: 'rgba(59,130,246,0.1)', borderColor: 'rgba(59,130,246,0.3)' },
   menuCardLabel: { fontSize: 12, fontWeight: '700' },
 
-  toggleTrack: { width: 28, height: 16, borderRadius: 8, backgroundColor: '#374151', justifyContent: 'center', paddingHorizontal: 2 } as any,
-  toggleOn: { backgroundColor: '#3B82F6' },
+  toggleTrack: { width: 28, height: 16, borderRadius: 8, backgroundColor: '#2A2C30', justifyContent: 'center', paddingHorizontal: 2 } as any,
+  toggleOn: { backgroundColor: '#2175FA' },
   toggleThumb: { width: 10, height: 10, borderRadius: 5, backgroundColor: '#fff', alignSelf: 'flex-start' } as any,
   toggleThumbOn: { alignSelf: 'flex-end' } as any,
 

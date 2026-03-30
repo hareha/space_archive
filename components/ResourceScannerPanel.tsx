@@ -355,46 +355,46 @@ const styles = StyleSheet.create({
 
   /* ── 패널 ── */
   expandedPanel: {
-    position: 'absolute', top: 12, left: 12, right: 72,
+    position: 'absolute', top: 12, left: 12, right: 100,
     borderRadius: 16, overflow: 'hidden',
     shadowColor: '#000', shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.4, shadowRadius: 12, elevation: 10,
     transformOrigin: 'left top',
   },
   panelBg: {
-    backgroundColor: 'rgba(10, 12, 24, 0.95)',
-    borderWidth: 1, borderColor: 'rgba(255,255,255,0.12)',
-    borderRadius: 16, paddingTop: 10, paddingBottom: 8, paddingHorizontal: 12,
+    backgroundColor: '#15171C',
+    borderWidth: 1, borderColor: 'rgba(255,255,255,0.10)',
+    borderRadius: 16, paddingTop: 14, paddingBottom: 12, paddingHorizontal: 14,
   },
-  headerRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 8 },
+  headerRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 12 },
   headerIcon: { width: 28, height: 28, borderRadius: 14, justifyContent: 'center', alignItems: 'center', marginRight: 6 },
   titleText: { color: '#eee', fontSize: 13, fontWeight: '700', letterSpacing: 0.2 },
 
   loadingBox: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, paddingVertical: 10 },
   loadingText: { color: '#60A5FA', fontSize: 12, fontWeight: '600' },
 
-  tabRow: { flexDirection: 'row', gap: 4, marginBottom: 8 },
-  tab: { flex: 1, paddingVertical: 5, borderRadius: 10, backgroundColor: 'rgba(255,255,255,0.06)', alignItems: 'center' },
+  tabRow: { flexDirection: 'row', gap: 6, marginBottom: 10 },
+  tab: { flex: 1, paddingVertical: 7, borderRadius: 10, backgroundColor: 'rgba(255,255,255,0.06)', alignItems: 'center' },
   tabActive: { backgroundColor: 'rgba(59,130,246,0.25)' },
-  tabText: { color: '#777', fontSize: 11, fontWeight: '600' },
+  tabText: { color: '#777', fontSize: 12, fontWeight: '600' },
   tabTextActive: { color: '#93C5FD' },
 
-  chipScroll: { flexDirection: 'row', gap: 8, paddingBottom: 2 },
+  chipScroll: { flexDirection: 'row', gap: 8, paddingBottom: 4 },
   chip: {
-    flexDirection: 'row', alignItems: 'center', paddingHorizontal: 10, paddingVertical: 6,
-    borderRadius: 16, backgroundColor: 'rgba(255,255,255,0.04)',
-    borderWidth: 1, borderColor: 'rgba(255,255,255,0.08)', gap: 4,
+    flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, paddingVertical: 8,
+    borderRadius: 16, backgroundColor: 'rgba(255,255,255,0.06)',
+    borderWidth: 1, borderColor: 'rgba(255,255,255,0.08)', gap: 5,
   },
-  chipLabel: { color: '#999', fontSize: 11, fontWeight: '500' },
-  chipDot: { width: 5, height: 5, borderRadius: 3, marginLeft: 1 },
+  chipLabel: { color: '#999', fontSize: 12, fontWeight: '500' },
+  chipDot: { width: 5, height: 5, borderRadius: 3, marginLeft: 2 },
 
   /* ── 하단 통합 바 ── */
   bottomBar: {
     position: 'absolute', bottom: 28, left: 20, right: 20,
-    backgroundColor: 'rgba(8,12,24,0.92)',
-    borderRadius: 16, paddingHorizontal: 14, paddingVertical: 10,
+    backgroundColor: '#15171C',
+    borderRadius: 16, paddingHorizontal: 16, paddingVertical: 12,
     borderWidth: 1, borderColor: 'rgba(255,255,255,0.08)',
-    gap: 6,
+    gap: 8,
   },
 
   /* ── 셀 정보 ── */

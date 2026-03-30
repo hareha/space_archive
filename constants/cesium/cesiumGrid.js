@@ -634,7 +634,7 @@ export const CESIUM_GRID = `
               unit: '1 Block = 1 Mag',
               magCount: 1, magTokens: [token],
               minerals: { feo: feo + '%', tio2: tio2 + '%', waterIce: waterIce + '%', surfaceTemp: tempK + 'K' },
-              price: '$' + price, area: '~0.8 km²'
+              price: '$' + price, area: '1,740 m²'
           });
       }
 

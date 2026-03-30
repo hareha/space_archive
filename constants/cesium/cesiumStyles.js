@@ -61,4 +61,94 @@ export const CESIUM_STYLES = `
         line-height: 1.5;
         min-width: 180px;
     }
+
+    /* 점유 셀 정보 팝업 */
+    #occInfoPopup {
+        position: absolute;
+        display: none;
+        z-index: 800;
+        pointer-events: none;
+        transform: translate(-50%, -100%);
+        animation: occPopIn 0.25s cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
+    }
+    @keyframes occPopIn {
+        0% { opacity: 0; transform: translate(-50%, -90%) scale(0.85); }
+        100% { opacity: 1; transform: translate(-50%, -100%) scale(1); }
+    }
+    #occInfoPopup .occ-card {
+        background: linear-gradient(135deg, rgba(20, 24, 40, 0.92), rgba(30, 36, 58, 0.88));
+        backdrop-filter: blur(12px);
+        -webkit-backdrop-filter: blur(12px);
+        border: 1px solid rgba(120, 140, 255, 0.25);
+        border-radius: 10px;
+        padding: 10px 14px;
+        min-width: 140px;
+        max-width: 200px;
+        box-shadow: 0 4px 20px rgba(0,0,0,0.5), 0 0 15px rgba(80, 100, 255, 0.12);
+    }
+    #occInfoPopup .occ-arrow {
+        width: 0; height: 0;
+        border-left: 7px solid transparent;
+        border-right: 7px solid transparent;
+        border-top: 7px solid rgba(30, 36, 58, 0.88);
+        margin: 0 auto;
+        filter: drop-shadow(0 2px 3px rgba(0,0,0,0.3));
+    }
+    #occInfoPopup .occ-status {
+        font-family: 'Orbitron', sans-serif;
+        font-size: 10px;
+        font-weight: 700;
+        letter-spacing: 1px;
+        text-transform: uppercase;
+        margin-bottom: 6px;
+        padding-bottom: 5px;
+        border-bottom: 1px solid rgba(255,255,255,0.1);
+    }
+    #occInfoPopup .occ-status.mine { color: #6ff59a; }
+    #occInfoPopup .occ-status.other { color: #ff7b7b; }
+    #occInfoPopup .occ-row {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        margin-bottom: 3px;
+    }
+    #occInfoPopup .occ-icon {
+        width: 14px; height: 14px;
+        flex-shrink: 0;
+        opacity: 0.5;
+    }
+    #occInfoPopup .occ-label {
+        font-family: 'Roboto', sans-serif;
+        font-size: 9px;
+        color: rgba(255,255,255,0.45);
+        letter-spacing: 0.3px;
+    }
+    #occInfoPopup .occ-value {
+        font-family: 'Roboto Mono', 'Roboto', sans-serif;
+        font-size: 11px;
+        color: rgba(255,255,255,0.9);
+        letter-spacing: 0.2px;
+        word-break: break-all;
+    }
+    #occInfoPopup .occ-owner-row {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        margin-top: 5px;
+        padding-top: 5px;
+        border-top: 1px solid rgba(255,255,255,0.08);
+    }
+    #occInfoPopup .occ-avatar {
+        width: 18px; height: 18px;
+        border-radius: 50%;
+        flex-shrink: 0;
+        display: flex; align-items: center; justify-content: center;
+        font-size: 9px; font-weight: 700; color: #fff;
+    }
+    #occInfoPopup .occ-nickname {
+        font-family: 'Roboto', sans-serif;
+        font-size: 11px;
+        font-weight: 500;
+        color: rgba(255,255,255,0.85);
+    }
 `;
