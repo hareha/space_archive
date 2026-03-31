@@ -4,7 +4,8 @@ import {
     Dimensions, Animated, LayoutAnimation, UIManager, Platform,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { useRouter, useLocalSearchParams } from 'expo-router';
+import { useRouter, useLocalSearchParams, useNavigation } from 'expo-router';
+import { CommonActions } from '@react-navigation/native';
 import { Text } from '@/components/Themed';
 import { Ionicons } from '@expo/vector-icons';
 import { WebView } from 'react-native-webview';
@@ -88,6 +89,7 @@ function scoreLabel(score: number) {
 
 export default function TerritoryDetailScreen() {
     const router = useRouter();
+    const navigation = useNavigation();
     const params = useLocalSearchParams<{
         token: string; level: string; lat: string; lng: string;
         area: string; magCost: string; occupiedDate: string;
@@ -474,7 +476,17 @@ export default function TerritoryDetailScreen() {
                                     lat: territory.lat,
                                     lng: territory.lng,
                                 });
-                                router.dismissAll();
+                                // root stack을 (tabs)만 남기고 리셋 → profile 스택 완전 제거
+                                try {
+                                    navigation.getParent()?.dispatch(
+                                        CommonActions.reset({
+                                            index: 0,
+                                            routes: [{ name: '(tabs)' }],
+                                        })
+                                    );
+                                } catch (e) {
+                                    router.navigate('/(tabs)');
+                                }
                             }}
                             activeOpacity={0.7}
                         >

@@ -769,6 +769,9 @@ export default function MoonScreen() {
   }, [loading, params.highlightLat, params.highlightLng]);
 
   // 구역 상세 → 지도에서 보기: 글로벌 스토어 리스너로 점프 요청 처리
+  const mainModeRef = useRef(mainMode);
+  mainModeRef.current = mainMode;
+
   useEffect(() => {
     // 마운트 시 이미 대기 중인 요청 확인
     const pending = consumeJumpRequest();
@@ -777,10 +780,11 @@ export default function MoonScreen() {
     }
 
     const unsub = onJumpRequest((req) => {
-      if (req && !loading) {
+      if (!req) return;
+      consumeJumpRequest(); // 소비 처리
+      if (!loading) {
         handleJumpToCell(req.token);
-      } else if (req) {
-        // loading 중이면 pendingJumpCellRef에 저장
+      } else {
         pendingJumpCellRef.current = req.token;
       }
     });
@@ -788,10 +792,10 @@ export default function MoonScreen() {
   }, [loading]);
 
   function handleJumpToCell(token: string) {
-    console.log('[CellView] Jump to cell:', token);
+    console.log('[CellView] Jump to cell:', token, 'currentMode:', mainModeRef.current);
     pendingJumpCellRef.current = token;
 
-    if (mainMode !== 'test2') {
+    if (mainModeRef.current !== 'test2') {
       setMainMode('test2');
     } else {
       // 이미 test2 모드: ENTER_TEST2_MODE 재전송 → TILESET_READY 트리거
