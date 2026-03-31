@@ -474,7 +474,7 @@ export default function TerritoryDetailScreen() {
                                     lat: territory.lat,
                                     lng: territory.lng,
                                 });
-                                router.navigate('/(tabs)');
+                                router.dismissAll();
                             }}
                             activeOpacity={0.7}
                         >
