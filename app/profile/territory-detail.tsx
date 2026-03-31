@@ -476,17 +476,8 @@ export default function TerritoryDetailScreen() {
                                     lat: territory.lat,
                                     lng: territory.lng,
                                 });
-                                // root stack을 (tabs)만 남기고 리셋 → profile 스택 완전 제거
-                                try {
-                                    navigation.getParent()?.dispatch(
-                                        CommonActions.reset({
-                                            index: 0,
-                                            routes: [{ name: '(tabs)' }],
-                                        })
-                                    );
-                                } catch (e) {
-                                    router.navigate('/(tabs)');
-                                }
+                                // root stack에서 profile을 pop → 기존 (tabs) 그대로 복원
+                                navigation.getParent()?.goBack();
                             }}
                             activeOpacity={0.7}
                         >
