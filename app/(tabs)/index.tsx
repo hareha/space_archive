@@ -795,6 +795,9 @@ export default function MoonScreen() {
     console.log('[CellView] Jump to cell:', token, 'currentMode:', mainModeRef.current);
     pendingJumpCellRef.current = token;
 
+    // 현재 탭이 index가 아닐 수 있으므로 (mypage에서 올 수 있음) index 탭으로 전환
+    router.navigate('/(tabs)');
+
     if (mainModeRef.current !== 'test2') {
       setMainMode('test2');
     } else {

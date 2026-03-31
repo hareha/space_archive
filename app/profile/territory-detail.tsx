@@ -476,7 +476,7 @@ export default function TerritoryDetailScreen() {
                                     lat: territory.lat,
                                     lng: territory.lng,
                                 });
-                                // root stack에서 profile을 pop → 기존 (tabs) 그대로 복원
+                                // profile stack을 닫고 tabs로 복귀 (탭 전환은 index.tsx 리스너에서 처리)
                                 navigation.getParent()?.goBack();
                             }}
                             activeOpacity={0.7}
