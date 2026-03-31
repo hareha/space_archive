@@ -6,10 +6,12 @@ import { Image } from 'expo-image';
 import { Ionicons } from '@expo/vector-icons';
 import { NEWS_DATA, SCRAPPED_NEWS, COSMOS_NEWS_DATA, NewsItem } from '@/constants/MockData';
 import { addScrapContent, removeScrapContent, isContentScrapped } from '@/constants/scrapStore';
+import { useAuth } from '@/components/AuthContext';
 
 export default function NewsDetailScreen() {
     const { id } = useLocalSearchParams();
     const router = useRouter();
+    const { isLoggedIn } = useAuth();
     const [isScrapped, setIsScrapped] = useState(false);
 
     const newsItem: NewsItem | undefined =
@@ -25,6 +27,7 @@ export default function NewsDetailScreen() {
 
     const toggleScrap = async () => {
         if (!newsItem) return;
+        if (!isLoggedIn) { router.push('/auth/login'); return; }
         if (isScrapped) {
             await removeScrapContent(newsItem.id);
             setIsScrapped(false);

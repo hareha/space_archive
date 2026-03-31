@@ -313,31 +313,35 @@ export const CESIUM_LANDMARKS = `
               var camHeight = viewer.camera.positionCartographic.height;
 
               // ── depthTest 거리 계산 ──
-              // 50km 이하: INFINITY (항상 보임, 지형에 안 파묻힘)
-              // 300km 이상: 0 (depthTest 완전 활성, 뒷면 안 보임)
-              // 50~300km: 카메라까지의 실제 거리로 설정 (가까운 것만 보임)
+              // 카메라 높이에 상관없이, 카메라로부터 일정 거리 이내만 depthTest 면제
+              // → 가까운 마커는 지형에 안 파묻히고, 먼 마커(달 반대편)는 관통 안 됨
               var depthDist;
               if (camHeight < 50000) {
-                  depthDist = Number.POSITIVE_INFINITY;
+                  // 줌인: 카메라 높이의 3배 거리까지만 depthTest 면제
+                  depthDist = camHeight * 3;
               } else if (camHeight > 200000) {
                   depthDist = 0;
               } else {
                   var t = (camHeight - 50000) / 150000;
-                  depthDist = camMag * (1 - t);
+                  depthDist = camHeight * 3 * (1 - t);
               }
 
               // ── 가시성 threshold ──
-              // depthTest 이외에 완전히 뒤에 있는 마커를 숨김
-              // 0.05: ~87° (앞면만, 가장자리 약간 여유)
-              // -0.17: ~100° (수평선 약간 넘어까지)
+              // dot product 기반: 카메라 방향과 마커 방향의 각도 제한
+              // 줌인: 좁은 범위만 표시 (건너편 관통 방지)
+              // 줌아웃: 넓은 범위 표시
               var threshold;
-              if (camHeight < 100000) {
-                  threshold = 0.05;
+              if (camHeight < 50000) {
+                  // 50km 이하: cos(15°)=0.97 → 카메라 정면 ±15° 이내만
+                  threshold = 0.97;
+              } else if (camHeight < 100000) {
+                  var t1 = (camHeight - 50000) / 50000;
+                  threshold = 0.97 - 0.47 * t1; // → 0.5
               } else if (camHeight > 500000) {
-                  threshold = -0.17;
+                  threshold = -0.1;
               } else {
                   var tt = (camHeight - 100000) / 400000;
-                  threshold = 0.05 - 0.22 * tt;
+                  threshold = 0.5 - 0.6 * tt;
               }
 
               function checkEntity(entity, baseVisible, filterArr, filterProp) {

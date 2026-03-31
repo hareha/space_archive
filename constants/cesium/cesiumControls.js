@@ -924,6 +924,23 @@ function handleRNMessage(data) {
                 console.log('[Controls] ' + message.model + ' GLB URI injected');
             }
         }
+        // ═══ 모든 3D 모델 제거 (개척모드 안전장치) ═══
+        if (message.type === 'REMOVE_ALL_3D_MODELS') {
+            var modelFlags = ['_isApolloModel', '_isDanuriModel', '_isChandrayaanModel', '_isCapstoneModel', '_isLroModel'];
+            var entsToRemove = [];
+            viewer.entities.values.forEach(function(entity) {
+                for (var fi = 0; fi < modelFlags.length; fi++) {
+                    if (entity[modelFlags[fi]]) {
+                        entsToRemove.push(entity);
+                        break;
+                    }
+                }
+            });
+            for (var ri = 0; ri < entsToRemove.length; ri++) {
+                viewer.entities.remove(entsToRemove[ri]);
+            }
+            console.log('[Controls] REMOVE_ALL_3D_MODELS: removed ' + entsToRemove.length + ' entities');
+        }
         // ═══ 카메라 비행 전체 취소 (1인칭 진입 전 호출) ═══
         if (message.type === 'CANCEL_FLIGHTS') {
             if (window._autoOrbitRemove) { window._autoOrbitRemove(); window._autoOrbitRemove = null; }
@@ -1871,17 +1888,57 @@ function updateAppMode(payload) {
     if (oldMainMode && oldMainMode !== mainMode) {
         viewer.camera.cancelFlight();
 
-        // 모드 전환 시 이전 모드의 잔여물(예: 위성 궤적) 완벽히 초기화
+        // ── 위성 완전 초기화 ──
+        // 1) 프리미티브 제거
         if (typeof satellitePrimitives !== 'undefined') {
             satellitePrimitives.removeAll();
         }
+        // 2) 위성 3D 모델 엔티티 제거
         if (typeof _satModelEntities !== 'undefined') {
             _satModelEntities.forEach(function(e) { viewer.entities.remove(e); });
             _satModelEntities = [];
         }
+        // 3) 위성 애니메이션 프레임 취소
+        if (window._satAnimFrameId) {
+            cancelAnimationFrame(window._satAnimFrameId);
+            window._satAnimFrameId = null;
+        }
+        // 4) 위성 데이터 완전 삭제 (초기화 버튼 눌러도 복원 안 되도록)
+        lastSatellitesData = null;
+        highlightedSatelliteName = null;
+        window._satCurrentPositions = {};
+        // 5) 하이라이트 해제 메시지
         if (typeof highlightSatellite === 'function') {
             highlightSatellite(null);
             window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'SATELLITE_DESELECTED' }));
+        }
+
+        // ── orbit / 자동 회전 정리 ──
+        if (window._autoOrbitRemove) { window._autoOrbitRemove(); window._autoOrbitRemove = null; }
+        window._orbitState = null;
+        if (window._orbitPitchClamp) { window._orbitPitchClamp(); window._orbitPitchClamp = null; }
+
+        // ── 1인칭 모드 잔여물 정리 ──
+        if (window._fpPitchClamp) { window._fpPitchClamp(); window._fpPitchClamp = null; }
+        window._fpAboveAlt = null;
+        window._fpLookTarget = null;
+        window._firstPersonMode = false;
+        if (window._fpAnimFrame) { cancelAnimationFrame(window._fpAnimFrame); window._fpAnimFrame = null; }
+        if (window._fpFlagEntities) {
+            window._fpFlagEntities.forEach(function(e) { viewer.entities.remove(e); });
+            window._fpFlagEntities = null;
+        }
+        // goTo tick listener 정리
+        if (window._goToTickListener) {
+            viewer.clock.onTick.removeEventListener(window._goToTickListener);
+            window._goToTickListener = null;
+        }
+
+        // ── 지형 하이라이트/광고 정리 ──
+        clearFeatureHighlight();
+        if (_adImageryLayer) {
+            viewer.scene.primitives.remove(_adImageryLayer);
+            _adImageryLayer = null;
         }
 
         // 기본 뷰로 부드럽게 이동 (skipCameraReset이면 스킵 — 시스템이 별도 카메라 이동 처리)

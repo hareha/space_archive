@@ -7,7 +7,7 @@ import {
   View, Text, TouchableOpacity, ScrollView, Modal,
   Animated, StyleSheet, ActivityIndicator,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { recommendZones, type AIAnswers, type RecommendResult } from '@/constants/aiZoneRecommender';
 
@@ -83,6 +83,7 @@ const ANALYSIS_STEPS = [
 ];
 
 export default function AIZoneRecommendModal({ visible, onClose, onSelectZone }: Props) {
+  const insets = useSafeAreaInsets();
   const [step, setStep] = useState(0); // 0~4 = 설문, 5 = 분석중, 6 = 결과
   const [answers, setAnswers] = useState<Record<string, any>>({});
   const [results, setResults] = useState<RecommendResult[]>([]);
@@ -161,11 +162,11 @@ export default function AIZoneRecommendModal({ visible, onClose, onSelectZone }:
 
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
-      <SafeAreaView style={s.container} edges={['top', 'bottom']}>
+      <View style={[s.container, { paddingTop: insets.top }]}>
         {step <= 4 && renderQuestion()}
         {step === 5 && renderAnalysis()}
         {step === 6 && renderResults()}
-      </SafeAreaView>
+      </View>
     </Modal>
   );
 
@@ -209,7 +210,7 @@ export default function AIZoneRecommendModal({ visible, onClose, onSelectZone }:
           </ScrollView>
         </View>
 
-        <View style={{ height: 48 }} />
+        <View style={{ height: Math.max(48, insets.bottom + 12) }} />
       </View>
     );
   }
@@ -308,7 +309,7 @@ export default function AIZoneRecommendModal({ visible, onClose, onSelectZone }:
         </ScrollView>
 
         {/* 하단 버튼 */}
-        <View style={s.resultFooter}>
+        <View style={[s.resultFooter, { paddingBottom: Math.max(16, insets.bottom) }]}>
           <TouchableOpacity style={s.retryBtn} onPress={() => { setStep(0); setAnswers({}); }}>
             <Text style={s.retryText}>다시하기</Text>
           </TouchableOpacity>

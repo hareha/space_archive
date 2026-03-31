@@ -26,6 +26,7 @@ import { addScrapArea, removeScrapArea, isAreaScrapped } from '@/constants/scrap
 import { getAllOccupiedTokens, getUserOccupiedCells, getCellOwnerFromDB, occupyCell } from '@/services/database';
 import { useAuth } from '@/components/AuthContext';
 import * as Linking from 'expo-linking';
+import { onJumpRequest, consumeJumpRequest } from '@/constants/jumpToCellStore';
 
 export default function MoonScreen() {
   const { isLoggedIn } = useAuth();
@@ -37,6 +38,7 @@ export default function MoonScreen() {
   const [showAd, setShowAd] = useState(false);
   const [tilesetLoading, setTilesetLoading] = useState(false);
   const pendingModeRef = useRef<string | null>(null); // WebView 미로드 시 대기할 모드
+  const pendingJumpCellRef = useRef<string | null>(null); // TILESET_READY 후 JUMP_TO_CELL 대기
   const [webviewReady, setWebviewReady] = useState(false); // WebView JS 초기화 완료
   const [modeTransitioning, setModeTransitioning] = useState(false); // 모드 전환 중 잠금
 
@@ -530,18 +532,11 @@ export default function MoonScreen() {
       setMineralCellInfo(null);
 
       // 위성/착륙지점/지형 표시 끄기
-      if (showSatellites) {
-        setShowSatellites(false);
-        webviewRef.current?.postMessage(JSON.stringify({ type: 'UPDATE_MODE', payload: { mainMode: 'exploration', subMode: 'space' } }));
-      }
-      if (showLandingSites) {
-        setShowLandingSites(false);
-        webviewRef.current?.postMessage(JSON.stringify({ type: 'TOGGLE_LANDING_SITES', enabled: false }));
-      }
-      if (showTerrain) {
-        setShowTerrain(false);
-        webviewRef.current?.postMessage(JSON.stringify({ type: 'TOGGLE_TERRAIN', enabled: false }));
-      }
+      setShowSatellites(false);
+      setShowLandingSites(false);
+      setShowTerrain(false);
+      webviewRef.current?.postMessage(JSON.stringify({ type: 'TOGGLE_LANDING_SITES', enabled: false }));
+      webviewRef.current?.postMessage(JSON.stringify({ type: 'TOGGLE_TERRAIN', enabled: false }));
 
       // 환경 히트맵 끄기
       webviewRef.current?.postMessage(JSON.stringify({ type: 'TOGGLE_THERMAL_GRID', enabled: false }));
@@ -773,28 +768,38 @@ export default function MoonScreen() {
     }
   }, [loading, params.highlightLat, params.highlightLng]);
 
-  // 구역 상세 → 지도에서 보기: 개척모드(test2) + S2 토큰으로 바로 점프
+  // 구역 상세 → 지도에서 보기: 글로벌 스토어 리스너로 점프 요청 처리
   useEffect(() => {
-    if (!loading && params.cellToken && params.cellLevel) {
-      const token = params.cellToken as string;
-      const level = parseInt(params.cellLevel as string, 10);
-      console.log('[CellView] Switch to test2 + jump to cell:', token, 'L' + level);
-
-      // 이미 test2 모드가 아니면 전환
-      if (mainMode !== 'test2') {
-        setMainMode('test2');
-      }
-
-      // 개척모드 준비 후 JUMP_TO_CELL postMessage 전송 (초기화 없이 바로 점프)
-      const injectDelay = mainMode === 'test2' ? 1500 : 4000;
-      setTimeout(() => {
-        webviewRef.current?.postMessage(JSON.stringify({
-          type: 'JUMP_TO_CELL',
-          token: token,
-        }));
-      }, injectDelay);
+    // 마운트 시 이미 대기 중인 요청 확인
+    const pending = consumeJumpRequest();
+    if (pending && !loading) {
+      handleJumpToCell(pending.token);
     }
-  }, [loading, params.cellToken, params.cellLevel]);
+
+    const unsub = onJumpRequest((req) => {
+      if (req && !loading) {
+        handleJumpToCell(req.token);
+      } else if (req) {
+        // loading 중이면 pendingJumpCellRef에 저장
+        pendingJumpCellRef.current = req.token;
+      }
+    });
+    return unsub;
+  }, [loading]);
+
+  function handleJumpToCell(token: string) {
+    console.log('[CellView] Jump to cell:', token);
+    pendingJumpCellRef.current = token;
+
+    if (mainMode !== 'test2') {
+      setMainMode('test2');
+    } else {
+      // 이미 test2 모드: ENTER_TEST2_MODE 재전송 → TILESET_READY 트리거
+      webviewRef.current?.postMessage(JSON.stringify({ type: 'REMOVE_ALL_3D_MODELS' }));
+      webviewRef.current?.postMessage(JSON.stringify({ type: 'ENTER_TEST2_MODE' }));
+      setTilesetLoading(true);
+    }
+  }
 
   // magBalance를 WebView에 동기화
   useEffect(() => {
@@ -874,6 +879,18 @@ export default function MoonScreen() {
         case 'TILESET_READY':
           setTilesetLoading(false);
           setModeTransitioning(false);
+          // pending jump가 있으면 tileset 준비 후 실행
+          if (pendingJumpCellRef.current) {
+            const jumpToken = pendingJumpCellRef.current;
+            pendingJumpCellRef.current = null;
+            console.log('[CellView] TILESET_READY → executing pending JUMP_TO_CELL:', jumpToken);
+            setTimeout(() => {
+              webviewRef.current?.postMessage(JSON.stringify({
+                type: 'JUMP_TO_CELL',
+                token: jumpToken,
+              }));
+            }, 500); // L0 그리드 렌더 완료를 위한 최소 딜레이
+          }
           break;
         case 'INIT_COMPLETE':
           console.log('[Index] WebView JS init complete');
@@ -1030,6 +1047,7 @@ export default function MoonScreen() {
           type: 'UPDATE_MODE',
           payload: { mainMode: 'test2', subMode }
         }));
+        webviewRef.current?.postMessage(JSON.stringify({ type: 'REMOVE_ALL_3D_MODELS' }));
         webviewRef.current?.postMessage(JSON.stringify({ type: 'EXIT_TEST1_MODE' }));
         webviewRef.current?.postMessage(JSON.stringify({ type: 'ENTER_TEST2_MODE' }));
         webviewRef.current?.postMessage(JSON.stringify({ type: 'EXIT_TEST3_MODE' }));
@@ -1139,6 +1157,7 @@ export default function MoonScreen() {
           setTilesetLoading(true);
         } else {
           pendingModeRef.current = null;
+          webviewRef.current?.postMessage(JSON.stringify({ type: 'REMOVE_ALL_3D_MODELS' }));
           webviewRef.current?.postMessage(JSON.stringify({ type: 'EXIT_TEST1_MODE' }));
           webviewRef.current?.postMessage(JSON.stringify({ type: 'ENTER_TEST2_MODE' }));
           webviewRef.current?.postMessage(JSON.stringify({ type: 'EXIT_TEST3_MODE' }));
@@ -2376,6 +2395,7 @@ export default function MoonScreen() {
                         style={styles.occupyButton}
                         activeOpacity={0.8}
                         onPress={() => {
+                          if (!isLoggedIn) { router.push('/auth/login'); return; }
                           setShowOccupyConfirm(true);
                         }}
                       >
@@ -2495,7 +2515,10 @@ export default function MoonScreen() {
                       <TouchableOpacity
                         style={{ backgroundColor: '#2175FA', borderRadius: 10, paddingHorizontal: 22, justifyContent: 'center', alignItems: 'center', alignSelf: 'stretch', minWidth: 90 }}
                         activeOpacity={0.8}
-                        onPress={() => setShowOccupyConfirm(true)}
+                        onPress={() => {
+                          if (!isLoggedIn) { router.push('/auth/login'); return; }
+                          setShowOccupyConfirm(true);
+                        }}
                       >
                         <Text style={{ color: '#fff', fontSize: 15, fontWeight: '700' }}>개척하기</Text>
                         <Text style={{ color: 'rgba(255,255,255,0.7)', fontSize: 11, marginTop: 3 }}>{totalPrice + ' ELL'}</Text>

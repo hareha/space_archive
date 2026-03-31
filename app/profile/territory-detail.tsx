@@ -14,6 +14,7 @@ import { Asset } from 'expo-asset';
 import * as FileSystem from 'expo-file-system/legacy';
 import { LANDING_MODELS } from '@/constants/landingModels';
 import { useDeviceOrientation } from '@/hooks/useDeviceOrientation';
+import { requestJumpToCell } from '@/constants/jumpToCellStore';
 
 const { width } = Dimensions.get('window');
 const MAP_HEIGHT = 280;
@@ -102,6 +103,8 @@ export default function TerritoryDetailScreen() {
     const [firstPersonMode, setFirstPersonMode] = useState(false);
     const [fpReady, setFpReady] = useState(false);
     const [cesiumReady, setCesiumReady] = useState(false);
+    const fpGuideAnim = useRef(new Animated.Value(0)).current;
+    const [showFpGuide, setShowFpGuide] = useState(false);
     // LayoutAnimation 활성화 (Android)
     useEffect(() => {
         if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
@@ -178,6 +181,24 @@ export default function TerritoryDetailScreen() {
             altitude: deviceOrientation.altitude,
         }));
     }, [firstPersonMode, fpReady, deviceOrientation.azimuth, deviceOrientation.altitude]);
+
+    // 1인칭 안내 카드: fpReady 시 표시 → 1초 후 fadeOut
+    useEffect(() => {
+        if (fpReady && firstPersonMode) {
+            setShowFpGuide(true);
+            fpGuideAnim.setValue(1);
+            const timer = setTimeout(() => {
+                Animated.timing(fpGuideAnim, {
+                    toValue: 0,
+                    duration: 500,
+                    useNativeDriver: true,
+                }).start(() => setShowFpGuide(false));
+            }, 1000);
+            return () => clearTimeout(timer);
+        } else {
+            setShowFpGuide(false);
+        }
+    }, [fpReady, firstPersonMode]);
 
     const FP_LAYOUT_DURATION = 600; // ms, 천천히 확장
 
@@ -345,6 +366,13 @@ export default function TerritoryDetailScreen() {
                                 <Text style={styles.fpLoadingText}>지표면으로 이동 중...</Text>
                             </View>
                         )}
+                        {showFpGuide && (
+                            <Animated.View style={[styles.fpGuideOverlay, { opacity: fpGuideAnim }]}>
+                                <View style={styles.fpGuideCard}>
+                                    <Text style={styles.fpGuideText}>📱 휴대폰을 움직여{"\n"}시점을 전환해보세요</Text>
+                                </View>
+                            </Animated.View>
+                        )}
                     </>
                 )}
             </View>
@@ -440,16 +468,13 @@ export default function TerritoryDetailScreen() {
                         <TouchableOpacity
                             style={styles.actionCardFull}
                             onPress={() => {
-                                router.navigate({
-                                    pathname: '/(tabs)',
-                                    params: {
-                                        lat: String(territory.lat),
-                                        lng: String(territory.lng),
-                                        cellToken: territory.token,
-                                        cellLevel: String(territory.level),
-                                        mode: 'test2',
-                                    }
+                                requestJumpToCell({
+                                    token: territory.token,
+                                    level: territory.level,
+                                    lat: territory.lat,
+                                    lng: territory.lng,
                                 });
+                                router.navigate('/(tabs)');
                             }}
                             activeOpacity={0.7}
                         >
@@ -610,4 +635,18 @@ const styles = StyleSheet.create({
         backgroundColor: 'rgba(0,0,0,0.4)',
     },
     fpLoadingText: { color: '#fff', fontSize: 16, fontWeight: '600' },
+    fpGuideOverlay: {
+        ...StyleSheet.absoluteFillObject,
+        justifyContent: 'center', alignItems: 'center',
+        zIndex: 10,
+    },
+    fpGuideCard: {
+        width: 240, paddingVertical: 20, paddingHorizontal: 24,
+        backgroundColor: 'rgba(0,0,0,0.65)', borderRadius: 16,
+        alignItems: 'center', justifyContent: 'center',
+    },
+    fpGuideText: {
+        color: '#fff', fontSize: 15, fontWeight: '600',
+        textAlign: 'center', lineHeight: 22,
+    },
 });

@@ -14,10 +14,6 @@ export const CESIUM_GRID_OCCUPATION = `
       var _lastCenterToken = null;
 
 
-      // ═══ 디버그 (비활성화) ═══
-      function updateTRDebug(info) {
-          // disabled
-      }
 
       // ═══ 유틸 ═══
       function getDescendantsTR(cellId, targetLevel) {
@@ -167,93 +163,6 @@ export const CESIUM_GRID_OCCUPATION = `
           return pos;
       }
 
-      // ═══ Terrain 꼭짓점 높이 ═══
-      function computeTerrainVertexMap(candidates) {
-          var map = {};
-          for (var ci = 0; ci < candidates.length; ci++) {
-              var cell = s2.Cell.fromCellID(candidates[ci]);
-              for (var vi = 0; vi < 4; vi++) {
-                  var v = cell.vertex(vi);
-                  var r = Math.sqrt(v.x*v.x + v.y*v.y + v.z*v.z);
-                  var lon = Math.atan2(v.y, v.x);
-                  var lat = Math.asin(v.z / r);
-                  var key = lon.toFixed(8) + '_' + lat.toFixed(8);
-                  if (!map[key]) map[key] = { lon: lon, lat: lat, height: TR_TERRAIN_OFFSET };
-              }
-          }
-          var MOON_R = Cesium.Ellipsoid.MOON.maximumRadius;
-          var keys = Object.keys(map);
-          for (var ki = 0; ki < keys.length; ki++) {
-              var entry = map[keys[ki]];
-              try {
-                  var abovePos = Cesium.Cartesian3.fromRadians(entry.lon, entry.lat, 20000, Cesium.Ellipsoid.MOON);
-                  var clamped = viewer.scene.clampToHeight(abovePos);
-                  if (clamped) {
-                      entry.height = (Cesium.Cartesian3.magnitude(clamped) - MOON_R) + TR_TERRAIN_OFFSET;
-                  } else {
-                      // clampToHeight 실패 시 sampleHeight 폴백
-                      var carto = new Cesium.Cartographic(entry.lon, entry.lat);
-                      var h = viewer.scene.sampleHeight(carto);
-                      entry.height = (h !== undefined && h !== null && !isNaN(h)) ? (h + TR_TERRAIN_OFFSET) : (_lastKnownTerrainH + TR_TERRAIN_OFFSET);
-                  }
-              } catch(e) { entry.height = _lastKnownTerrainH + TR_TERRAIN_OFFSET; }
-          }
-          return map;
-      }
-
-      // 정밀 terrain 위치 (exact vertex match)
-      function getCellTerrainPositions(cellId, vertexMap) {
-          var cell = s2.Cell.fromCellID(cellId);
-          var pos = [];
-          for (var i = 0; i < 4; i++) {
-              var v = cell.vertex(i);
-              var r = Math.sqrt(v.x*v.x + v.y*v.y + v.z*v.z);
-              var lon = Math.atan2(v.y, v.x);
-              var lat = Math.asin(v.z / r);
-              var key = lon.toFixed(8) + '_' + lat.toFixed(8);
-              var entry = vertexMap[key];
-              var h = entry ? entry.height : _lastKnownTerrainH;
-              pos.push(Cesium.Cartesian3.fromRadians(lon, lat, h, Cesium.Ellipsoid.MOON));
-          }
-          pos.push(pos[0].clone());
-          return pos;
-      }
-
-      // ★ 대략 terrain 위치 (coarse vertex map에서 IDW 보간)
-      // 모든 coarse 꼭짓점의 높이를 1/d² 가중치로 혼합 → 직선에 가까운 높이 전이
-      function getCellTerrainPositionsCoarse(cellId, coarseVMap, coarseKeys) {
-          var cell = s2.Cell.fromCellID(cellId);
-          var pos = [];
-          for (var i = 0; i < 4; i++) {
-              var v = cell.vertex(i);
-              var r = Math.sqrt(v.x*v.x + v.y*v.y + v.z*v.z);
-              var lon = Math.atan2(v.y, v.x);
-              var lat = Math.asin(v.z / r);
-              var key = lon.toFixed(8) + '_' + lat.toFixed(8);
-
-              var h;
-              // 1. exact match (coarse 꼭짓점과 동일한 위치)
-              if (coarseVMap[key]) {
-                  h = coarseVMap[key].height;
-              } else {
-                  // 2. IDW 역거리 가중 보간
-                  var sumW = 0, sumWH = 0;
-                  for (var k = 0; k < coarseKeys.length; k++) {
-                      var e = coarseVMap[coarseKeys[k]];
-                      var dlat = e.lat - lat, dlon = e.lon - lon;
-                      var d2 = dlat*dlat + dlon*dlon;
-                      if (d2 < 1e-14) { sumW = 1; sumWH = e.height; break; }
-                      var w = 1.0 / d2; // 1/d² → 가까울수록 강한 가중치
-                      sumW += w;
-                      sumWH += w * e.height;
-                  }
-                  h = sumW > 0 ? sumWH / sumW : _lastKnownTerrainH;
-              }
-              pos.push(Cesium.Cartesian3.fromRadians(lon, lat, h, Cesium.Ellipsoid.MOON));
-          }
-          pos.push(pos[0].clone());
-          return pos;
-      }
 
       // ═══════════════════════════════════════════════════
       // renderDynamicGrid — 고정높이 Primitive, 누적 방식
@@ -278,7 +187,6 @@ export const CESIUM_GRID_OCCUPATION = `
       // ═══ 증분 렌더링용 셀 맵 ═══
       var _renderedCellMap = {}; // { token: { linePrim, polyPrim, labelCollection } }
       var _trHeightCache = {};  // { "lat,lon" → sampledHeight }
-      var _gridAnimTimers = [];  // 동심원 애니메이션 타이머들
 
       // ═══ 동심원 거리 계산용 유틸 ═══
       function getS2CellCenter(cellId) {
@@ -291,10 +199,6 @@ export const CESIUM_GRID_OCCUPATION = `
           var dl = c1.lon - c2.lon, da = c1.lat - c2.lat;
           return Math.sqrt(dl*dl + da*da);
       }
-      function clearGridAnimTimers() {
-          for (var i = 0; i < _gridAnimTimers.length; i++) clearTimeout(_gridAnimTimers[i]);
-          _gridAnimTimers = [];
-      }
 
       // 꼭짓점 lat/lon → 캐시 키 (~1.7m 해상도)
       function _hKey(lat, lon) {
@@ -302,6 +206,81 @@ export const CESIUM_GRID_OCCUPATION = `
       }
 
       // 부모 셀 4꼭짓점 높이 샘플링 (캐시에 저장)
+      var _activeAnimCol = null; // 현재 확산/축소 애니메이션의 PrimitiveCollection 추적
+
+      // 여러 셀의 꼭짓점을 한 번의 hide/restore로 일괄 샘플링 (성능 최적화)
+      function batchPreSampleHeights(cellIds) {
+          // 1) 캐시에 없는 고유 꼭짓점 수집
+          var toSample = []; // { lat, lon, key }
+          var seen = {};
+          for (var ci = 0; ci < cellIds.length; ci++) {
+              var cell = s2.Cell.fromCellID(cellIds[ci]);
+              for (var vi = 0; vi < 4; vi++) {
+                  var v = cell.vertex(vi);
+                  var r = Math.sqrt(v.x*v.x + v.y*v.y + v.z*v.z);
+                  var lat = Math.asin(v.z / r);
+                  var lon = Math.atan2(v.y, v.x);
+                  var key = _hKey(lat, lon);
+                  if (!seen[key] && (_trHeightCache[key] === undefined || _trHeightCache[key] === null)) {
+                      seen[key] = true;
+                      toSample.push({ lat: lat, lon: lon, key: key });
+                  }
+              }
+          }
+          if (toSample.length === 0) return;
+
+          // 2) 한 번만 hide
+          var wasGridVisible = trGridPrimitives.show;
+          var wasNeighborVisible = trNeighborPrimitives.show;
+          var wasAccumVisible = trAccumulatedPrimitives.show;
+          var wasFlashVisible = trFlashPrimitives.show;
+          trGridPrimitives.show = false;
+          trNeighborPrimitives.show = false;
+          trAccumulatedPrimitives.show = false;
+          trFlashPrimitives.show = false;
+          var wasAnimColVisible = false;
+          if (_activeAnimCol) { wasAnimColVisible = _activeAnimCol.show; _activeAnimCol.show = false; }
+          var _hiddenPrims = [];
+          var _rcKeys = Object.keys(_renderedCellMap);
+          for (var ri = 0; ri < _rcKeys.length; ri++) {
+              var re = _renderedCellMap[_rcKeys[ri]];
+              if (re && re.polyPrim && re.polyPrim.show) { re.polyPrim.show = false; _hiddenPrims.push(re.polyPrim); }
+              if (re && re.linePrim && re.linePrim.show) { re.linePrim.show = false; _hiddenPrims.push(re.linePrim); }
+          }
+          var _excludeList = [trGridPrimitives, trNeighborPrimitives, trAccumulatedPrimitives, trFlashPrimitives];
+          if (_activeAnimCol) _excludeList.push(_activeAnimCol);
+          for (var ei = 0; ei < _rcKeys.length; ei++) {
+              var ee = _renderedCellMap[_rcKeys[ei]];
+              if (ee && ee.polyPrim) _excludeList.push(ee.polyPrim);
+              if (ee && ee.linePrim) _excludeList.push(ee.linePrim);
+              if (ee && ee.labelCol) _excludeList.push(ee.labelCol);
+          }
+
+          // 3) 일괄 sampleHeight
+          for (var si = 0; si < toSample.length; si++) {
+              var s = toSample[si];
+              try {
+                  var cart = Cesium.Cartographic.fromRadians(s.lon, s.lat);
+                  var h = viewer.scene.sampleHeight(cart, _excludeList);
+                  if (h !== undefined && h !== null && !isNaN(h)) {
+                      _trHeightCache[s.key] = h;
+                  } else {
+                      _trHeightCache[s.key] = null;
+                  }
+              } catch(e) {
+                  _trHeightCache[s.key] = null;
+              }
+          }
+
+          // 4) 한 번만 restore
+          trGridPrimitives.show = wasGridVisible;
+          trNeighborPrimitives.show = wasNeighborVisible;
+          trAccumulatedPrimitives.show = wasAccumVisible;
+          trFlashPrimitives.show = wasFlashVisible;
+          if (_activeAnimCol) _activeAnimCol.show = wasAnimColVisible;
+          for (var pi = 0; pi < _hiddenPrims.length; pi++) { _hiddenPrims[pi].show = true; }
+      }
+
       function sampleCellVertices(cellId) {
           var MOON_R = Cesium.Ellipsoid.MOON.maximumRadius;
           var cell = s2.Cell.fromCellID(cellId);
@@ -334,7 +313,10 @@ export const CESIUM_GRID_OCCUPATION = `
           trNeighborPrimitives.show = false;
           trAccumulatedPrimitives.show = false;
           trFlashPrimitives.show = false;
-          // _renderedCellMap 내 기존 셀 폴리곤도 숨기기 (이전 깊이 셀이 sampleHeight에 간섭)
+          // 애니메이션 animCol도 숨기기
+          var wasAnimColVisible = false;
+          if (_activeAnimCol) { wasAnimColVisible = _activeAnimCol.show; _activeAnimCol.show = false; }
+          // _renderedCellMap 내 기존 셀 폴리곤도 숨기기
           var _hiddenPrims = [];
           var _rcKeys = Object.keys(_renderedCellMap);
           for (var ri = 0; ri < _rcKeys.length; ri++) {
@@ -342,6 +324,17 @@ export const CESIUM_GRID_OCCUPATION = `
               if (re && re.polyPrim && re.polyPrim.show) { re.polyPrim.show = false; _hiddenPrims.push(re.polyPrim); }
               if (re && re.linePrim && re.linePrim.show) { re.linePrim.show = false; _hiddenPrims.push(re.linePrim); }
           }
+
+          // objectsToExclude도 함께 전달 (.show=false가 sampleHeight에서 안 먹는 경우 대비)
+          var _excludeList = [trGridPrimitives, trNeighborPrimitives, trAccumulatedPrimitives, trFlashPrimitives];
+          if (_activeAnimCol) _excludeList.push(_activeAnimCol);
+          for (var ei = 0; ei < _rcKeys.length; ei++) {
+              var ee = _renderedCellMap[_rcKeys[ei]];
+              if (ee && ee.polyPrim) _excludeList.push(ee.polyPrim);
+              if (ee && ee.linePrim) _excludeList.push(ee.linePrim);
+              if (ee && ee.labelCol) _excludeList.push(ee.labelCol);
+          }
+
           for (var vi = 0; vi < 4; vi++) {
               var v = cell.vertex(vi);
               var r = Math.sqrt(v.x*v.x + v.y*v.y + v.z*v.z);
@@ -351,7 +344,7 @@ export const CESIUM_GRID_OCCUPATION = `
               if (_trHeightCache[key] === undefined || _trHeightCache[key] === null) {
                   try {
                       var cart = Cesium.Cartographic.fromRadians(lon, lat);
-                      var h = viewer.scene.sampleHeight(cart);
+                      var h = viewer.scene.sampleHeight(cart, _excludeList);
                       if (h !== undefined && h !== null && !isNaN(h)) {
                           _trHeightCache[key] = h;
                       } else {
@@ -369,6 +362,7 @@ export const CESIUM_GRID_OCCUPATION = `
           trNeighborPrimitives.show = wasNeighborVisible;
           trAccumulatedPrimitives.show = wasAccumVisible;
           trFlashPrimitives.show = wasFlashVisible;
+          if (_activeAnimCol) _activeAnimCol.show = wasAnimColVisible;
           for (var pi = 0; pi < _hiddenPrims.length; pi++) { _hiddenPrims[pi].show = true; }
           // null인 꼭지점은 성공한 이웃 꼭지점 평균으로 근사
           var validSum = 0, validCount = 0;
@@ -604,10 +598,6 @@ export const CESIUM_GRID_OCCUPATION = `
           _trHeightCache = {};
       }
 
-      // 높이 캐시만 클리어 (재계산 강제)
-      function clearHeightCache() {
-          _trHeightCache = {};
-      }
 
       // 증분 렌더링: 카메라 중심 기준 9셀 diff
       // animMode: 'expand' = 중앙→바깥 확산, 없으면 즉시
@@ -628,14 +618,9 @@ export const CESIUM_GRID_OCCUPATION = `
           if (animMode === 'expand') {
               oldEntries = {};
               oldParentWireframe = [];
-              // null 캐시만 삭제 → 실패한 꼭지점만 재시도 (성공한 캐시 보존)
-              var _ckeys = Object.keys(_trHeightCache);
-              for (var _ci = 0; _ci < _ckeys.length; _ci++) {
-                  if (_trHeightCache[_ckeys[_ci]] === null) delete _trHeightCache[_ckeys[_ci]];
-              }
               var oldTokens = Object.keys(_renderedCellMap);
               if (oldTokens.length > 0) {
-                  // 1→2, 2→3 전환: 기존 neighbor 셀 wireframe 수집
+                  // 1→2, 2→3 전환: 기존 neighbor 셀 wireframe 수집 (기존 캐시 활용 → 빠름)
                   for (var oi = 0; oi < oldTokens.length; oi++) {
                       oldEntries[oldTokens[oi]] = _renderedCellMap[oldTokens[oi]];
                       var oldCid = s2.cellid.fromToken(oldTokens[oi]);
@@ -667,6 +652,8 @@ export const CESIUM_GRID_OCCUPATION = `
                       }
                   }
               }
+              // wireframe 수집 완료 후 캐시 클리어 → 새 셀은 정확한 높이로 샘플링
+              _trHeightCache = {};
               _renderedCellMap = {};
           }
 
@@ -694,6 +681,12 @@ export const CESIUM_GRID_OCCUPATION = `
           _activeToken = s2.cellid.toToken(centerCell);
 
           if (animMode === 'expand' && pendingKeys.length > 0) {
+              // 모든 셀의 꼭짓점 높이를 1회 hide/restore로 일괄 프리캐싱
+              var preSampleIds = [];
+              for (var ps = 0; ps < pendingKeys.length; ps++) {
+                  preSampleIds.push(newTokens[pendingKeys[ps]]);
+              }
+              batchPreSampleHeights(preSampleIds);
               // 프레임 분산: 프레임당 2셀씩 renderOneCell → 완료 후 확산 애니메이션
               var batchIdx = 0;
               var BATCH_SIZE = 2;
@@ -791,6 +784,7 @@ export const CESIUM_GRID_OCCUPATION = `
           }
 
           var animCol = viewer.scene.primitives.add(new Cesium.PrimitiveCollection());
+          _activeAnimCol = animCol;
           var duration = 600;
           var startTime = null;
           var parentCleaned = false;
@@ -885,6 +879,7 @@ export const CESIUM_GRID_OCCUPATION = `
               } else {
                   _gridExpandFrame = null;
                   try { viewer.scene.primitives.remove(animCol); } catch(e) {}
+                  if (_activeAnimCol === animCol) _activeAnimCol = null;
                   // 새 원본 보이기
                   var tks = Object.keys(_renderedCellMap);
                   for (var fi = 0; fi < tks.length; fi++) {
@@ -918,6 +913,7 @@ export const CESIUM_GRID_OCCUPATION = `
 
           // 자식 원본 프리미티브는 첫 프레임에서 숨김 (animCol과 동일 프레임)
           var animCol = viewer.scene.primitives.add(new Cesium.PrimitiveCollection());
+          _activeAnimCol = animCol;
           var duration = 300;
           var startTime = null;
 
@@ -968,6 +964,7 @@ export const CESIUM_GRID_OCCUPATION = `
               } else {
                   _gridShrinkFrame = null;
                   try { viewer.scene.primitives.remove(animCol); } catch(e) {}
+                  if (_activeAnimCol === animCol) _activeAnimCol = null;
                   // 자식 primitive 완전 제거 (메모리)
                   if (childEntriesToRemove) {
                       var ckKeys2 = Object.keys(childEntriesToRemove);
@@ -983,139 +980,7 @@ export const CESIUM_GRID_OCCUPATION = `
           }
           _gridShrinkFrame = requestAnimationFrame(drawShrinkFrame);
       }
-
-
-
-
-
-      // ═══════════════════════════════════════════════════
-      // renderTerrainSpread — 2단계 진입 시 지형 그리드 확산 애니메이션
-      // 중앙에서 바깥으로 퍼져나가는 와이어프레임
-      // ═══════════════════════════════════════════════════
       var _spreadAnimFrame = null;
-      function renderTerrainSpread(cellId) {
-          if (_spreadAnimFrame) { cancelAnimationFrame(_spreadAnimFrame); _spreadAnimFrame = null; }
-          trNeighborPrimitives.removeAll();
-
-           var currentLevel = s2.cellid.level(cellId);
-          var tgtLv = Math.min(currentLevel + 4, 16);
-          var children = getDescendantsTR(cellId, tgtLv);
-
-          // 셀 중심 좌표 (거리 비교용)
-          var centerCell = s2.Cell.fromCellID(cellId);
-          var cc = centerCell.center();
-          var ccr = Math.sqrt(cc.x*cc.x + cc.y*cc.y + cc.z*cc.z);
-          var centerLon = Math.atan2(cc.y, cc.x);
-          var centerLat = Math.asin(cc.z / ccr);
-
-          // 각 자식셀의 중심→셀중심 각도거리 계산
-          var cellDistances = [];
-          var maxDist = 0;
-          for (var i = 0; i < children.length; i++) {
-              var c = s2.Cell.fromCellID(children[i]);
-              var v = c.center();
-              var vr = Math.sqrt(v.x*v.x + v.y*v.y + v.z*v.z);
-              var lon = Math.atan2(v.y, v.x);
-              var lat = Math.asin(v.z / vr);
-              var dlon = lon - centerLon;
-              var dlat = lat - centerLat;
-              var dist = Math.sqrt(dlon*dlon + dlat*dlat);
-              cellDistances.push(dist);
-              if (dist > maxDist) maxDist = dist;
-          }
-
-          // 각 자식셀의 지형 높이 위치
-          var parentVerts = sampleCellVertices(cellId);
-          var cellPositions = [];
-          for (var ci = 0; ci < children.length; ci++) {
-              var cpArr = getCellTerrainPositions(children[ci], parentVerts);
-              cpArr.push(cpArr[0].clone());
-              cellPositions.push(cpArr);
-          }
-
-          var greenColor = Cesium.Color.WHITE.withAlpha(0.2);
-          var duration = 800;
-          var startTime = null;
-
-          function drawFrame(time) {
-              if (!startTime) startTime = time;
-              var t = Math.min((time - startTime) / duration, 1);
-              var ease = t < 0.5 ? 2*t*t : 1-Math.pow(-2*t+2,2)/2; // ease-in-out quad
-              var currentMaxDist = maxDist * ease * 1.1; // 약간 여유
-
-              trNeighborPrimitives.removeAll();
-              var lineInstances = [];
-
-              for (var i = 0; i < children.length; i++) {
-                  if (cellDistances[i] > currentMaxDist) continue;
-                  var edgeFade = 1.0;
-                  if (currentMaxDist > 0) {
-                      var ratio = cellDistances[i] / currentMaxDist;
-                      edgeFade = Math.max(0, 1.0 - ratio * 0.5);
-                  }
-                  var color = greenColor.withAlpha(0.35 * edgeFade);
-                  lineInstances.push(new Cesium.GeometryInstance({
-                      geometry: new Cesium.PolylineGeometry({ positions: cellPositions[i], width: 0.5, arcType: Cesium.ArcType.NONE }),
-                      attributes: { color: Cesium.ColorGeometryInstanceAttribute.fromColor(color) }
-                  }));
-              }
-
-              // 셀 경계
-              var bndPos = getCellTerrainPositions(cellId, parentVerts);
-              bndPos.push(bndPos[0].clone());
-              lineInstances.push(new Cesium.GeometryInstance({
-                  geometry: new Cesium.PolylineGeometry({ positions: bndPos, width: 1.0, arcType: Cesium.ArcType.NONE }),
-                  attributes: { color: Cesium.ColorGeometryInstanceAttribute.fromColor(greenColor.withAlpha(0.3 * ease)) }
-              }));
-
-              if (lineInstances.length > 0) {
-                  trNeighborPrimitives.add(new Cesium.Primitive({
-                      geometryInstances: lineInstances,
-                      appearance: new Cesium.PolylineColorAppearance({
-                          flat: true, translucent: true,
-                          renderState: { depthTest: { enabled: false }, depthMask: false }
-                      }),
-                      asynchronous: false
-                  }));
-              }
-
-              if (t < 1) {
-                  _spreadAnimFrame = requestAnimationFrame(drawFrame);
-              } else {
-                  _spreadAnimFrame = null;
-                  // 애니메이션 완료 → 히트테스트 폴리곤 추가 (지형 높이)
-                  var parentVerts = sampleCellVertices(cellId);
-                  var polyInstances = [];
-                  for (var pi = 0; pi < children.length; pi++) {
-                      var hc = s2.Cell.fromCellID(children[pi]);
-                      var pp = [];
-                      for (var j = 0; j < 4; j++) {
-                          var hv = hc.vertex(j);
-                          var hr = Math.sqrt(hv.x*hv.x+hv.y*hv.y+hv.z*hv.z);
-                          var hlat = Math.asin(hv.z/hr);
-                          var hlon = Math.atan2(hv.y, hv.x);
-                          pp.push(terrainCartesian(hlat, hlon, parentVerts));
-                      }
-                      polyInstances.push(new Cesium.GeometryInstance({
-                          geometry: new Cesium.PolygonGeometry({ polygonHierarchy: new Cesium.PolygonHierarchy(pp), ellipsoid: Cesium.Ellipsoid.MOON, perPositionHeight: true }),
-                          attributes: { color: Cesium.ColorGeometryInstanceAttribute.fromColor(Cesium.Color.WHITE.withAlpha(0.01)) },
-                          id: children[pi]
-                      }));
-                  }
-                  if (polyInstances.length > 0) {
-                      trNeighborPrimitives.add(new Cesium.Primitive({
-                          geometryInstances: polyInstances,
-                          appearance: new Cesium.PerInstanceColorAppearance({
-                              flat: true, translucent: true,
-                              renderState: { depthTest: { enabled: false }, depthMask: false }
-                          }),
-                          asynchronous: true
-                      }));
-                  }
-              }
-          }
-          _spreadAnimFrame = requestAnimationFrame(drawFrame);
-      }
 
       // ═══════════════════════════════════════════════════
       // 카메라 중심 셀 실시간 추적 (preRender)
@@ -1202,7 +1067,6 @@ export const CESIUM_GRID_OCCUPATION = `
 
       // ═══ 0단계 전용: 카메라 방향 실시간 그리드 ═══
       var _l0PreRender = null;
-      var _l0LastToken = null;
 
       var L0_GRID_HEIGHT = 8000; // 0단계 그리드 고정 높이
 
@@ -1423,10 +1287,8 @@ export const CESIUM_GRID_OCCUPATION = `
               _l0PreRender();
               _l0PreRender = null;
           }
-          _l0LastToken = null;
       }
 
-      var _parentFadeFrame = null;
 
       function renderTerrain(keepNeighbors, keepL0Grid) {
           stopCameraTracking(); // 기존 preRender 리스너 해제 (race condition 방지)
@@ -1442,7 +1304,6 @@ export const CESIUM_GRID_OCCUPATION = `
           _lastCameraCenterToken = null;
           stopL0CameraTracking();
           if (_spreadAnimFrame) { cancelAnimationFrame(_spreadAnimFrame); _spreadAnimFrame = null; }
-          if (_parentFadeFrame) { cancelAnimationFrame(_parentFadeFrame); _parentFadeFrame = null; }
           if (_l0AnimFrame) { cancelAnimationFrame(_l0AnimFrame); _l0AnimFrame = null; }
           // 점유 라벨 정리
           if (_occupationLabels) {
@@ -1455,11 +1316,9 @@ export const CESIUM_GRID_OCCUPATION = `
 
           if (currentLevel === 0) {
               // ══════ 0단계: 전체 L4 그리드 1회 렌더 (카메라 트래킹 불필요) ══════
-              _l0LastToken = null;
               renderL0ForCamera();
           }
 
-          // 부모 페이드아웃 제거됨 (화면 중앙 흰색 그리드 원인)
 
           updateUI();
       }

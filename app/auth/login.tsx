@@ -24,8 +24,13 @@ export default function LoginScreen() {
     const success = await login(email, password);
     setLoading(false);
     if (success) {
-      router.replace('/(tabs)/mypage');
+      router.dismiss();
     }
+  };
+
+  const handleSNSLogin = async (provider: 'kakao' | 'apple' | 'naver' | 'facebook') => {
+    await loginWithSNS(provider);
+    router.dismiss();
   };
 
   return (
@@ -74,7 +79,7 @@ export default function LoginScreen() {
               {/* 카카오 */}
               <TouchableOpacity
                 style={[s.snsBtn, { backgroundColor: '#FEE500' }]}
-                onPress={() => loginWithSNS('kakao')}
+                onPress={() => handleSNSLogin('kakao')}
                 activeOpacity={0.85}
               >
                 <Text style={[s.snsBtnText, { color: '#391B1B' }]}>TALK  카카오톡으로 계속하기</Text>
@@ -83,7 +88,7 @@ export default function LoginScreen() {
               {/* Apple */}
               <TouchableOpacity
                 style={[s.snsBtn, { backgroundColor: '#FFFFFF' }]}
-                onPress={() => loginWithSNS('apple')}
+                onPress={() => handleSNSLogin('apple')}
                 activeOpacity={0.85}
               >
                 <Ionicons name="logo-apple" size={20} color="#000" style={{ marginRight: 8 }} />
@@ -94,14 +99,14 @@ export default function LoginScreen() {
               <View style={s.snsSmallRow}>
                 <TouchableOpacity
                   style={[s.snsSmallBtn, { backgroundColor: '#03C75A' }]}
-                  onPress={() => loginWithSNS('naver')}
+                  onPress={() => handleSNSLogin('naver')}
                   activeOpacity={0.85}
                 >
                   <Text style={s.snsSmallText}>N</Text>
                 </TouchableOpacity>
                 <TouchableOpacity
                   style={[s.snsSmallBtn, { backgroundColor: '#1877F2' }]}
-                  onPress={() => loginWithSNS('facebook')}
+                  onPress={() => handleSNSLogin('facebook')}
                   activeOpacity={0.85}
                 >
                   <Text style={s.snsSmallText}>f</Text>

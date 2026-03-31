@@ -416,12 +416,10 @@ export const CESIUM_CONTROLS_OCCUPATION = `
               var neighbors = getCellNeighborsTR(cellId);
               for (var ni = 0; ni < neighbors.length; ni++) sampleCellVertices(neighbors[ni]);
               flyToCellTR(cellId, function() {
-                  startCameraTracking();
-              }, function() {
-                  // midFlight(70%): 줄인 완료 ~360ms 전에 그리드 렌더
+                  // onComplete: 줌인 완료 후 그리드 렌더
                   _isFlyingTo = false;
                   renderDynamicGrid(null, 'expand');
-                  _isFlyingTo = true;
+                  startCameraTracking();
               });
           }
       }, Cesium.ScreenSpaceEventType.LEFT_CLICK);
@@ -431,6 +429,22 @@ export const CESIUM_CONTROLS_OCCUPATION = `
           try {
               var msg = typeof event.data === 'string' ? JSON.parse(event.data) : event.data;
               if (msg.type === 'ENTER_TEST2_MODE') {
+
+                  // ═══ 개척모드 진입 시 모든 3D 모델(착륙선/위성) 제거 ═══
+                  var modelFlags = ['_isApolloModel', '_isDanuriModel', '_isChandrayaanModel', '_isCapstoneModel', '_isLroModel'];
+                  var entsToRemove = [];
+                  viewer.entities.values.forEach(function(entity) {
+                      for (var fi = 0; fi < modelFlags.length; fi++) {
+                          if (entity[modelFlags[fi]]) {
+                              entsToRemove.push(entity);
+                              break;
+                          }
+                      }
+                  });
+                  for (var ri = 0; ri < entsToRemove.length; ri++) {
+                      viewer.entities.remove(entsToRemove[ri]);
+                  }
+                  console.log('[TR] Removed ' + entsToRemove.length + ' 3D model entities on ENTER_TEST2_MODE');
 
                   // TR 전용 primitives만 클리어 (모드1·2 건드리지 않음)
                   trGridPrimitives.removeAll();
@@ -568,12 +582,10 @@ export const CESIUM_CONTROLS_OCCUPATION = `
                   var neighbors2 = getCellNeighborsTR(cellId);
                   for (var ni2 = 0; ni2 < neighbors2.length; ni2++) sampleCellVertices(neighbors2[ni2]);
                   flyToCellTR(cellId, function() {
-                      startCameraTracking();
-                  }, function() {
-                      // midFlight(70%): 줄인 완료 ~360ms 전에 그리드 렌더
+                      // onComplete: 줌인 완료 후 그리드 렌더
                       _isFlyingTo = false;
                       renderDynamicGrid(null, 'expand');
-                      _isFlyingTo = true;
+                      startCameraTracking();
                   });
               }
               if (msg.type === 'GO_BACK') {
