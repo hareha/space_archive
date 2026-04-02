@@ -15,7 +15,7 @@ export function createCesiumARHtml() {
       width: 100%; height: 100%;
       margin: 0; padding: 0;
       overflow: hidden;
-      background: transparent !important;
+      background: #000 !important;
       -webkit-user-select: none;
       user-select: none;
     }
@@ -51,12 +51,9 @@ export function createCesiumARHtml() {
     #arCloseBtn:active { background: rgba(255,255,255,0.25); }
   </style>
 </head>
-<body style="background: transparent !important;">
+<body style="background: #000 !important;">
   <div id="cesiumContainer"></div>
-  <script type="module">
-    import { s2 } from 'https://esm.sh/s2js';
-    window.s2 = s2;
-
+  <script>
     Cesium.Ion.defaultAccessToken = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJqdGkiOiI3MjNhYjIzZi0wMWU5LTQzOTEtODY3Ni1kY2JkNTEyMmE2NTgiLCJpZCI6Mzc2MDQ4LCJpYXQiOjE3Njc4MzYyNTR9.K6HpEEiCNNlC8AzsTe3zuuGtcg9AJKEAnt8mA2MIoMg';
 
     function sendToRN(type, payload) {
@@ -69,6 +66,25 @@ export function createCesiumARHtml() {
 
     async function initARMoon() {
       try {
+        var isAndroid = /android/i.test(navigator.userAgent);
+        sendToRN('AR_CESIUM_LOG', { step: 'init_start', isAndroid: isAndroid });
+
+        // --- S2 IMPORT (타임아웃 5초 — 실패해도 진행) ---
+        try {
+          var s2Promise = import('https://esm.sh/s2js');
+          var timeoutPromise = new Promise(function(_, reject) {
+            setTimeout(function() { reject(new Error('s2js timeout')); }, 5000);
+          });
+          var s2Module = await Promise.race([s2Promise, timeoutPromise]);
+          window.s2 = s2Module.s2;
+          sendToRN('AR_CESIUM_LOG', { step: 's2js_loaded' });
+        } catch(e) {
+          console.warn('[AR] s2js import failed/timeout (non-critical):', e);
+          window.s2 = null;
+          sendToRN('AR_CESIUM_LOG', { step: 's2js_skipped', error: String(e) });
+        }
+
+        sendToRN('AR_CESIUM_LOG', { step: 'creating_viewer' });
         var moonEllipsoid = Cesium.Ellipsoid.MOON;
 
         var viewer = new Cesium.Viewer('cesiumContainer', {
@@ -90,15 +106,16 @@ export function createCesiumARHtml() {
           scene3DOnly: true,
           contextOptions: {
             webgl: {
-              alpha: true,
-              antialias: true,
-              premultipliedAlpha: true,
-              preserveDrawingBuffer: false
+              alpha: !isAndroid,
+              antialias: !isAndroid,
+              premultipliedAlpha: !isAndroid,
+              preserveDrawingBuffer: false,
+              failIfMajorPerformanceCaveat: false
             }
           }
         });
 
-        viewer.scene.backgroundColor = Cesium.Color.TRANSPARENT;
+        viewer.scene.backgroundColor = isAndroid ? Cesium.Color.BLACK : Cesium.Color.TRANSPARENT;
         viewer.scene.globe.show = false;
         viewer.scene.highDynamicRange = false;
         viewer.scene.sun = undefined;
@@ -113,11 +130,67 @@ export function createCesiumARHtml() {
         controller.enableLook = false;
         controller.zoomEventTypes = [];
 
-        try { viewer.resolutionScale = window.devicePixelRatio || 1; } catch(e) {}
+        // Android: resolutionScale 1로 제한 (메모리/GPU 절약)
+        try { viewer.resolutionScale = isAndroid ? 1 : (window.devicePixelRatio || 1); } catch(e) {}
 
+        sendToRN('AR_CESIUM_LOG', { step: 'loading_tileset' });
         var resource = await Cesium.IonResource.fromAssetId(2684829);
+        sendToRN('AR_CESIUM_LOG', { step: 'tileset_resource_ready' });
         var moonTileset = await Cesium.Cesium3DTileset.fromUrl(resource);
+        // ── 기기 성능 감지 (WebGL 마이크로벤치마크) ──
+        var _arTier = 'high';
+        try {
+            var _bc2 = document.createElement('canvas');
+            _bc2.width = 256; _bc2.height = 256;
+            var _bgl2 = _bc2.getContext('webgl');
+            if (_bgl2) {
+                var _vs2 = _bgl2.createShader(_bgl2.VERTEX_SHADER);
+                _bgl2.shaderSource(_vs2, 'attribute vec2 p;void main(){gl_Position=vec4(p,0,1);}');
+                _bgl2.compileShader(_vs2);
+                var _fs2 = _bgl2.createShader(_bgl2.FRAGMENT_SHADER);
+                _bgl2.shaderSource(_fs2, 'void main(){gl_FragColor=vec4(1,0,0,1);}');
+                _bgl2.compileShader(_fs2);
+                var _pg2 = _bgl2.createProgram();
+                _bgl2.attachShader(_pg2, _vs2); _bgl2.attachShader(_pg2, _fs2);
+                _bgl2.linkProgram(_pg2); _bgl2.useProgram(_pg2);
+                var _buf2 = _bgl2.createBuffer();
+                _bgl2.bindBuffer(_bgl2.ARRAY_BUFFER, _buf2);
+                _bgl2.bufferData(_bgl2.ARRAY_BUFFER, new Float32Array([0,0.5,-0.5,-0.5,0.5,-0.5]), _bgl2.STATIC_DRAW);
+                var _loc2 = _bgl2.getAttribLocation(_pg2, 'p');
+                _bgl2.enableVertexAttribArray(_loc2);
+                _bgl2.vertexAttribPointer(_loc2, 2, _bgl2.FLOAT, false, 0, 0);
+                for (var _w2 = 0; _w2 < 10; _w2++) { _bgl2.drawArrays(_bgl2.TRIANGLES, 0, 3); }
+                _bgl2.finish();
+                var _t2 = performance.now();
+                for (var _b2 = 0; _b2 < 500; _b2++) { _bgl2.drawArrays(_bgl2.TRIANGLES, 0, 3); }
+                _bgl2.finish();
+                var _e2 = performance.now() - _t2;
+                if (_e2 > 50) _arTier = 'low';
+                else if (_e2 > 20) _arTier = 'mid';
+                _bgl2.getExtension('WEBGL_lose_context')?.loseContext();
+            }
+        } catch(e) {}
+        if (_arTier === 'low') {
+            moonTileset.maximumScreenSpaceError = 96;
+            moonTileset.maximumMemoryUsage = 48;
+            moonTileset.skipLevelOfDetail = true;
+            moonTileset.skipLevels = 4;
+            moonTileset.loadSiblings = false;
+        } else if (_arTier === 'mid') {
+            moonTileset.maximumScreenSpaceError = 48;
+            moonTileset.maximumMemoryUsage = 96;
+            moonTileset.skipLevelOfDetail = true;
+            moonTileset.skipLevels = 2;
+            moonTileset.loadSiblings = false;
+        } else {
+            moonTileset.maximumScreenSpaceError = 24;
+            moonTileset.maximumMemoryUsage = 192;
+        }
+        moonTileset.dynamicScreenSpaceError = true;
+        moonTileset.dynamicScreenSpaceErrorDensity = 0.00278;
+        moonTileset.dynamicScreenSpaceErrorFactor = 4.0;
         viewer.scene.primitives.add(moonTileset);
+        sendToRN('AR_CESIUM_LOG', { step: 'tileset_added', tier: _arTier });
 
         // 초기 카메라: 적도 옆면에서 멀리 시작
         var bs = moonTileset.boundingSphere;
@@ -197,9 +270,10 @@ export function createCesiumARHtml() {
         // S2 셀 꼭짓점 → Cesium 좌표
         function s2VertexToCartesian(vertex) {
           var r = Math.sqrt(vertex.x * vertex.x + vertex.y * vertex.y + vertex.z * vertex.z);
+          var sinLat = Math.max(-1, Math.min(1, vertex.z / r));
           return Cesium.Cartesian3.fromRadians(
             Math.atan2(vertex.y, vertex.x),
-            Math.asin(vertex.z / r),
+            Math.asin(sinLat),
             0, moonEllipsoid
           );
         }
@@ -244,10 +318,12 @@ export function createCesiumARHtml() {
               var latDeg = region.lat;
               var lngDeg = region.lng;
               
-              // 글로우 원형 채우기
-              var glowRect = Cesium.Rectangle.fromDegrees(
-                lngDeg - halfR, latDeg - halfR, lngDeg + halfR, latDeg + halfR
-              );
+              // 글로우 원형 채우기 (극 좌표 클램핑)
+              var gS = Math.max(-90, latDeg - halfR);
+              var gN = Math.min(90, latDeg + halfR);
+              var gW = Math.max(-180, lngDeg - halfR);
+              var gE = Math.min(180, lngDeg + halfR);
+              var glowRect = Cesium.Rectangle.fromDegrees(gW, gS, gE, gN);
               var glowGeom = new Cesium.RectangleGeometry({
                 rectangle: glowRect,
                 ellipsoid: moonEllipsoid,
@@ -270,10 +346,12 @@ export function createCesiumARHtml() {
                 show: true
               }));
               
-              // 외곽 링
-              var ringRect = Cesium.Rectangle.fromDegrees(
-                lngDeg - halfR * 1.1, latDeg - halfR * 1.1, lngDeg + halfR * 1.1, latDeg + halfR * 1.1
-              );
+              // 외곽 링 (극 좌표 클램핑)
+              var rS = Math.max(-90, latDeg - halfR * 1.1);
+              var rN = Math.min(90, latDeg + halfR * 1.1);
+              var rW = Math.max(-180, lngDeg - halfR * 1.1);
+              var rE = Math.min(180, lngDeg + halfR * 1.1);
+              var ringRect = Cesium.Rectangle.fromDegrees(rW, rS, rE, rN);
               var ringGeom = new Cesium.RectangleOutlineGeometry({
                 rectangle: ringRect,
                 ellipsoid: moonEllipsoid,
@@ -294,26 +372,64 @@ export function createCesiumARHtml() {
                 show: true
               }));
               
-              // 셀 수 라벨
+              // 셀 수 라벨 (반투명 라운딩 박스 + 흰 점)
               fillPrimitives._entities = fillPrimitives._entities || [];
+              
+              // Canvas로 라운딩 배경 라벨 생성
+              var lblCanvas = document.createElement('canvas');
+              var lblText = region.count + ' Mag';
+              var lblCtx = lblCanvas.getContext('2d');
+              lblCtx.font = 'bold 22px sans-serif';
+              var txtW = lblCtx.measureText(lblText).width;
+              var padX = 20, padY = 12;
+              var cW = txtW + padX * 2;
+              var cH = 34 + padY * 2;
+              lblCanvas.width = cW;
+              lblCanvas.height = cH;
+              
+              lblCtx.clearRect(0, 0, cW, cH);
+              // 반투명 라운딩 배경
+              var rr = 14;
+              lblCtx.beginPath();
+              lblCtx.moveTo(rr, 0);
+              lblCtx.lineTo(cW - rr, 0);
+              lblCtx.quadraticCurveTo(cW, 0, cW, rr);
+              lblCtx.lineTo(cW, cH - rr);
+              lblCtx.quadraticCurveTo(cW, cH, cW - rr, cH);
+              lblCtx.lineTo(rr, cH);
+              lblCtx.quadraticCurveTo(0, cH, 0, cH - rr);
+              lblCtx.lineTo(0, rr);
+              lblCtx.quadraticCurveTo(0, 0, rr, 0);
+              lblCtx.closePath();
+              lblCtx.fillStyle = 'rgba(0, 0, 0, 0.55)';
+              lblCtx.fill();
+              // 테두리
+              lblCtx.strokeStyle = 'rgba(255, 255, 255, 0.2)';
+              lblCtx.lineWidth = 1;
+              lblCtx.stroke();
+              // 텍스트
+              lblCtx.font = 'bold 22px sans-serif';
+              lblCtx.fillStyle = '#FFFFFF';
+              lblCtx.textAlign = 'center';
+              lblCtx.textBaseline = 'middle';
+              lblCtx.fillText(lblText, cW / 2, cH / 2);
+              
+              var lblImg = lblCanvas.toDataURL();
               var label = viewer.entities.add({
                 position: Cesium.Cartesian3.fromRadians(lng, lat, 3000, moonEllipsoid),
-                label: {
-                  text: region.count + ' Mag',
-                  font: '11px sans-serif',
-                  fillColor: Cesium.Color.WHITE,
-                  outlineColor: Cesium.Color.BLACK,
-                  outlineWidth: 2,
-                  style: Cesium.LabelStyle.FILL_AND_OUTLINE,
+                billboard: {
+                  image: lblImg,
+                  scale: 0.5,
                   verticalOrigin: Cesium.VerticalOrigin.BOTTOM,
-                  pixelOffset: new Cesium.Cartesian2(0, -6),
+                  pixelOffset: new Cesium.Cartesian2(0, -10),
                   disableDepthTestDistance: Number.POSITIVE_INFINITY,
-                  scale: 1.0
+                  scaleByDistance: new Cesium.NearFarScalar(5000, 1.0, 200000, 0.4),
                 },
                 point: {
-                  pixelSize: 5,
-                  color: new Cesium.Color(0.23, 0.51, 0.97, 1.0),
-                  outlineWidth: 0,
+                  pixelSize: 6,
+                  color: Cesium.Color.WHITE,
+                  outlineColor: new Cesium.Color(1, 1, 1, 0.3),
+                  outlineWidth: 2,
                   disableDepthTestDistance: Number.POSITIVE_INFINITY
                 }
               });

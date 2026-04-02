@@ -97,11 +97,62 @@ export function createCesiumARSurfaceHtml(lat, lng) {
           direction: new Cesium.Cartesian3(0.5, 0.5, -0.7),
           intensity: 2.5
         });
-
         // 3D Tileset 로드
         Cesium.IonResource.fromAssetId(2684829).then(function(resource) {
           return Cesium.Cesium3DTileset.fromUrl(resource);
         }).then(function(moonTileset) {
+          // ── 기기 성능 감지 (WebGL 마이크로벤치마크) ──
+          var _sfTier = 'high';
+          try {
+              var _bc3 = document.createElement('canvas');
+              _bc3.width = 256; _bc3.height = 256;
+              var _bgl3 = _bc3.getContext('webgl');
+              if (_bgl3) {
+                  var _vs3 = _bgl3.createShader(_bgl3.VERTEX_SHADER);
+                  _bgl3.shaderSource(_vs3, 'attribute vec2 p;void main(){gl_Position=vec4(p,0,1);}');
+                  _bgl3.compileShader(_vs3);
+                  var _fs3 = _bgl3.createShader(_bgl3.FRAGMENT_SHADER);
+                  _bgl3.shaderSource(_fs3, 'void main(){gl_FragColor=vec4(1,0,0,1);}');
+                  _bgl3.compileShader(_fs3);
+                  var _pg3 = _bgl3.createProgram();
+                  _bgl3.attachShader(_pg3, _vs3); _bgl3.attachShader(_pg3, _fs3);
+                  _bgl3.linkProgram(_pg3); _bgl3.useProgram(_pg3);
+                  var _buf3 = _bgl3.createBuffer();
+                  _bgl3.bindBuffer(_bgl3.ARRAY_BUFFER, _buf3);
+                  _bgl3.bufferData(_bgl3.ARRAY_BUFFER, new Float32Array([0,0.5,-0.5,-0.5,0.5,-0.5]), _bgl3.STATIC_DRAW);
+                  var _loc3 = _bgl3.getAttribLocation(_pg3, 'p');
+                  _bgl3.enableVertexAttribArray(_loc3);
+                  _bgl3.vertexAttribPointer(_loc3, 2, _bgl3.FLOAT, false, 0, 0);
+                  for (var _w3 = 0; _w3 < 10; _w3++) { _bgl3.drawArrays(_bgl3.TRIANGLES, 0, 3); }
+                  _bgl3.finish();
+                  var _t3 = performance.now();
+                  for (var _b3 = 0; _b3 < 500; _b3++) { _bgl3.drawArrays(_bgl3.TRIANGLES, 0, 3); }
+                  _bgl3.finish();
+                  var _e3 = performance.now() - _t3;
+                  if (_e3 > 50) _sfTier = 'low';
+                  else if (_e3 > 20) _sfTier = 'mid';
+                  _bgl3.getExtension('WEBGL_lose_context')?.loseContext();
+              }
+          } catch(e) {}
+          if (_sfTier === 'low') {
+              moonTileset.maximumScreenSpaceError = 96;
+              moonTileset.maximumMemoryUsage = 48;
+              moonTileset.skipLevelOfDetail = true;
+              moonTileset.skipLevels = 4;
+              moonTileset.loadSiblings = false;
+          } else if (_sfTier === 'mid') {
+              moonTileset.maximumScreenSpaceError = 48;
+              moonTileset.maximumMemoryUsage = 96;
+              moonTileset.skipLevelOfDetail = true;
+              moonTileset.skipLevels = 2;
+              moonTileset.loadSiblings = false;
+          } else {
+              moonTileset.maximumScreenSpaceError = 24;
+              moonTileset.maximumMemoryUsage = 192;
+          }
+          moonTileset.dynamicScreenSpaceError = true;
+          moonTileset.dynamicScreenSpaceErrorDensity = 0.00278;
+          moonTileset.dynamicScreenSpaceErrorFactor = 4.0;
           viewer.scene.primitives.add(moonTileset);
 
           // 타일셋 로드 후 카메라 배치

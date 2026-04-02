@@ -2,10 +2,6 @@
 // S2 import, Cesium 토큰, Viewer 생성, 타일셋 로드, 좌표 변환 함수, sendToRN 등
 
 export const CESIUM_INIT = `
-    // --- S2 IMPORT ---
-    import { s2 } from 'https://esm.sh/s2js';
-    window.s2 = s2;
-
     // --- CESIUM TOKEN ---
     Cesium.Ion.defaultAccessToken = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJqdGkiOiI3MjNhYjIzZi0wMWU5LTQzOTEtODY3Ni1kY2JkNTEyMmE2NTgiLCJpZCI6Mzc2MDQ4LCJpYXQiOjE3Njc4MzYyNTR9.K6HpEEiCNNlC8AzsTe3zuuGtcg9AJKEAnt8mA2MIoMg';
 
@@ -27,6 +23,17 @@ export const CESIUM_INIT = `
     window.addEventListener('message', _earlyMessageHandler);
 
     async function initMoon() {
+      // --- S2 IMPORT (dynamic import — iOS/Android 모두 호환) ---
+      try {
+        var s2Module = await import('https://esm.sh/s2js');
+        window.s2 = s2Module.s2;
+        console.log('[Init] s2js loaded successfully');
+      } catch(e) {
+        console.error('[Init] s2js import failed:', e);
+        window.s2 = null;
+      }
+      var s2 = window.s2;
+
       const moonEllipsoid = Cesium.Ellipsoid.MOON;
       const moonRadius = moonEllipsoid.maximumRadius;
 
@@ -98,9 +105,79 @@ export const CESIUM_INIT = `
       try {
         const resource = await Cesium.IonResource.fromAssetId(2684829);
         moonTileset = await Cesium.Cesium3DTileset.fromUrl(resource);
+        // ── 기기 성능 감지 (WebGL 마이크로벤치마크) ──
+        var _deviceTier = 'high';
+        try {
+            var _bc = document.createElement('canvas');
+            _bc.width = 256; _bc.height = 256;
+            var _bgl = _bc.getContext('webgl');
+            if (_bgl) {
+                // 간단한 삼각형을 반복 렌더링해서 GPU 속도 측정
+                var _vs = _bgl.createShader(_bgl.VERTEX_SHADER);
+                _bgl.shaderSource(_vs, 'attribute vec2 p;void main(){gl_Position=vec4(p,0,1);}');
+                _bgl.compileShader(_vs);
+                var _fs = _bgl.createShader(_bgl.FRAGMENT_SHADER);
+                _bgl.shaderSource(_fs, 'void main(){gl_FragColor=vec4(1,0,0,1);}');
+                _bgl.compileShader(_fs);
+                var _pg = _bgl.createProgram();
+                _bgl.attachShader(_pg, _vs); _bgl.attachShader(_pg, _fs);
+                _bgl.linkProgram(_pg); _bgl.useProgram(_pg);
+                var _buf = _bgl.createBuffer();
+                _bgl.bindBuffer(_bgl.ARRAY_BUFFER, _buf);
+                _bgl.bufferData(_bgl.ARRAY_BUFFER, new Float32Array([0,0.5, -0.5,-0.5, 0.5,-0.5]), _bgl.STATIC_DRAW);
+                var _loc = _bgl.getAttribLocation(_pg, 'p');
+                _bgl.enableVertexAttribArray(_loc);
+                _bgl.vertexAttribPointer(_loc, 2, _bgl.FLOAT, false, 0, 0);
+                // 워밍업
+                for (var _wi = 0; _wi < 10; _wi++) { _bgl.drawArrays(_bgl.TRIANGLES, 0, 3); }
+                _bgl.finish();
+                // 측정: 500회 드로우콜
+                var _t0 = performance.now();
+                for (var _bi = 0; _bi < 500; _bi++) { _bgl.drawArrays(_bgl.TRIANGLES, 0, 3); }
+                _bgl.finish();
+                var _elapsed = performance.now() - _t0;
+                console.log('[Perf] GPU benchmark:', _elapsed.toFixed(1), 'ms');
+                // 분류: 느릴수록 low
+                if (_elapsed > 50) _deviceTier = 'low';
+                else if (_elapsed > 20) _deviceTier = 'mid';
+                // else: high
+                _bgl.getExtension('WEBGL_lose_context')?.loseContext();
+            }
+        } catch(e) { console.warn('[Perf] benchmark failed:', e); }
+        console.log('[Perf] Device tier:', _deviceTier);
+        // ── 디버그 오버레이 ──
+        try {
+            var _dbgDiv = document.createElement('div');
+            _dbgDiv.id = '_perfDebug';
+            _dbgDiv.style.cssText = 'position:fixed;top:44px;left:8px;z-index:99999;padding:4px 8px;border-radius:6px;background:rgba(0,0,0,0.6);color:#0f0;font:bold 11px monospace;pointer-events:none;';
+            _dbgDiv.textContent = 'TIER: ' + _deviceTier.toUpperCase();
+            document.body.appendChild(_dbgDiv);
+        } catch(e) {}
+        if (_deviceTier === 'low') {
+            moonTileset.maximumScreenSpaceError = 96;
+            moonTileset.maximumMemoryUsage = 48;
+            moonTileset.skipLevelOfDetail = true;
+            moonTileset.skipScreenSpaceErrorFactor = 16;
+            moonTileset.skipLevels = 4;
+            moonTileset.loadSiblings = false;
+        } else if (_deviceTier === 'mid') {
+            moonTileset.maximumScreenSpaceError = 48;
+            moonTileset.maximumMemoryUsage = 96;
+            moonTileset.skipLevelOfDetail = true;
+            moonTileset.skipLevels = 2;
+            moonTileset.loadSiblings = false;
+        } else {
+            moonTileset.maximumScreenSpaceError = 24;
+            moonTileset.maximumMemoryUsage = 192;
+        }
+        // 공통: 카메라 이동 시 동적 LOD 조절
+        moonTileset.dynamicScreenSpaceError = true;
+        moonTileset.dynamicScreenSpaceErrorDensity = 0.00278;
+        moonTileset.dynamicScreenSpaceErrorFactor = 4.0;
+        moonTileset.immediatelyLoadDesiredLevelOfDetail = false;
         viewer.scene.primitives.add(moonTileset);
         window.tilesetReady = true;
-        window.moonTileset = moonTileset; // 타일 로드 이벤트 감지용
+        window.moonTileset = moonTileset;
         console.log('[Init] Moon tileset loaded, tilesetReady = true');
         var bs = moonTileset.boundingSphere;
         console.log('[Init] tileset boundingSphere center:', bs.center.x.toFixed(0), bs.center.y.toFixed(0), bs.center.z.toFixed(0), 'radius:', bs.radius.toFixed(0));
@@ -119,18 +196,37 @@ export const CESIUM_INIT = `
         // 각크기 = 실제지름 / 실제거리 (rad), 빌보드 크기 = D * 각크기
         var D = 5e8; // 배치 거리 (500,000km)
 
-        // 🌍 지구 — 각크기 1.9° (달에서 본 크기, 지구에서 본 달의 ~3.7배)
-        // 실제: 지름 12,742km / 거리 384,400km = 0.0332 rad
-        var earthAngular = 12742 / 384400; // 0.0332 rad ≈ 1.9°
-        var earthSize = D * earthAngular; // ~16,600,000m
+        // 🌍 지구 — 3D 타원체 (달에서 본 실제 각크기)
+        // 실제: 지름 12,742km / 거리 384,400km = 0.0332 rad ≈ 1.9°
+        var earthAngular = 12742 / 384400; // 0.0332 rad
+        var earthSize = D * earthAngular; // ~16,600,000m (지름)
+        var earthRadius = earthSize / 2;  // ~8,300,000m (반지름)
         var earthPos = new Cesium.Cartesian3(D * 0.8, D * 0.3, D * 0.15);
-        viewer.entities.add({
+
+        // 지구 자전축: 23.4° 기울기 (Y축 기준 회전)
+        var earthTilt = Cesium.Quaternion.fromAxisAngle(
+            new Cesium.Cartesian3(0, 1, 0),
+            Cesium.Math.toRadians(23.4)
+        );
+
+        // 지구 텍스처: HTML에 인라인된 base64 데이터 사용
+        var earthMaterial;
+        if (window.EARTH_TEXTURE_DATA && window.EARTH_TEXTURE_DATA.length > 0) {
+            earthMaterial = new Cesium.ImageMaterialProperty({ image: window.EARTH_TEXTURE_DATA });
+            console.log('[Earth] Using inline texture, length=' + window.EARTH_TEXTURE_DATA.length);
+        } else {
+            earthMaterial = Cesium.Color.fromCssColorString('#1A5276');
+            console.log('[Earth] No texture data, using blue fallback');
+        }
+
+        var earthEntity = viewer.entities.add({
             position: earthPos,
-            billboard: {
-                image: 'https://upload.wikimedia.org/wikipedia/commons/thumb/2/22/Earth_Western_Hemisphere_transparent_background.png/240px-Earth_Western_Hemisphere_transparent_background.png',
-                width: earthSize,
-                height: earthSize,
-                sizeInMeters: true
+            orientation: earthTilt,
+            ellipsoid: {
+                radii: new Cesium.Cartesian3(earthRadius, earthRadius, earthRadius),
+                material: earthMaterial,
+                slicePartitions: 64,
+                stackPartitions: 64
             },
             label: {
                 text: 'Earth',
@@ -141,6 +237,7 @@ export const CESIUM_INIT = `
                 style: Cesium.LabelStyle.FILL
             }
         });
+        window.earthEntity = earthEntity;
 
         // ☀️ 태양 — 각크기 0.53° (지구에서나 달에서나 거의 동일)
         // 실제: 지름 1,392,700km / 거리 150,000,000km = 0.00929 rad
