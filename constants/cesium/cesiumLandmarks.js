@@ -172,6 +172,17 @@ export const CESIUM_LANDMARKS = `
           }));
       }
 
+      // ── Pretendard 웹폰트 로드 ──
+      var ptLink = document.createElement('link');
+      ptLink.rel = 'stylesheet';
+      ptLink.href = 'https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.min.css';
+      document.head.appendChild(ptLink);
+
+      // ── HTML 라벨 오버레이 스타일 주입 ──
+      var labelStyle = document.createElement('style');
+      labelStyle.textContent = '.lm-label { position: absolute; pointer-events: none; z-index: 10; background: rgba(40, 44, 58, 0.82); color: rgba(255,255,255,0.95); font-family: Pretendard, -apple-system, sans-serif; font-size: 16px; font-weight: 600; padding: 6px 14px; border-radius: 100px; white-space: nowrap; transform: translate(0%, -80%); transition: opacity 0.15s; }';
+      document.head.appendChild(labelStyle);
+
       // ── 상태 ──
       var landingEntities = [];    // 착륙지 엔티티
       var terrainEntities = [];    // 지형 엔티티
@@ -211,8 +222,8 @@ export const CESIUM_LANDMARKS = `
           '  position: absolute; pointer-events: none; z-index: 10;',
           '  background: rgba(40, 44, 58, 0.78);',
           '  color: rgba(255,255,255,0.93);',
-          '  font: 500 12px sans-serif;',
-          '  padding: 5px 12px;',
+          '  font: 600 16px sans-serif;',
+          '  padding: 6px 14px;',
           '  border-radius: 100px;',
           '  white-space: nowrap;',
           '  transform: translate(0%, -80%);',
@@ -233,12 +244,12 @@ export const CESIUM_LANDMARKS = `
           // 모든 마커를 기본 흰색으로 리셋
           for (var i = 0; i < terrainEntities.length; i++) {
               terrainEntities[i].point.color = Cesium.Color.WHITE.withAlpha(0.9);
-              terrainEntities[i].point.pixelSize = 7;
+              terrainEntities[i].point.pixelSize = 9;
               if (terrainEntities[i]._labelDiv) terrainEntities[i]._labelDiv.style.color = 'rgba(255,255,255,0.93)';
           }
           for (var j = 0; j < landingEntities.length; j++) {
               landingEntities[j].point.color = Cesium.Color.WHITE.withAlpha(0.9);
-              landingEntities[j].point.pixelSize = 7;
+              landingEntities[j].point.pixelSize = 9;
               if (landingEntities[j]._labelDiv) landingEntities[j]._labelDiv.style.color = 'rgba(255,255,255,0.93)';
           }
           // 해당 좌표에 가장 가까운 마커를 파란색으로
@@ -257,7 +268,7 @@ export const CESIUM_LANDMARKS = `
           }
           if (closest && minDist < 1) {
               closest.point.color = Cesium.Color.fromCssColorString('#67BDFF');
-              closest.point.pixelSize = 10;
+              closest.point.pixelSize = 14;
               if (closest._labelDiv) closest._labelDiv.style.color = '#67BDFF';
               _highlightedEntity = closest;
           }
@@ -282,7 +293,7 @@ export const CESIUM_LANDMARKS = `
               var tEntity = viewer.entities.add({
                   position: moonPos(ls.lat, ls.lng, 10000),
                   point: {
-                      pixelSize: 7,
+                      pixelSize: 9,
                       color: Cesium.Color.WHITE.withAlpha(0.9),
                       outlineColor: Cesium.Color.TRANSPARENT,
                       outlineWidth: 0,
@@ -317,7 +328,7 @@ export const CESIUM_LANDMARKS = `
               var sEntity = viewer.entities.add({
                   position: moonPos(site.lat, site.lng, 10000),
                   point: {
-                      pixelSize: 7,
+                      pixelSize: 9,
                       color: Cesium.Color.WHITE.withAlpha(0.9),
                       outlineColor: Cesium.Color.TRANSPARENT,
                       outlineWidth: 0,

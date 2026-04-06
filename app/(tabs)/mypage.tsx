@@ -65,6 +65,11 @@ const SvgIcons: Record<string, (props: { size?: number; color?: string }) => Rea
             <Path d="M11 2.75H3.25V19.25H11" stroke={color} strokeWidth={1.5} strokeLinecap="square" />
         </Svg>
     ),
+    activity: ({ size = 22, color = '#1A1A1A' }) => (
+        <Svg width={size} height={size} viewBox="0 0 22 22" fill="none">
+            <Path d="M4 11H8L10 5L13 17L15 11H18" stroke={color} strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round" />
+        </Svg>
+    ),
 };
 
 // ─── 메뉴 아이템 ───
@@ -134,7 +139,7 @@ export default function MyPageScreen() {
                         {user?.avatarUrl ? (
                             <Image source={{ uri: user.avatarUrl }} style={styles.avatarImage} />
                         ) : (
-                            <Ionicons name="person" size={24} color="#9E9E9E" />
+                            <Image source={require('@/assets/images/sailor.png')} style={styles.avatarImage} />
                         )}
                     </View>
                     <View style={styles.profileInfo}>
@@ -180,21 +185,13 @@ export default function MyPageScreen() {
                         </View>
                     </View>
 
-                    {/* 개척 가능 구역 */}
-                    <View style={styles.statCard}>
-                        <Text style={styles.statLabel}>개척 가능 구역</Text>
-                        <View style={styles.statValArea}>
-                            <Text style={styles.statNumber}>{remainingMag}</Text>
-                            <Text style={styles.statUnit}>Mag</Text>
-                        </View>
-                    </View>
                 </View>
 
                 {/* ═══ ④ 내 활동 ═══ */}
                 <View style={styles.menuSection}>
                     <Text style={styles.sectionTitle}>내 활동</Text>
                     <MenuRow icon="category" label="내 구역 관리" onPress={() => router.push('/profile/my-territories')} />
-                    <MenuRow icon="folder" label="스크랩북" onPress={() => router.push('/profile/scrapbook')} />
+                    <MenuRow icon="folder" label="아카이브" onPress={() => router.push('/profile/scrapbook')} />
                     <MenuRow icon="ar" label="AR 모드" onPress={() => setShowAR(true)} />
                 </View>
 
@@ -204,7 +201,8 @@ export default function MyPageScreen() {
                 <View style={styles.menuSection}>
                     <Text style={styles.sectionTitle}>결제 · 이용권</Text>
                     <MenuRow icon="ticket" label="이용권 및 프로모션" onPress={() => router.push('/profile/subscription')} />
-                    <MenuRow icon="swap" label="거래 내역" />
+                    <MenuRow icon="swap" label="거래 내역" onPress={() => router.push('/profile/transaction-history')} />
+                    <MenuRow icon="activity" label="활동 내역" onPress={() => router.push('/profile/activity-history')} />
                 </View>
 
                 <View style={styles.divider} />

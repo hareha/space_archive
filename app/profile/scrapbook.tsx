@@ -124,7 +124,7 @@ export default function ScrapbookScreen() {
                 <TouchableOpacity onPress={() => router.back()} style={st.backBtn}>
                     <Ionicons name="arrow-back" size={24} color="#1A1A1A" />
                 </TouchableOpacity>
-                <Text style={st.headerTitle}>스크랩북</Text>
+                <Text style={st.headerTitle}>아카이브</Text>
                 <View style={{ width: 40 }} />
             </View>
 
@@ -167,7 +167,7 @@ export default function ScrapbookScreen() {
 
                     {/* 카운트 + 정렬 */}
                     <View style={st.sortRow}>
-                        <Text style={st.countLabel}>{sortedAreas.length} Locations</Text>
+                        <Text style={st.countLabel}>{sortedAreas.length}개 장소</Text>
                         <TouchableOpacity
                             style={st.sortBtn}
                             onPress={() => setSortOrder(sortOrder === 'recent' ? 'name' : 'recent')}
@@ -182,8 +182,8 @@ export default function ScrapbookScreen() {
                         {sortedAreas.length === 0 ? (
                             <View style={st.emptyState}>
                                 <Ionicons name="bookmark-outline" size={40} color="#D1D5DB" />
-                                <Text style={st.emptyText}>스크랩한 관심 영역이 없습니다</Text>
-                                <Text style={st.emptySubText}>지형이나 착륙지에서 스크랩하기를 눌러보세요</Text>
+                                <Text style={st.emptyText}>저장한 관심 영역이 없습니다</Text>
+                                <Text style={st.emptySubText}>지형이나 착륙지에서 저장하기를 눌러보세요</Text>
                             </View>
                         ) : (
                             sortedAreas.map(area => {
@@ -240,7 +240,7 @@ export default function ScrapbookScreen() {
                 <>
                     {/* 카운트 + 정렬 */}
                     <View style={st.sortRow}>
-                        <Text style={st.countLabel}>{sortedContents.length} Contents</Text>
+                        <Text style={st.countLabel}>{sortedContents.length}개 콘텐츠</Text>
                         <TouchableOpacity
                             style={st.sortBtn}
                             onPress={() => setSortOrder(sortOrder === 'recent' ? 'name' : 'recent')}
@@ -255,8 +255,8 @@ export default function ScrapbookScreen() {
                         {sortedContents.length === 0 ? (
                             <View style={st.emptyState}>
                                 <Ionicons name="document-text-outline" size={40} color="#D1D5DB" />
-                                <Text style={st.emptyText}>스크랩한 콘텐츠가 없습니다</Text>
-                                <Text style={st.emptySubText}>인사이트 기사에서 스크랩해보세요</Text>
+                                <Text style={st.emptyText}>저장한 콘텐츠가 없습니다</Text>
+                                <Text style={st.emptySubText}>인사이트 기사에서 저장해보세요</Text>
                             </View>
                         ) : (
                             sortedContents.map(content => {

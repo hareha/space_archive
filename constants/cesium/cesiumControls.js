@@ -400,10 +400,12 @@ function handleRNMessage(data) {
                 _focusSatPos = null;
                 _focusSatLookTarget = null;
                 _focusSatName = null;
+                window._satelliteFocused = false;
             }
             // 위성 하이라이트만 해제 (drawSatelliteData 재호출 X — 토글 꺼진 상태면 위성 안 보여야 함)
             highlightedSatelliteName = null;
             _focusSatName = null;
+            window._satelliteFocused = false;
             // pitch clamp 리스너 해제
             if (window._fpPitchClamp) { window._fpPitchClamp(); window._fpPitchClamp = null; }
             if (window._orbitPitchClamp) { window._orbitPitchClamp(); window._orbitPitchClamp = null; }
@@ -535,7 +537,7 @@ function handleRNMessage(data) {
                 var curAlt = viewer.camera.positionCartographic ? viewer.camera.positionCartographic.height : orbitAlt;
                 var maxH = Math.max(curAlt, vDist) * 1.05;
 
-                var flyDuration = window._orbitState === null && curAlt > 100000 ? 3.0 : 2.5;
+                var flyDuration = window._orbitState === null && curAlt > 100000 ? 4.0 : 3.5;
 
                 viewer.camera.flyTo({
                     destination: flyDest,
@@ -652,7 +654,7 @@ function handleRNMessage(data) {
                 var startHeading = viewer.camera.heading;
                 var startPitch = viewer.camera.pitch;
                 var targetPitchVal = viewPitchRad;
-                var duration = 1500;
+                var duration = 2500;
                 var startTime = null;
 
                 if (window._fpAnimFrame) { cancelAnimationFrame(window._fpAnimFrame); window._fpAnimFrame = null; }
@@ -827,6 +829,7 @@ function handleRNMessage(data) {
 
             _focusSatPos = null;
             _focusSatName = satName;
+            window._satelliteFocused = true;
 
             // lookAt 모드인 경우 (뷰 전환 버튼에서 상세보기 요청)
             if (message.payload.lookAt) {
@@ -851,12 +854,14 @@ function handleRNMessage(data) {
                         new Cesium.BoundingSphere(_focusSatLookTarget, 0),
                         {
                             offset: hpr,
-                            duration: 3.0,
+                            duration: 4.0,
                             complete: function() {
                                 viewer.camera.lookAt(_focusSatLookTarget, hpr);
                             }
                         }
                     );
+                    // 위성 뷰모드에서는 틸트 허용
+                    viewer.scene.screenSpaceCameraController.enableTilt = true;
                 }
                 return;
             }
@@ -912,15 +917,16 @@ function handleRNMessage(data) {
                         ),
                         up: new Cesium.Cartesian3(0, 0, 1)
                     },
-                    duration: 3.0
+                    duration: 4.0
                 });
+                viewer.scene.screenSpaceCameraController.enableTilt = true;
             } else {
                 // 위성 위치 없으면 달 전체만
                 viewer.camera.flyToBoundingSphere(
                     new Cesium.BoundingSphere(moonCenter, moonRadius),
                     {
                         offset: new Cesium.HeadingPitchRange(0, Cesium.Math.toRadians(-25), moonRadius * 0.3),
-                        duration: 3.0
+                        duration: 4.0
                     }
                 );
             }
@@ -1118,7 +1124,7 @@ function handleRNMessage(data) {
                 var startHeading = viewer.camera.heading;
                 var startPitch = viewer.camera.pitch;
                 var targetPitch = 0; // 수평
-                var duration = 2000; // 2초 (멀리서 오니까 좀 더 여유)
+                var duration = 3000; // 3초 (멀리서 오니까 좀 더 여유)
                 var startTime = null;
                 if (window._fpAnimFrame) { cancelAnimationFrame(window._fpAnimFrame); }
 
@@ -1617,7 +1623,7 @@ function handleRNMessage(data) {
                     pitch: Cesium.Math.toRadians(-60),
                     roll: 0
                 },
-                duration: 3.0,
+                duration: 4.0,
                 complete: function() {}
 
             });
@@ -1904,6 +1910,7 @@ var _focusSatPos = null;
 var _focusSatLookTarget = null;
 var _focusSatRange = 1200;
 var _focusSatName = null;
+window._satelliteFocused = false;
 
 // --- 줌 증감 함수 (누적 목표 + lookAtTransform 애니메이션) ---
 // 연타 시 목표가 누적되어 최종 위치까지 하나의 부드러운 애니메이션으로 이동
@@ -1947,7 +1954,7 @@ function exploreZoom(direction) {
     var startRange = currentRange;
     var targetRange = _exploreZoomTarget;
     var dir = Cesium.Cartesian3.normalize(pos, new Cesium.Cartesian3());
-    var duration = 700;
+    var duration = 1000;
     var startTime = null;
     var finalTarget = _exploreZoomTarget;
 
@@ -1991,7 +1998,7 @@ function changeZoomLevel(direction) {
         var targetRange = _zoomTargetRange;
         var startHeadingSat = viewer.camera.heading;
         var startPitchSat = viewer.camera.pitch;
-        var duration = 800;
+        var duration = 1100;
         var startTime = null;
 
         function animateSat(timestamp) {
@@ -2030,7 +2037,7 @@ function changeZoomLevel(direction) {
     var targetRange = _zoomTargetRange;
     var fixedHeading = hpr.heading;
     var fixedPitch = hpr.pitch;
-    var duration = 800;
+    var duration = 1100;
     var startTime = null;
     var finalTarget = _zoomTargetRange;
 
@@ -2064,6 +2071,7 @@ function updateAppMode(payload) {
         _focusSatPos = null;
         _focusSatLookTarget = null;
         _focusSatName = null;
+        window._satelliteFocused = false;
     }
     const oldMainMode = mainMode;
     mainMode = payload.mainMode;
@@ -2126,17 +2134,9 @@ function updateAppMode(payload) {
             _adImageryLayer = null;
         }
 
-        // 기본 뷰로 부드럽게 이동 (skipCameraReset이면 스킵 — 시스템이 별도 카메라 이동 처리)
+        // 기본 뷰로 이동 — 탭 전환 시에는 카메라 이동 불필요 (같은 뷰이므로)
         viewer.camera.lookAtTransform(Cesium.Matrix4.IDENTITY);
-        if (!payload.skipCameraReset && moonTileset) {
-            viewer.camera.flyToBoundingSphere(moonTileset.boundingSphere, {
-                duration: 3.0,
-                complete: function() { sendToRN('MODE_TRANSITION_COMPLETE', {}); },
-                cancel: function() { sendToRN('MODE_TRANSITION_COMPLETE', {}); }
-            });
-        } else {
-            sendToRN('MODE_TRANSITION_COMPLETE', {});
-        }
+        sendToRN('MODE_TRANSITION_COMPLETE', {});
 
         // ── 착륙선 3D 모델: 탐사모드에서만 표시 ──
         var isExploration = (mainMode === 'exploration');
@@ -2288,7 +2288,7 @@ function updateAppMode(payload) {
             viewer.scene.screenSpaceCameraController.maximumZoomDistance = 500000000;
             let carto = viewer.camera.positionCartographic;
             const newPos = Cesium.Cartesian3.fromRadians(carto.longitude, carto.latitude, 20000000, Cesium.Ellipsoid.MOON);
-            viewer.camera.flyTo({ destination: newPos, duration: 2.5 });
+            viewer.camera.flyTo({ destination: newPos, duration: 3.5 });
 
             // 위성 데이터 다시 렌더링
             if (typeof drawSatelliteData === 'function' && typeof lastSatellitesData !== 'undefined' && lastSatellitesData) {
@@ -2316,7 +2316,7 @@ function updateAppMode(payload) {
                     pitch: 0,
                     roll: 0
                 },
-                duration: 2.5,
+                duration: 3.5,
                 complete: function () {
                     // 제어 제한: 회전, 이동 방지. Look만 허용 (드래그로 시야 변경)
                     viewer.scene.screenSpaceCameraController.enableRotate = false;
@@ -2821,6 +2821,115 @@ if (window._messageQueue.length > 0) {
 }
 console.log('[Init] initMoon() fully complete');
 sendToRN('INIT_COMPLETE', {});
+
+// ═══ 개척모드(test2) 핀치 줌 → 단계 전환 매핑 ═══
+(function() {
+    var _canvas = viewer.scene.canvas;
+    var _pinchStartDist = 0;
+    var _pinchTriggered = false;
+    var _pinchCooldown = false;
+
+    function getTouchDist(touches) {
+        var dx = touches[1].clientX - touches[0].clientX;
+        var dy = touches[1].clientY - touches[0].clientY;
+        return Math.sqrt(dx * dx + dy * dy);
+    }
+
+    // 화면 중앙 셀로 드릴다운 (test2 전용)
+    function pinchDrillDown() {
+        if (!s2) return;
+        var centerX = Math.floor(_canvas.clientWidth / 2);
+        var centerY = Math.floor(_canvas.clientHeight / 2);
+        var testE = new Cesium.Ellipsoid(1755000, 1755000, 1755000);
+        var ray = viewer.camera.getPickRay(new Cesium.Cartesian2(centerX, centerY));
+        if (!ray) return;
+        var hit = Cesium.IntersectionTests.rayEllipsoid(ray, testE);
+        if (!hit) return;
+        var pt = Cesium.Ray.getPoint(ray, hit.start);
+        var carto = Cesium.Cartographic.fromCartesian(pt, Cesium.Ellipsoid.MOON);
+        var latR = carto.latitude, lngR = carto.longitude;
+        var s2Pt = new s2.Point(
+            Math.cos(latR) * Math.cos(lngR),
+            Math.cos(latR) * Math.sin(lngR),
+            Math.sin(latR)
+        );
+        var leafId = s2.cellid.fromPoint(s2Pt);
+        var depth = selectionStack.length;
+        var targetLevel;
+        if (depth === 0) targetLevel = 4;
+        else if (depth === 1) targetLevel = 8;
+        else if (depth === 2) targetLevel = 12;
+        else return;
+        var cellId = s2.cellid.parent(leafId, targetLevel);
+        flashCell(cellId);
+        selectionStack.push(cellId);
+        renderTerrain();
+        flyToCellTR(cellId, targetLevel >= 8);
+    }
+
+    // goBack (test2 전용)
+    function pinchGoBack() {
+        if (selectionStack.length === 0) return;
+        window.multiSelectedL16 = [];
+        if (typeof selectionPrimitives !== 'undefined' && selectionPrimitives) selectionPrimitives.removeAll();
+        window.selectionPrimMap = {};
+        window.trSelectionPrimMap = {};
+        var wasBlockLevel = s2.cellid.level(selectionStack[selectionStack.length - 1]) >= 15;
+        selectionStack.pop();
+        lastRenderedDepth = 0;
+        parentPrimitives.removeAll();
+        renderTerrain();
+        updateUI();
+        if (wasBlockLevel) sendToRN('CELL_DESELECTED', {});
+        if (selectionStack.length > 0) {
+            flyToCellTR(selectionStack[selectionStack.length - 1]);
+        } else {
+            try { viewer.camera.lookAtTransform(Cesium.Matrix4.IDENTITY); } catch(e) {}
+            viewer.camera.cancelFlight();
+            if (moonTileset) {
+                viewer.camera.flyToBoundingSphere(moonTileset.boundingSphere, {
+                    duration: 2.0,
+                    offset: new Cesium.HeadingPitchRange(0, Cesium.Math.toRadians(-25), moonTileset.boundingSphere.radius * 2.0)
+                });
+            }
+        }
+    }
+
+    _canvas.addEventListener('touchstart', function(e) {
+        if (mainMode !== 'test2') return;
+        if (e.touches.length === 2) {
+            _pinchStartDist = getTouchDist(e.touches);
+            _pinchTriggered = false;
+        }
+    }, { passive: true });
+
+    _canvas.addEventListener('touchmove', function(e) {
+        if (mainMode !== 'test2') return;
+        if (e.touches.length !== 2 || _pinchTriggered || _pinchCooldown) return;
+        var curDist = getTouchDist(e.touches);
+        var delta = curDist - _pinchStartDist;
+        var threshold = 80;
+        if (Math.abs(delta) > threshold) {
+            _pinchTriggered = true;
+            _pinchCooldown = true;
+            if (delta > 0) {
+                // 손가락 벌림 → 줌인 → 드릴다운
+                pinchDrillDown();
+            } else {
+                // 손가락 모음 → 줌아웃 → 뒤로가기
+                pinchGoBack();
+            }
+            setTimeout(function() { _pinchCooldown = false; }, 800);
+        }
+    }, { passive: true });
+
+    _canvas.addEventListener('touchend', function() {
+        _pinchStartDist = 0;
+        _pinchTriggered = false;
+    }, { passive: true });
+
+    console.log('[Init] Pinch-to-step handler installed for test2');
+})();
 
     } // end of initMoon
 

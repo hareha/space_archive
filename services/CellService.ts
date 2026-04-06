@@ -129,7 +129,8 @@ export async function occupyCell(
   lat: number,
   lng: number,
   cost: number = 1,
-  ellCost: number = 25
+  ellCost: number = 25,
+  batchId?: string
 ): Promise<boolean> {
   try {
     // 0) ELL 잔액 차감 (원자적, 부족하면 false 반환)
@@ -155,6 +156,7 @@ export async function occupyCell(
         lng,
         cost,
         status: 'completed',
+        ...(batchId ? { batch_id: batchId } : {}),
       })
       .select('id')
       .single();
@@ -185,6 +187,8 @@ export async function occupyCell(
 
     // 3) users.total_occupied 증가
     await supabase.rpc('increment_total_occupied', { uid: userId });
+
+    // 4) activity_logs — 호출측에서 묶음 기록하므로 여기서는 스킵
 
     console.log(`[CellService] occupyCell: ${userId} → ${cellId}`);
     return true;

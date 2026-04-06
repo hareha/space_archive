@@ -4,6 +4,7 @@ import {
   Dimensions, Animated, PanResponder,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { LogoSpinner } from '@/components/LoadingOverlay';
 import { LANDING_SITES, LandingSite, getContactColor, COUNTRY_NAMES } from '@/constants/LandingSiteData';
 import { LUNAR_FEATURES, LunarFeature, getFeatureTypeColor, getFeatureTypeEmoji, isFarSide } from '@/constants/LunarFeatureData';
 
@@ -194,7 +195,11 @@ export default function ExplorationListPanelB({
           {/* 위성 */}
           {listMode === 'satellite' && (
             <>
-              {isLoadingSatellite && <Text style={st.loading}>위성 데이터 로딩 중...</Text>}
+              {isLoadingSatellite && (
+                <View style={{ paddingVertical: 20, alignItems: 'center' }}>
+                  <LogoSpinner size={16} text="위성 데이터 로딩 중..." />
+                </View>
+              )}
               {filteredSats.map((sat: any, i: number) => (
                 <TouchableOpacity key={sat.id || i} style={st.listItem} onPress={() => handleSelectSatellite(sat)} activeOpacity={0.7}>
                   <View style={{ width: 68, height: 68, borderRadius: 8, backgroundColor: 'rgba(255,255,255,0.06)', justifyContent: 'center', alignItems: 'center' }}>

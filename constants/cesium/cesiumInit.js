@@ -175,7 +175,7 @@ export const CESIUM_INIT = `
         console.log('[Init] tileset boundingSphere center:', bs.center.x.toFixed(0), bs.center.y.toFixed(0), bs.center.z.toFixed(0), 'radius:', bs.radius.toFixed(0));
         console.log('[Init] MOON ellipsoid radius:', Cesium.Ellipsoid.MOON.maximumRadius);
         if (showTempMap) moonTileset.show = false;
-        viewer.camera.flyToBoundingSphere(moonTileset.boundingSphere, { duration: 0 });
+        viewer.camera.flyToBoundingSphere(moonTileset.boundingSphere, { duration: 0, offset: new Cesium.HeadingPitchRange(0, Cesium.Math.toRadians(-25), moonTileset.boundingSphere.radius * 2.0) });
 
         // ─── 조명 설정 ───
         viewer.scene.highDynamicRange = false;
@@ -313,6 +313,45 @@ export const CESIUM_INIT = `
             setTimeout(function() { loader.style.display = 'none'; }, 900);
         }
 
+        // ─── 빈 공간 드래그 방지: pointermove DOM 차단 ───
+        // enableRotate 토글은 Cesium 내부 버퍼/관성 때문에 빠른 플릭에 무력.
+        // 대신 빈 공간에서 시작된 포인터의 pointermove 이벤트를
+        // stopImmediatePropagation으로 Cesium에 전달하지 않음.
+        (function() {
+            var _canvas = viewer.scene.canvas;
+            var _blocked = {};  // pointerId → true
+            var _testEllipsoid = new Cesium.Ellipsoid(1755000, 1755000, 1755000);
+
+            _canvas.addEventListener('pointerdown', function(e) {
+                if (window._firstPersonMode || window._orbitState || window._satelliteFocused) return;
+                var rect = _canvas.getBoundingClientRect();
+                var x = e.clientX - rect.left;
+                var y = e.clientY - rect.top;
+                var ray = viewer.camera.getPickRay(new Cesium.Cartesian2(x, y));
+                if (!ray) return;
+                var hit = Cesium.IntersectionTests.rayEllipsoid(ray, _testEllipsoid);
+                if (!hit) {
+                    _blocked[e.pointerId] = true;
+                }
+            }, true);
+
+            // 핵심: 빈 공간 포인터의 이동을 Cesium에 전달하지 않음
+            _canvas.addEventListener('pointermove', function(e) {
+                if (_blocked[e.pointerId]) {
+                    e.stopImmediatePropagation();
+                    e.preventDefault();
+                }
+            }, true);
+
+            document.addEventListener('pointerup', function(e) {
+                delete _blocked[e.pointerId];
+            }, true);
+            document.addEventListener('pointercancel', function(e) {
+                delete _blocked[e.pointerId];
+            }, true);
+            console.log('[Init] Empty-space drag guard installed (pointermove block)');
+        })();
+
         // ─── 기본이 탐사모드이므로 점유모드 전용 UI 숨김 ───
 
       } catch (error) {
@@ -351,7 +390,7 @@ export const CESIUM_INIT = `
       
       // 5단계 고정 줌 레벨 (RN 줌 버튼 연동용)
       const ZOOM_LEVELS = [
-        { height: 6105648, s2Level: null, label: 'Global' },
+        { height: 4300000, s2Level: null, label: 'Global' },
         { height: 1500000, s2Level: 4,    label: 'S2 Level 4' },
         { height: 100000,  s2Level: 8,    label: 'S2 Level 8' },
         { height: 6000,    s2Level: 12,   label: 'S2 Level 12' },
@@ -499,7 +538,8 @@ export const CESIUM_INIT = `
         if(moonTileset) {
             _isFlyingTo = true;
             viewer.camera.flyToBoundingSphere(moonTileset.boundingSphere, {
-                duration: 1.0,
+                duration: 2.0,
+                offset: new Cesium.HeadingPitchRange(0, Cesium.Math.toRadians(-25), moonTileset.boundingSphere.radius * 2.0),
                 complete: function() { _isFlyingTo = false; },
                 cancel: function() { _isFlyingTo = false; }
             });
@@ -615,7 +655,8 @@ export const CESIUM_INIT = `
           if (moonTileset) {
               _isFlyingTo = true;
               viewer.camera.flyToBoundingSphere(moonTileset.boundingSphere, {
-                  duration: 1.0,
+                  duration: 2.0,
+                  offset: new Cesium.HeadingPitchRange(0, Cesium.Math.toRadians(-25), moonTileset.boundingSphere.radius * 2.0),
                   complete: function() { _isFlyingTo = false; },
                   cancel: function() { _isFlyingTo = false; }
               });

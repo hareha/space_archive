@@ -5,6 +5,7 @@ import {
   Image,
 } from 'react-native';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
+import { LogoSpinner } from '@/components/LoadingOverlay';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LANDING_SITES, LandingSite, getContactColor, COUNTRY_NAMES } from '@/constants/LandingSiteData';
 import { LUNAR_FEATURES, LunarFeature, getFeatureTypeColor, getFeatureTypeEmoji, formatArea, isFarSide } from '@/constants/LunarFeatureData';
@@ -231,7 +232,9 @@ export default function ExplorationListPanel({
               ))}
             </ScrollView>
             {isLoadingSatellite && (
-              <Text style={{ color: '#FCD34D', fontSize: 13, textAlign: 'center', paddingVertical: 20 }}>위성 데이터 로딩 중...</Text>
+              <View style={{ paddingVertical: 20, alignItems: 'center' }}>
+                <LogoSpinner size={16} text="위성 데이터 로딩 중..." />
+              </View>
             )}
             {satelliteData
               .filter((sat: any) => agencyFilter === '전체' || sat.agencyCode === agencyFilter)

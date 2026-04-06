@@ -428,8 +428,6 @@ export function createCesiumARHtml() {
                 point: {
                   pixelSize: 6,
                   color: Cesium.Color.WHITE,
-                  outlineColor: new Cesium.Color(1, 1, 1, 0.3),
-                  outlineWidth: 2,
                   disableDepthTestDistance: Number.POSITIVE_INFINITY
                 }
               });

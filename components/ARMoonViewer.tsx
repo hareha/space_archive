@@ -2,6 +2,7 @@
 // 실제 API 데이터 기반 AR 표시 + 궤도 시각화
 
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import LoadingOverlay from '@/components/LoadingOverlay';
 import {
     StyleSheet,
     View,
@@ -113,21 +114,28 @@ function interpolateTrajectory(points: TrajectoryPoint[], segmentsPerPoint: numb
             const y = p0.y * f0 + p1.y * f1 + p2.y * f2 + p3.y * f3;
             const z = p0.z * f0 + p1.z * f1 + p2.z * f2 + p3.z * f3;
 
+            const vx = p0.vx * f0 + p1.vx * f1 + p2.vx * f2 + p3.vx * f3;
+            const vy = p0.vy * f0 + p1.vy * f1 + p2.vy * f2 + p3.vy * f3;
+            const vz = p0.vz * f0 + p1.vz * f1 + p2.vz * f2 + p3.vz * f3;
+
             // 타임스탬프도 보간 (안전한 처리를 위해 유효성 검사 추가)
             const time1 = new Date(p1.timestamp).getTime();
             const time2 = new Date(p2.timestamp).getTime();
 
             let interpolatedTime = p1.timestamp;
+            let epochMs = p1.epochMs;
             if (!isNaN(time1) && !isNaN(time2)) {
                 try {
                     const timeDiff = time2 - time1;
-                    interpolatedTime = new Date(time1 + timeDiff * t).toISOString();
+                    const interpMs = time1 + timeDiff * t;
+                    interpolatedTime = new Date(interpMs).toISOString();
+                    epochMs = interpMs;
                 } catch (e) {
                     console.warn('[Trajectory] Date interpolation failed', e);
                 }
             }
 
-            result.push({ x, y, z, timestamp: interpolatedTime });
+            result.push({ x, y, z, vx, vy, vz, timestamp: interpolatedTime, epochMs });
         }
     }
     // 마지막 점 추가
@@ -561,7 +569,11 @@ export default function ARMoonViewer({ onClose }: Props) {
                 let screenTrajectory: { x: number; y: number }[] | undefined;
                 if (sc.trajectory) {
                     // 현재 위치를 궤적의 마지막 점으로 추가하여 끊김 방지
-                    const trajectoryWithCurrent = [...sc.trajectory, sc.position];
+                    const trajectoryWithCurrent: TrajectoryPoint[] = [...sc.trajectory, {
+                        x: sc.position.x, y: sc.position.y, z: sc.position.z,
+                        vx: sc.position.vx, vy: sc.position.vy, vz: sc.position.vz,
+                        timestamp: sc.position.timestamp, epochMs: new Date(sc.position.timestamp).getTime(),
+                    }];
 
                     // 보간 적용 (점을 10배로 늘려서 부드럽게)
                     const smoothTrajectory = interpolateTrajectory(trajectoryWithCurrent, 10);
@@ -683,7 +695,7 @@ export default function ARMoonViewer({ onClose }: Props) {
     if (!permission) {
         return (
             <View style={styles.container}>
-                <ActivityIndicator size="large" color="#3B82F6" />
+                <LoadingOverlay visible={true} />
             </View>
         );
     }

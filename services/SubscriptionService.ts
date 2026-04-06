@@ -71,6 +71,20 @@ const SubscriptionService = {
                 return null;
             }
 
+            // activity_logs에 이용권 구매 기록
+            try {
+                await supabase.from('activity_logs').insert({
+                    user_id: userId,
+                    type: 'subscription',
+                    description: `${meta.name} 구매`,
+                    ell_amount: meta.ellAmount,
+                    mag_count: 0,
+                    metadata: { plan_id: planId, duration_days: meta.durationDays },
+                });
+            } catch (logErr) {
+                console.warn('[SubscriptionService] activity_logs insert skipped:', logErr);
+            }
+
             return data as ActiveSubscription;
         } catch (e) {
             console.error('[SubscriptionService] activateSubscription error:', e);

@@ -2,7 +2,8 @@
 // 카메라를 셀 중심 지표면 위에 배치, 디바이스 자이로로 시점 조작
 // 풀스크린 Cesium (카메라 배경 없음)
 
-export function createCesiumARSurfaceHtml(lat, lng) {
+export function createCesiumARSurfaceHtml(lat, lng, earthTextureData) {
+  const earthJson = JSON.stringify(earthTextureData || '');
   return `<!DOCTYPE html>
 <html lang="ko">
 <head>
@@ -32,6 +33,7 @@ export function createCesiumARSurfaceHtml(lat, lng) {
 <body>
   <div id="cesiumContainer"></div>
   <script>
+    window.EARTH_TEXTURE_DATA = ${earthJson};
     function sendToRN(type, payload) {
       try {
         if (window.ReactNativeWebView) {
@@ -186,6 +188,78 @@ export function createCesiumARSurfaceHtml(lat, lng) {
             window._moonEllipsoid = moonEllipsoid;
             window._lngRad = lngRad;
             window._latRad = latRad;
+
+            // ─── 태양계 천체 (달에서 본 실제 각크기) ───
+            var D = 5e8;
+
+            // 🌍 지구
+            var earthPos = new Cesium.Cartesian3(3.941e8, 2.156e7, -3.914e7);
+            var earthRadius = 6371000;
+            var earthTilt = Cesium.Quaternion.fromAxisAngle(
+                new Cesium.Cartesian3(0, 1, 0),
+                Cesium.Math.toRadians(23.4)
+            );
+            var earthMaterial;
+            if (window.EARTH_TEXTURE_DATA && window.EARTH_TEXTURE_DATA.length > 0) {
+                earthMaterial = new Cesium.ImageMaterialProperty({ image: window.EARTH_TEXTURE_DATA });
+            } else {
+                earthMaterial = Cesium.Color.YELLOW;
+            }
+            viewer.entities.add({
+                position: earthPos,
+                orientation: earthTilt,
+                ellipsoid: {
+                    radii: new Cesium.Cartesian3(earthRadius, earthRadius, earthRadius),
+                    material: earthMaterial,
+                    slicePartitions: 64,
+                    stackPartitions: 64
+                }
+            });
+
+            // ☀️ 태양
+            var sunAngular = 1392700 / 150000000;
+            var sunSize = D * sunAngular;
+            var sunPos = new Cesium.Cartesian3(-D * 1.2, D * 0.6, D * 0.25);
+            var sunCanvas = document.createElement('canvas');
+            sunCanvas.width = 128; sunCanvas.height = 128;
+            var sctx = sunCanvas.getContext('2d');
+            var sg = sctx.createRadialGradient(64, 64, 0, 64, 64, 64);
+            sg.addColorStop(0, 'rgba(255,255,240,1)');
+            sg.addColorStop(0.15, 'rgba(255,250,200,1)');
+            sg.addColorStop(0.3, 'rgba(255,230,120,0.6)');
+            sg.addColorStop(0.6, 'rgba(255,200,50,0.1)');
+            sg.addColorStop(1, 'rgba(255,180,0,0)');
+            sctx.fillStyle = sg;
+            sctx.fillRect(0, 0, 128, 128);
+            viewer.entities.add({
+                position: sunPos,
+                billboard: {
+                    image: sunCanvas.toDataURL(),
+                    width: sunSize * 3,
+                    height: sunSize * 3,
+                    sizeInMeters: true
+                }
+            });
+
+            // ⭐ 배경 별
+            var starField = viewer.scene.primitives.add(new Cesium.PointPrimitiveCollection());
+            for (var si = 0; si < 500; si++) {
+                var sTheta = Math.random() * 2 * Math.PI;
+                var sPhi = Math.acos(2 * Math.random() - 1);
+                var sDist = 3e8 + Math.random() * 5e8;
+                var sx = sDist * Math.sin(sPhi) * Math.cos(sTheta);
+                var sy = sDist * Math.sin(sPhi) * Math.sin(sTheta);
+                var sz = sDist * Math.cos(sPhi);
+                var sSize = Math.random() < 0.7 ? 0.5 + Math.random() * 0.8 :
+                            Math.random() < 0.9 ? 1.2 + Math.random() * 0.8 :
+                            2.0 + Math.random() * 1.0;
+                var sBright = 0.4 + Math.random() * 0.6;
+                starField.add({
+                    position: new Cesium.Cartesian3(sx, sy, sz),
+                    pixelSize: sSize,
+                    color: new Cesium.Color(sBright, sBright, sBright * 1.05, 1.0)
+                });
+            }
 
             sendToRN('AR_SURFACE_READY', { success: true, surfaceH: surfaceH });
           }, 500);

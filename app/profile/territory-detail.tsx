@@ -8,6 +8,7 @@ import { useRouter, useLocalSearchParams, useNavigation } from 'expo-router';
 import { CommonActions } from '@react-navigation/native';
 import { Text } from '@/components/Themed';
 import { Ionicons } from '@expo/vector-icons';
+import LoadingOverlay from '@/components/LoadingOverlay';
 import { WebView } from 'react-native-webview';
 import ARSurfaceViewer from '@/components/ARSurfaceViewer';
 import { createCesiumHtml } from '@/constants/cesium/CesiumHtml';
@@ -141,7 +142,18 @@ export default function TerritoryDetailScreen() {
         // Cesium HTML을 file://로 저장 (GLB file:// 로드 허용)
         (async () => {
             try {
-                const htmlContent = createCesiumHtml('', '');
+                // 지구 텍스처 base64 로드
+                let earthBase64 = '';
+                try {
+                    const earthAsset = Asset.fromModule(require('../../assets/images/earth.jpg'));
+                    await earthAsset.downloadAsync();
+                    if (earthAsset.localUri) {
+                        const b64 = await FileSystem.readAsStringAsync(earthAsset.localUri, { encoding: 'base64' });
+                        earthBase64 = `data:image/jpeg;base64,${b64}`;
+                    }
+                } catch (e) { console.warn('Earth texture load error:', e); }
+
+                const htmlContent = createCesiumHtml('', '', earthBase64);
                 const htmlPath = FileSystem.documentDirectory + 'cesium_territory.html';
                 await FileSystem.writeAsStringAsync(htmlPath, htmlContent, { encoding: FileSystem.EncodingType.UTF8 });
                 setCesiumHtmlUri(htmlPath);
@@ -370,11 +382,7 @@ export default function TerritoryDetailScreen() {
                     <TouchableOpacity onPress={exitFirstPerson} style={styles.fpBackBtn}>
                         <Ionicons name="arrow-back" size={24} color="#fff" />
                     </TouchableOpacity>
-                    {!fpReady && (
-                        <View style={styles.fpLoadingOverlay}>
-                            <Text style={styles.fpLoadingText}>지표면으로 이동 중...</Text>
-                        </View>
-                    )}
+                    <LoadingOverlay visible={!fpReady} />
                     {showFpGuide && (
                         <Animated.View style={[styles.fpGuideOverlay, { opacity: fpGuideAnim }]}>
                             <View style={styles.fpGuideCard}>

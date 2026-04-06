@@ -1,7 +1,8 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, ScrollView, Dimensions, ActivityIndicator, Animated } from 'react-native';
+import { View, Text, TouchableOpacity, StyleSheet, ScrollView, Dimensions, Animated } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import Svg, { Path } from 'react-native-svg';
+import { LogoSpinner } from '@/components/LoadingOverlay';
 
 // ─── 스캐너 아이콘 ───
 const ScannerIcon = ({ size = 22 }: { size?: number }) => (
@@ -140,24 +141,39 @@ export default function ResourceScannerPanel({
   // 동적 범례
   let legendData: { values: number[]; unit: string } | null = null;
   if (activeResource) {
+    const fmt = (v: number) => {
+      if (Math.abs(v) >= 100) return Math.round(v);
+      if (Math.abs(v) >= 1) return Math.round(v * 10) / 10;
+      return Math.round(v * 100) / 100;
+    };
+
     if (mineralStats && mineralStats.filter === activeResource) {
-      const min = mineralStats.min;
-      const max = mineralStats.max;
+      // 실제 데이터의 min/max 사용
+      let min = mineralStats.min;
+      let max = mineralStats.max;
+      // 셀 값이 범위 밖이면 확장
+      if (mineralCellInfo && mineralCellInfo.filter === activeResource) {
+        if (mineralCellInfo.value > max) max = mineralCellInfo.value;
+        if (mineralCellInfo.value < min) min = mineralCellInfo.value;
+      }
       const mid = (min + max) / 2;
-      const fmt = (v: number) => {
-        if (Math.abs(v) >= 100) return Math.round(v);
-        if (Math.abs(v) >= 1) return Math.round(v * 10) / 10;
-        return Math.round(v * 100) / 100;
-      };
       legendData = { values: [fmt(max), fmt(mid), fmt(min)], unit: mineralStats.unit };
     } else if (LEGEND_SCALES[activeResource]) {
-      legendData = LEGEND_SCALES[activeResource];
+      const scale = LEGEND_SCALES[activeResource];
+      let min = scale.values[2];
+      let max = scale.values[0];
+      // 셀 값이 범위 밖이면 확장
+      if (mineralCellInfo && mineralCellInfo.filter === activeResource) {
+        if (mineralCellInfo.value > max) max = mineralCellInfo.value;
+        if (mineralCellInfo.value < min) min = mineralCellInfo.value;
+      }
+      const mid = (min + max) / 2;
+      legendData = { values: [fmt(max), fmt(mid), fmt(min)], unit: scale.unit };
     }
   }
 
   const panelAnimStyle = {
     opacity: expandAnim,
-    transform: [{ scale: expandAnim.interpolate({ inputRange: [0, 1], outputRange: [0.3, 1] }) }],
   };
   const legendAnimStyle = {
     opacity: expandAnim,
@@ -206,9 +222,8 @@ export default function ResourceScannerPanel({
 
               {/* ── 로딩 / 탭+칩 ── */}
               {isLoading ? (
-                <View style={styles.loadingBox}>
-                  <ActivityIndicator size="small" color="#60A5FA" />
-                  <Text style={styles.loadingText}>자원 데이터 로드중...</Text>
+                <View style={{ paddingVertical: 20, alignItems: 'center' }}>
+                  <LogoSpinner size={16} text="자원 데이터 로드중..." />
                 </View>
               ) : (
                 <>
@@ -269,28 +284,19 @@ export default function ResourceScannerPanel({
               {mineralCellInfo && (
                 <View style={styles.cellInfoSection}>
                   <View style={styles.cellInfoMain}>
-                    <Text style={[styles.cellInfoValue, { color: activeColor }]}>
+                    <Text style={styles.cellInfoValue}>
                       {formatValue(mineralCellInfo.value)}
                     </Text>
                     <Text style={styles.cellInfoUnit}>{mineralCellInfo.unit}</Text>
                   </View>
                   <View style={styles.cellInfoCoord}>
-                    <View style={styles.coordRow}>
-                      <Ionicons name="location-outline" size={10} color="#666" />
-                      <Text style={styles.coordText}>
-                        {formatLat(mineralCellInfo.latMin)}~{formatLat(mineralCellInfo.latMax)}
-                      </Text>
-                    </View>
-                    <View style={styles.coordRow}>
-                      <Ionicons name="compass-outline" size={10} color="#666" />
-                      <Text style={styles.coordText}>
-                        {formatLon(mineralCellInfo.lonMin)}~{formatLon(mineralCellInfo.lonMax)}
-                      </Text>
-                    </View>
+                    <Text style={styles.coordText}>
+                      {formatLat(mineralCellInfo.latMin)}~{formatLat(mineralCellInfo.latMax)}
+                    </Text>
+                    <Text style={styles.coordText}>
+                      {formatLon(mineralCellInfo.lonMin)}~{formatLon(mineralCellInfo.lonMax)}
+                    </Text>
                   </View>
-                  <TouchableOpacity onPress={onClearCellInfo} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
-                    <Ionicons name="close" size={14} color="rgba(255,255,255,0.3)" />
-                  </TouchableOpacity>
                 </View>
               )}
 
@@ -334,16 +340,16 @@ export default function ResourceScannerPanel({
                       return <View key={i} style={{ flex: 1, backgroundColor: `hsl(${hue}, ${sat}%, ${light}%)` }} />;
                     })}
                   </View>
-                  {/* 값 위치 마커 (▲) */}
+                  {/* 값 위치 마커 (모래시계: ▼▲) */}
                   {valueMarkerRatio !== null && (
                     <View style={[styles.markerWrap, { left: `${valueMarkerRatio * 100}%` as any }]}>
-                      <View style={styles.markerTriangle} />
+                      <View style={styles.markerTriangleDown} />
+                      <View style={styles.markerTriangleUp} />
                     </View>
                   )}
                 </View>
                 <Text style={styles.legendVal}>{legendData.values[0]}</Text>
               </View>
-              <Text style={styles.legendUnitText}>{legendData.unit}</Text>
             </Animated.View>
           )}
         </>
@@ -366,22 +372,21 @@ const styles = StyleSheet.create({
 
   /* ── 패널 ── */
   expandedPanel: {
-    position: 'absolute', top: 12, left: 12, right: 100,
-    borderRadius: 16, overflow: 'hidden',
+    position: 'absolute', top: 12, left: 12, right: 12,
     shadowColor: '#000', shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.4, shadowRadius: 12, elevation: 10,
-    transformOrigin: 'left top',
   },
   panelBg: {
     backgroundColor: '#15171C',
     borderWidth: 1, borderColor: 'rgba(255,255,255,0.10)',
     borderRadius: 16, paddingTop: 14, paddingBottom: 12, paddingHorizontal: 14,
+    overflow: 'hidden',
   },
   headerRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 14 },
   headerIcon: { marginRight: 6 },
 
-  loadingBox: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, paddingVertical: 10 },
-  loadingText: { color: '#60A5FA', fontSize: 12, fontWeight: '600' },
+  loadingBox: { alignItems: 'center', justifyContent: 'center', paddingVertical: 14 },
+  loadingText: { color: '#EBECF1', fontSize: 12, fontWeight: '600' },
 
   tabRow: { flexDirection: 'row', gap: 6, marginBottom: 12 },
   dividerLine: { height: 1, backgroundColor: 'rgba(255,255,255,0.08)', marginBottom: 12 },
@@ -410,35 +415,31 @@ const styles = StyleSheet.create({
   /* ── 하단 통합 바 ── */
   bottomBar: {
     position: 'absolute', bottom: 28, left: 20, right: 20,
-    backgroundColor: '#15171C',
+    backgroundColor: 'rgba(0,0,0,0.5)',
     borderRadius: 16, paddingHorizontal: 16, paddingVertical: 12,
-    borderWidth: 1, borderColor: 'rgba(255,255,255,0.08)',
     gap: 8,
   },
 
   /* ── 셀 정보 ── */
   cellInfoSection: {
     flexDirection: 'row', alignItems: 'center', gap: 10,
-    paddingBottom: 8, borderBottomWidth: 1, borderBottomColor: 'rgba(255,255,255,0.06)',
+    paddingBottom: 8, borderBottomWidth: 1, borderBottomColor: 'rgba(255,255,255,0.1)',
     marginBottom: 2,
   },
   cellInfoMain: {
     flexDirection: 'row', alignItems: 'baseline', gap: 4,
   },
   cellInfoValue: {
-    fontSize: 22, fontWeight: '800', letterSpacing: -0.5,
+    fontSize: 22, fontWeight: '800', letterSpacing: -0.5, color: '#FFFFFF',
   },
   cellInfoUnit: {
-    fontSize: 11, color: '#888', fontWeight: '600',
+    fontSize: 11, color: '#FFFFFF', fontWeight: '600',
   },
   cellInfoCoord: {
-    flex: 1, gap: 2,
-  },
-  coordRow: {
-    flexDirection: 'row', alignItems: 'center', gap: 3,
+    flex: 1, gap: 2, alignItems: 'flex-end' as any,
   },
   coordText: {
-    fontSize: 10, color: '#666', fontWeight: '500', letterSpacing: 0.2,
+    fontSize: 12, color: '#67BDFF', fontWeight: '500',
   },
 
   /* ── 스펙트럼 바 ── */
@@ -452,14 +453,19 @@ const styles = StyleSheet.create({
     height: 10, borderRadius: 5, overflow: 'hidden', flexDirection: 'row',
   },
   markerWrap: {
-    position: 'absolute', top: -5, marginLeft: -4,
+    position: 'absolute', top: -6, marginLeft: -4, alignItems: 'center' as any,
   },
-  markerTriangle: {
+  markerTriangleDown: {
     width: 0, height: 0,
+    borderLeftWidth: 4, borderRightWidth: 4, borderTopWidth: 5,
+    borderLeftColor: 'transparent', borderRightColor: 'transparent',
+    borderTopColor: '#fff',
+  },
+  markerTriangleUp: {
+    width: 0, height: 0, marginTop: 12,
     borderLeftWidth: 4, borderRightWidth: 4, borderBottomWidth: 5,
     borderLeftColor: 'transparent', borderRightColor: 'transparent',
     borderBottomColor: '#fff',
   },
   legendVal: { color: '#bbb', fontSize: 10, fontWeight: '600' },
-  legendUnitText: { color: '#666', fontSize: 9, textAlign: 'center' as any },
 });

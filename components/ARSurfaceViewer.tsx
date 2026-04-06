@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
+import LoadingOverlay from '@/components/LoadingOverlay';
 import {
     StyleSheet,
     View,
@@ -10,6 +11,8 @@ import {
     Platform,
     Animated,
 } from 'react-native';
+import { Asset } from 'expo-asset';
+import * as FileSystem from 'expo-file-system';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { WebView } from 'react-native-webview';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -37,8 +40,24 @@ export default function ARSurfaceViewer({ lat, lng, token, level, onClose }: Pro
 
     const fadeInAnim = useRef(new Animated.Value(0)).current;
 
-    // Cesium HTML (lat/lng 기반)
-    const cesiumHtml = useMemo(() => createCesiumARSurfaceHtml(lat, lng), [lat, lng]);
+    const [earthBase64, setEarthBase64] = useState('');
+
+    // 지구 텍스철 base64 로드
+    useEffect(() => {
+        (async () => {
+            try {
+                const earthAsset = Asset.fromModule(require('../assets/images/earth.jpg'));
+                await earthAsset.downloadAsync();
+                if (earthAsset.localUri) {
+                    const b64 = await FileSystem.readAsStringAsync(earthAsset.localUri, { encoding: 'base64' });
+                    setEarthBase64(`data:image/jpeg;base64,${b64}`);
+                }
+            } catch (e) { console.warn('Earth texture load error:', e); }
+        })();
+    }, []);
+
+    // Cesium HTML (lat/lng/earth 기반)
+    const cesiumHtml = useMemo(() => createCesiumARSurfaceHtml(lat, lng, earthBase64), [lat, lng, earthBase64]);
 
     // Cesium ready → fade in
     useEffect(() => {
@@ -98,36 +117,28 @@ export default function ARSurfaceViewer({ lat, lng, token, level, onClose }: Pro
 
                 {/* ① Cesium 풀스크린 */}
                 <Animated.View style={[styles.cesiumLayer, { opacity: fadeInAnim }]}>
-                    <WebView
-                        ref={cesiumRef}
-                        source={{ html: cesiumHtml, baseUrl: 'https://moon.com' }}
-                        style={styles.cesiumWebView}
-                        originWhitelist={['*']}
-                        javaScriptEnabled={true}
-                        domStorageEnabled={true}
-                        scrollEnabled={false}
-                        bounces={false}
-                        overScrollMode="never"
-                        allowFileAccess={true}
-                        allowFileAccessFromFileURLs={true}
-                        allowUniversalAccessFromFileURLs={true}
-                        onMessage={handleCesiumMessage}
-                    />
+                    {earthBase64 ? (
+                        <WebView
+                            ref={cesiumRef}
+                            source={{ html: cesiumHtml, baseUrl: 'https://moon.com' }}
+                            style={styles.cesiumWebView}
+                            originWhitelist={['*']}
+                            javaScriptEnabled={true}
+                            domStorageEnabled={true}
+                            scrollEnabled={false}
+                            bounces={false}
+                            overScrollMode="never"
+                            allowFileAccess={true}
+                            allowFileAccessFromFileURLs={true}
+                            allowUniversalAccessFromFileURLs={true}
+                            onMessage={handleCesiumMessage}
+                        />
+                    ) : (
+                        <View style={styles.cesiumWebView} />
+                    )}
                 </Animated.View>
 
-                {/* ② 로딩 화면 */}
-                {!cesiumReady && (
-                    <View style={styles.loadingOverlay}>
-                        <View style={styles.loadingBox}>
-                            <MaterialCommunityIcons name="moon-waning-crescent" size={48} color="#3B82F6" />
-                            <Text style={styles.loadingTitle}>달 표면 로딩 중</Text>
-                            <Text style={styles.loadingSubtitle}>
-                                3D 지형 데이터를 불러오는 중입니다
-                            </Text>
-                            <ActivityIndicator size="small" color="#3B82F6" style={{ marginTop: 16 }} />
-                        </View>
-                    </View>
-                )}
+                <LoadingOverlay visible={!cesiumReady} />
 
                 {/* ③ HUD 상단 */}
                 <View style={[styles.hudTop, { paddingTop: insets.top + 8 }]} pointerEvents="box-none">

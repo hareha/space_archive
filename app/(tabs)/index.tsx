@@ -26,6 +26,7 @@ import { LUNAR_FEATURES, LunarFeature, sortByType, sortBySize, getFeatureTypeCol
 import { LANDING_SITE_IMAGES, LUNAR_FEATURE_IMAGES } from '@/constants/LunarImages';
 import { addScrapArea, removeScrapArea, isAreaScrapped } from '@/constants/scrapStore';
 import { getAllOccupiedTokens, getUserOccupiedCells, getCellOwnerFromDB, occupyCell } from '@/services/CellService';
+import { supabase } from '@/services/supabase';
 import { useAuth } from '@/components/AuthContext';
 import * as Linking from 'expo-linking';
 import { onJumpRequest, consumeJumpRequest } from '@/constants/jumpToCellStore';
@@ -1902,8 +1903,8 @@ export default function MoonScreen() {
 
         {/* 좌측 상단: 자원 스캐너 (토글 버튼+패널 통합) — ResourceScannerPanel 내부에서 렌더링 */}
 
-        {/* 우측 상단 컨트롤 버튼 (+, 초기화, -) — 점유 현황 뷰에서 숨김 */}
-        {!(selectedLandingSite && landingSiteDetailMode === 'occupation') && !(selectedFeature && featureDetailMode === 'occupation') && (
+        {/* 우측 상단 컨트롤 버튼 (+, 초기화, -) — 점유 현황 뷰/스캐너 활성 시 숨김 */}
+        {!showResourceScanner && !(selectedLandingSite && landingSiteDetailMode === 'occupation') && !(selectedFeature && featureDetailMode === 'occupation') && (
           <SafeAreaView style={styles.rightControls} edges={['right']} pointerEvents="box-none">
             {/* 레이어 버튼 (별도) */}
             {mainMode === 'exploration' && (
@@ -2166,6 +2167,12 @@ export default function MoonScreen() {
                 setShowFeaturePanel(false);
                 if (!activeScannedResource) {
                   handleResourceSelect('feo');
+                  // 데이터 로드 후 stats 확실히 수신되도록 재전송
+                  setTimeout(() => {
+                    webviewRef.current?.postMessage(JSON.stringify({
+                      type: 'UPDATE_MINERAL_FILTER', filter: 'feo', enabled: true
+                    }));
+                  }, 500);
                 }
               }
             }}
@@ -2516,14 +2523,16 @@ export default function MoonScreen() {
                     <View style={{ flexDirection: 'row', paddingTop: 4, paddingBottom: 20, gap: 14 }}>
                       {/* 좌측: MAG ID + 면적 + URN */}
                       <View style={{ flex: 1 }}>
-                        <Text style={styles.cellMagId} numberOfLines={1}>
-                          {'MAG-L' + (selectedCell.level || 16) + '-' + (selectedCell.token || selectedCell.cellId)}
-                          {selectedCell.isMultiSelect && cellCount > 1 ? <Text style={{ color: '#60A5FA', fontSize: 14 }}>{' +' + (cellCount - 1)}</Text> : null}
-                        </Text>
+                        <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                          <Text style={styles.cellMagId} numberOfLines={1}>
+                            {'MAG-L' + (selectedCell.level || 16) + '-' + (selectedCell.token || selectedCell.cellId)}
+                          </Text>
+                          {selectedCell.isMultiSelect && cellCount > 1 ? <View style={{ borderWidth: 1, borderColor: '#666666', borderRadius: 20, paddingVertical: 3, paddingHorizontal: 10, marginLeft: 10 }}><Text style={{ color: '#fff', fontSize: 14 }}>{'+' + (cellCount - 1)}</Text></View> : null}
+                        </View>
                         <Text style={{ fontSize: 14, color: '#666666', marginTop: 8 }}>
                           {(selectedCell.area || '1,740 m²') + '  ·  ' + Math.abs(selectedCell.lat || 0).toFixed(2) + '°' + ((selectedCell.lat || 0) >= 0 ? 'N' : 'S') + ' ' + Math.abs(selectedCell.lng || 0).toFixed(2) + '°' + ((selectedCell.lng || 0) >= 0 ? 'E' : 'W')}
                         </Text>
-                        <Text style={{ fontSize: 10, color: '#4B5563', fontFamily: 'monospace', marginTop: 8 }}>{'urn: 301:' + (selectedCell.level || 16) + ':' + (selectedCell.token || selectedCell.cellId)}</Text>
+                        <Text style={{ fontSize: 14, color: '#666666', fontFamily: 'monospace', marginTop: 8 }}>{'urn: 301:' + (selectedCell.level || 16) + ':' + (selectedCell.token || selectedCell.cellId)}</Text>
                       </View>
                       {/* 우측: 개척하기 버튼 또는 상태 */}
                       {!selectedCell?.isOccupied ? (
@@ -2549,13 +2558,19 @@ export default function MoonScreen() {
                       )}
                     </View>
 
-                    {/* 구역 상세 (접기/펼치기) — 토글 중앙 */}
+                    {/* 구역 상세 (접기/펼치기) — 원형 화살표 버튼 */}
                     <TouchableOpacity
                       style={{ alignItems: 'center', paddingVertical: 10, marginTop: 4 }}
                       onPress={() => setShowCellDetail(!showCellDetail)}
                       activeOpacity={0.7}
                     >
-                      <Ionicons name={showCellDetail ? 'chevron-up' : 'chevron-down'} size={18} color="#666" />
+                      <View style={{
+                        width: 23, height: 23, borderRadius: 12,
+                        backgroundColor: '#666666',
+                        justifyContent: 'center', alignItems: 'center',
+                      }}>
+                        <Ionicons name={showCellDetail ? 'chevron-up' : 'chevron-down'} size={14} color="#fff" />
+                      </View>
                     </TouchableOpacity>
 
                     {showCellDetail && (
@@ -2563,7 +2578,7 @@ export default function MoonScreen() {
                         <Text style={{ fontSize: 14, fontWeight: '500', color: '#7295FE', marginBottom: 16 }}>구역 상세</Text>
                         {selectedCell.isMultiSelect && selectedCell.multiTokens ? (
                           selectedCell.multiTokens.map((token: string, idx: number) => (
-                            <View key={idx} style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 10 }}>
+                            <View key={idx} style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 5 }}>
                               <Text style={{ fontSize: 14, color: '#EBECF1', fontFamily: 'monospace' }}>{token}</Text>
                               <Text style={{ fontSize: 13, color: '#808080' }}>
                                 {'LAT: ' + (selectedCell.multiLats?.[idx]?.toFixed(3) || '-') + ' | LON: ' + (selectedCell.multiLngs?.[idx]?.toFixed(3) || '-')}
@@ -2575,7 +2590,7 @@ export default function MoonScreen() {
                             {[
                               { label: selectedCell.token || selectedCell.cellId, value: 'LAT: ' + (selectedCell.lat || 0).toFixed(3) + ' | LON: ' + (selectedCell.lng || 0).toFixed(3) },
                             ].map((row, i) => (
-                              <View key={i} style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 10 }}>
+                              <View key={i} style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 5 }}>
                                 <Text style={{ fontSize: 14, color: '#EBECF1', fontFamily: 'monospace' }}>{row.label}</Text>
                                 <Text style={{ fontSize: 13, color: '#808080' }}>{row.value}</Text>
                               </View>
@@ -2624,8 +2639,9 @@ export default function MoonScreen() {
                       })()}
 
 
+
                       {/* 인근 주요 지형 */}
-                      <Text style={{ color: '#3C57E9', fontSize: 14, fontWeight: '500', marginBottom: 12 }}>인근 주요 지형</Text>
+                      <Text style={{ color: '#3C57E9', fontSize: 14, fontWeight: '500', marginTop: 28, marginBottom: 12 }}>인근 주요 지형</Text>
                       {(() => {
                         const cellLat = selectedCell.lat || 0;
                         const cellLng = selectedCell.lng || 0;
@@ -3686,37 +3702,46 @@ export default function MoonScreen() {
             </TouchableOpacity>
           </View>
 
-          {/* ─── 총 비용 ─── */}
-          <View style={{ paddingVertical: 40, alignItems: 'center' }}>
+          {/* ─── 총 비용 + 합산 면적 ─── */}
+          <View style={{ paddingVertical: 32, alignItems: 'center' }}>
             <Text style={{ fontSize: 36, fontWeight: '800', color: '#F9FAFB' }}>
               {magCost + 'Mag'}
             </Text>
+            <Text style={{ fontSize: 14, color: '#6B7280', marginTop: 8 }}>
+              {'총 면적: ' + (magCost * 0.8).toFixed(1) + ' km²  ·  ' + (magCost * 25) + ' ELL'}
+            </Text>
           </View>
 
-          {/* ─── 상세 정보 리스트 ─── */}
+          {/* ─── 셀 목록 ─── */}
           <View style={{ flex: 1, paddingHorizontal: 20 }}>
-            <Text style={{ fontSize: 13, fontWeight: '600', color: '#6B7280', marginBottom: 12 }}>상세 정보 리스트</Text>
+            <Text style={{ fontSize: 13, fontWeight: '600', color: '#6B7280', marginBottom: 12 }}>셀 목록 ({magCost}개)</Text>
             <ScrollView style={{ flex: 1 }} showsVerticalScrollIndicator={false}>
               {(() => {
                 const cellTokens = selectedCell?.isMultiSelect
                   ? (selectedCell.multiTokens || [])
                   : (selectedCell?.cellId ? [selectedCell.cellId] : []);
-                return cellTokens.map((token: string, idx: number) => (
-                  <View key={idx} style={{
-                    paddingVertical: 14,
-                    borderBottomWidth: 1, borderBottomColor: 'rgba(255,255,255,0.06)',
-                  }}>
-                    <Text style={{ fontSize: 14, fontWeight: '600', color: '#F9FAFB' }}>{token.toUpperCase()}</Text>
-                    <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginTop: 4 }}>
-                      <Text style={{ fontSize: 12, color: '#3B82F6' }}>
-                        {(selectedCell?.lat || 0).toFixed(4) + ', ' + (selectedCell?.lng || 0).toFixed(4)}
+                const multiLats = selectedCell?.multiLats || [];
+                const multiLngs = selectedCell?.multiLngs || [];
+                return cellTokens.map((token: string, idx: number) => {
+                  const lat = selectedCell?.isMultiSelect ? (multiLats[idx] ?? selectedCell?.lat ?? 0) : (selectedCell?.lat ?? 0);
+                  const lng = selectedCell?.isMultiSelect ? (multiLngs[idx] ?? selectedCell?.lng ?? 0) : (selectedCell?.lng ?? 0);
+                  const latStr = Math.abs(lat).toFixed(3) + '°' + (lat >= 0 ? 'N' : 'S');
+                  const lngStr = Math.abs(lng).toFixed(3) + '°' + (lng >= 0 ? 'E' : 'W');
+                  return (
+                    <View key={idx} style={{
+                      flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
+                      paddingVertical: 12,
+                      borderBottomWidth: 1, borderBottomColor: 'rgba(255,255,255,0.06)',
+                    }}>
+                      <Text style={{ fontSize: 13, fontWeight: '600', color: '#F9FAFB', flex: 1 }} numberOfLines={1}>
+                        {token.toUpperCase()}
                       </Text>
                       <Text style={{ fontSize: 12, color: '#6B7280' }}>
-                        {selectedCell?.area || '100 m²'}
+                        {latStr + '  ' + lngStr}
                       </Text>
                     </View>
-                  </View>
-                ));
+                  );
+                });
               })()}
             </ScrollView>
           </View>
@@ -3738,26 +3763,49 @@ export default function MoonScreen() {
                   const cellTokens = selectedCell?.isMultiSelect
                     ? (selectedCell.multiTokens || [])
                     : (selectedCell?.cellId ? [selectedCell.cellId] : []);
+                  const multiLats = selectedCell?.multiLats || [];
+                  const multiLngs = selectedCell?.multiLngs || [];
 
-                  const territories = cellTokens.map((token: string) => ({
+                  const territories = cellTokens.map((token: string, idx: number) => ({
                     token,
                     level: occupySelectLevel,
-                    lat: selectedCell?.lat || 0,
-                    lng: selectedCell?.lng || 0,
-                    area: selectedCell?.area || '0.2',
+                    lat: selectedCell?.isMultiSelect ? (multiLats[idx] ?? selectedCell?.lat ?? 0) : (selectedCell?.lat ?? 0),
+                    lng: selectedCell?.isMultiSelect ? (multiLngs[idx] ?? selectedCell?.lng ?? 0) : (selectedCell?.lng ?? 0),
+                    area: '0.8',
                     magCost: 1,
                   }));
 
                   // 로컬 옵티미스틱 업데이트
                   spendEll(magCost, territories);
 
-                  // DB 연동: 셀별 구매 처리 (ELL 차감 + INSERT)
+                  // 묶음 구매 ID 생성
+                  const batchId = `batch_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+
+                  // DB 연동: 셀별 구매 처리 (ELL 차감 + INSERT, 동일 batchId)
                   let successCount = 0;
                   const ellPerCell = ELL_PER_MAG;
                   for (const t of territories) {
                     if (user?.id) {
-                      const ok = await occupyCell(user.id, t.token, t.lat, t.lng, t.magCost, ellPerCell);
+                      const ok = await occupyCell(user.id, t.token, t.lat, t.lng, t.magCost, ellPerCell, batchId);
                       if (ok) successCount++;
+                    }
+                  }
+
+                  // activity_logs에 묶음 1건 기록
+                  if (successCount > 0 && user?.id) {
+                    try {
+                      await supabase.from('activity_logs').insert({
+                        user_id: user.id,
+                        type: 'mag_claim',
+                        description: successCount > 1
+                          ? `MAG ${successCount}개 묶음 개척`
+                          : `MAG 개척`,
+                        ell_amount: successCount * ellPerCell,
+                        mag_count: successCount,
+                        metadata: { batch_id: batchId, cell_count: successCount },
+                      });
+                    } catch (logErr) {
+                      console.warn('[Index] activity_logs insert skipped:', logErr);
                     }
                   }
 

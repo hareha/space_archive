@@ -108,6 +108,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         console.log('[Auth] onAuthStateChange:', event);
         setSession(s);
         if (s?.user) {
+          // login()에서 이미 user를 설정했으면 중복 로드 건너뛰기
+          if (event === 'SIGNED_IN' && user) return;
           const profile = await fetchProfile(s.user.id);
           if (mounted) setUser(profile);
         } else {
@@ -125,18 +127,26 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   // ── 로그인 ──
   const login = useCallback(async (email: string, password: string): Promise<boolean> => {
     try {
-      const { data, error } = await supabase.auth.signInWithPassword({
+      // 15초 타임아웃 래핑
+      const loginPromise = supabase.auth.signInWithPassword({
         email: email.trim().toLowerCase(),
         password,
       });
 
+      const timeoutPromise = new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error('TIMEOUT')), 15000)
+      );
+
+      const { data, error } = await Promise.race([loginPromise, timeoutPromise]);
+
       if (error) {
-        // 에러 메시지 한글화
         let msg = '로그인 실패';
         if (error.message.includes('Invalid login credentials')) {
           msg = '이메일 또는 비밀번호가 올바르지 않습니다.';
         } else if (error.message.includes('Email not confirmed')) {
           msg = '이메일 인증이 완료되지 않았습니다. 메일함을 확인해주세요.';
+        } else if (error.message.includes('fetch') || error.message.includes('network')) {
+          msg = '네트워크 연결이 불안정합니다. 잠시 후 다시 시도해주세요.';
         } else {
           msg = error.message;
         }
@@ -144,10 +154,64 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         return false;
       }
 
-      return !!data.session;
+      if (!data.session) {
+        Alert.alert('로그인 실패', '세션을 생성하지 못했습니다. 다시 시도해주세요.');
+        return false;
+      }
+
+      // 세션 즉시 설정
+      setSession(data.session);
+
+      // 프로필을 직접 로드 (onAuthStateChange에 의존하지 않음)
+      try {
+        const profilePromise = fetchProfile(data.session.user.id);
+        const profileTimeout = new Promise<null>((resolve) =>
+          setTimeout(() => resolve(null), 8000)
+        );
+        const profile = await Promise.race([profilePromise, profileTimeout]);
+
+        if (profile) {
+          setUser(profile);
+        } else {
+          // 프로필 로드 실패해도 세션은 유효 → 기본 유저 정보 세팅
+          console.warn('[Auth] Profile load timed out, using session user data');
+          setUser({
+            id: data.session.user.id,
+            email: data.session.user.email || '',
+            nickname: data.session.user.user_metadata?.full_name || '탐험가',
+            avatarColor: '#3B82F6',
+            avatarUrl: null,
+            ellBalance: 0,
+            totalOccupied: 0,
+            joinDate: data.session.user.created_at || new Date().toISOString(),
+          });
+        }
+      } catch (profileErr) {
+        console.warn('[Auth] Profile fetch failed:', profileErr);
+        // 프로필 실패해도 로그인 자체는 성공 처리
+        setUser({
+          id: data.session.user.id,
+          email: data.session.user.email || '',
+          nickname: data.session.user.user_metadata?.full_name || '탐험가',
+          avatarColor: '#3B82F6',
+          avatarUrl: null,
+          ellBalance: 0,
+          totalOccupied: 0,
+          joinDate: data.session.user.created_at || new Date().toISOString(),
+        });
+      }
+
+      return true;
     } catch (e: any) {
       console.error('[Auth] Login error:', e);
-      Alert.alert('오류', '네트워크 연결을 확인해주세요.');
+      if (e.message === 'TIMEOUT') {
+        Alert.alert(
+          '응답 지연',
+          '서버 응답이 너무 오래 걸립니다.\n네트워크 상태를 확인 후 다시 시도해주세요.',
+        );
+      } else {
+        Alert.alert('오류', `로그인 중 문제가 발생했습니다.\n(${e.message || '알 수 없는 오류'})`);
+      }
       return false;
     }
   }, []);

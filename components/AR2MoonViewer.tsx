@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import LoadingOverlay from '@/components/LoadingOverlay';
 import {
     StyleSheet,
     View,
@@ -66,6 +67,7 @@ export default function AR2MoonViewer({ onClose }: Props) {
 
     // ── 초점 ──
     const [isFocusedMode, setIsFocusedMode] = useState(false);
+    const [isCenterFixed, setIsCenterFixed] = useState(true); // true=화면중앙, false=실제위치
     const [cesiumReady, setCesiumReady] = useState(false);
     const [cesiumLoadFailed, setCesiumLoadFailed] = useState(false);
     const cesiumTimeoutRef = useRef<any>(null);
@@ -424,7 +426,7 @@ export default function AR2MoonViewer({ onClose }: Props) {
     if (!permission) {
         return (
             <View style={styles.loadingContainer}>
-                <ActivityIndicator size="large" color="#FFD700" />
+                <LoadingOverlay visible={true} />
             </View>
         );
     }
@@ -494,8 +496,7 @@ export default function AR2MoonViewer({ onClose }: Props) {
                     <View style={styles.overlay}>
 
                         {/* ═══ ① 상단 헤더 (Figma: 264:21726) ═══ */}
-                        {!isFocusedMode && (
-                            <View style={[styles.topPanel, { paddingTop: insets.top, zIndex: 50, elevation: 50 }]}>
+                        <View style={[styles.topPanel, { paddingTop: insets.top, zIndex: 50, elevation: 50 }]}>
                                 {/* 타이틀 행: Today's Moon + X 닫기 */}
                                 <View style={styles.topTitleRow}>
                                     <View style={styles.topTitleLeft}>
@@ -504,9 +505,13 @@ export default function AR2MoonViewer({ onClose }: Props) {
                                             {getPhaseKorean(moonPosition.phase)}
                                         </Text>
                                     </View>
-                                    <TouchableOpacity onPress={onClose} style={styles.closeBtn} hitSlop={{ top: 16, bottom: 16, left: 16, right: 16 }}>
-                                        <Ionicons name="close" size={28} color="#EBECF1" />
-                                    </TouchableOpacity>
+                                    {!isFocusedMode ? (
+                                        <TouchableOpacity onPress={onClose} style={styles.closeBtn} hitSlop={{ top: 16, bottom: 16, left: 16, right: 16 }}>
+                                            <Ionicons name="close" size={28} color="#EBECF1" />
+                                        </TouchableOpacity>
+                                    ) : (
+                                        <View style={{ width: 48, height: 48 }} />
+                                    )}
                                 </View>
                                 {/* 소항목 행: Illumination | Moonrise | Moonset | Altitude */}
                                 <View style={styles.topInfoBar}>
@@ -530,8 +535,7 @@ export default function AR2MoonViewer({ onClose }: Props) {
                                         <Text style={styles.topInfoValue}>{moonPosition.altitude.toFixed(0)}°</Text>
                                     </View>
                                 </View>
-                            </View>
-                        )}
+                        </View>
 
                         {/* 중앙 타겟 */}
                         <View style={styles.centerTargetOuter} pointerEvents="none">
@@ -671,7 +675,7 @@ export default function AR2MoonViewer({ onClose }: Props) {
                         </AnimatedSvg>
 
                         {/* ═══ ② 하단 — 실시간 바라보는 방향 (자이로 연동) ═══ */}
-                        {!isFocusedMode && <View style={[styles.bottomPanel, { paddingBottom: Math.max(8, insets.bottom) }]}>
+                        <View style={[styles.bottomPanel, { paddingBottom: Math.max(8, insets.bottom) }]}>
                             <View style={styles.bottomRow}>
                                 {/* 방위 */}
                                 <View style={styles.bottomStatus}>
@@ -703,7 +707,7 @@ export default function AR2MoonViewer({ onClose }: Props) {
                                     </View>
                                 </View>
                             </View>
-                        </View>}
+                        </View>
 
                         {/* 매칭 토스트 */}
                         {isMatched && !isFocusedMode && (
@@ -887,11 +891,11 @@ export default function AR2MoonViewer({ onClose }: Props) {
                                 />
                             )}
                         </View>
-                        {/* Cesium 3D 달 — 실제 달 위치에 고정 */}
+                        {/* Cesium 3D 달 — 중앙 고정 or 실제 위치 */}
                         <View
                             style={[
                                 styles.cesiumOverlay,
-                                {
+                                !isCenterFixed && {
                                     transform: [
                                         { translateX: moonScreenX - SCREEN_WIDTH / 2 },
                                         { translateY: moonScreenY - SCREEN_HEIGHT / 2 },
@@ -957,10 +961,7 @@ export default function AR2MoonViewer({ onClose }: Props) {
                                     {cesiumLoadFailed ? (
                                         <Text style={[styles.cesiumLoadingText, { color: '#999' }]}>네트워크 연결을 확인해주세요</Text>
                                     ) : (
-                                        <>
-                                            <ActivityIndicator size="large" color="#00f0ff" />
-                                            <Text style={styles.cesiumLoadingText}>로딩 중...</Text>
-                                        </>
+                                        <LoadingOverlay visible={true} dimOpacity={0} logoSize={36} />
                                     )}
                                 </View>
                             )}
@@ -971,6 +972,7 @@ export default function AR2MoonViewer({ onClose }: Props) {
                 {/* ═══ 포커스 모드 UI 버튼 — container 최하단 자식으로 렌더링 (WebView 위에 확실히 배치) ═══ */}
                 {isFocusedMode && (
                     <>
+                        {/* 포커스 해제 X 버튼 (상단 우측, 동그라미 X) */}
                         <TouchableOpacity
                             style={styles.focusExitBtn}
                             onPress={() => {
@@ -980,15 +982,15 @@ export default function AR2MoonViewer({ onClose }: Props) {
                             }}
                             activeOpacity={0.6}
                         >
-                            <Ionicons name="close-circle" size={36} color="rgba(255,255,255,0.8)" />
+                            <Ionicons name="close-circle" size={36} color="rgba(255,255,255,0.85)" />
                         </TouchableOpacity>
+
+                        {/* 구역 보이기 버튼 (상단 패널 아래 우측) */}
                         {cesiumReady && (
                             <TouchableOpacity
                                 style={[styles.territoryBtn, showTerritory && styles.territoryBtnActive]}
                                 onPress={() => {
                                     if (purchasedTerritories.length === 0) return;
-
-                                    // 실제 구매한 셀을 위치별로 그룹핑
                                     const cellsByRegion: Record<string, { lat: number; lng: number; count: number; cells: string[] }> = {};
                                     purchasedTerritories.forEach(c => {
                                         const key = `${Math.round(c.lat)}_${Math.round(c.lng)}`;
@@ -1021,6 +1023,16 @@ export default function AR2MoonViewer({ onClose }: Props) {
                                 <Text style={styles.territoryBtnText}>{showTerritory ? '구역 숨기기' : '내 구역 보기'}</Text>
                             </TouchableOpacity>
                         )}
+
+                        {/* 중앙 고정 ↔ 실제 위치 토글 (하단 패널 위 정중앙) */}
+                        <TouchableOpacity
+                            style={styles.positionToggleBtn}
+                            onPress={() => setIsCenterFixed(!isCenterFixed)}
+                            activeOpacity={0.6}
+                        >
+                            <Ionicons name={isCenterFixed ? 'compass-outline' : 'locate-outline'} size={20} color="#fff" />
+                            <Text style={styles.positionToggleText}>{isCenterFixed ? '실제 위치' : '중앙 고정'}</Text>
+                        </TouchableOpacity>
                     </>
                 )}
 
@@ -1040,7 +1052,7 @@ const styles = StyleSheet.create({
 
     // ═══ ① 상단 패널 (Figma: 264:21726) ═══
     topPanel: {
-        paddingBottom: 2,
+        paddingBottom: 8,
         paddingHorizontal: 16,
         backgroundColor: 'rgba(0, 0, 0, 0.75)',
     },
@@ -1320,8 +1332,8 @@ const styles = StyleSheet.create({
     },
     focusExitBtn: {
         position: 'absolute',
-        top: 60,
-        left: 20,
+        top: 56,
+        right: 16,
         zIndex: 9999,
         elevation: 9999,
         width: 44,
@@ -1331,8 +1343,8 @@ const styles = StyleSheet.create({
     },
     territoryBtn: {
         position: 'absolute',
-        top: 60,
-        right: 20,
+        top: 230,
+        right: 16,
         zIndex: 9999,
         elevation: 9999,
         flexDirection: 'row',
@@ -1386,5 +1398,27 @@ const styles = StyleSheet.create({
         width: 1,
         height: 30,
         backgroundColor: 'rgba(255,255,255,0.15)',
+    },
+    positionToggleBtn: {
+        position: 'absolute',
+        bottom: 120,
+        left: (SCREEN_WIDTH - 140) / 2,
+        width: 140,
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: 6,
+        backgroundColor: 'rgba(0,0,0,0.65)',
+        paddingHorizontal: 16,
+        paddingVertical: 10,
+        borderRadius: 24,
+        borderWidth: 1,
+        borderColor: 'rgba(255,255,255,0.25)',
+        zIndex: 9999,
+    },
+    positionToggleText: {
+        color: '#fff',
+        fontSize: 12,
+        fontWeight: '600',
     },
 });

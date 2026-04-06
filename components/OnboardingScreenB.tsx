@@ -41,8 +41,8 @@ const SLIDES_B = [
     {
         id: '5',
         image: require('../assets/images/onboarding/5.png'),
-        title: '이제 달 탐험을\n시작해보세요.',
-        subtitle: 'Plus Ultra와 함께\n새로운 우주를 경험하세요.',
+        title: '지식을 넘어 우주로',
+        subtitle: 'Beyond Knowledge, Into the Cosmos',
     },
 ];
 

@@ -213,7 +213,7 @@ export default function ProfileManageScreen() {
                                     style={styles.avatarImage}
                                 />
                             ) : (
-                                <Ionicons name="person" size={60} color="#BDBDBD" />
+                                <Image source={require('@/assets/images/sailor.png')} style={styles.avatarImage} />
                             )}
                         </View>
                         <View style={styles.editBadge}>

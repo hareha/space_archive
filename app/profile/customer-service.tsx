@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useCallback } from 'react';
 import {
     StyleSheet, View, ScrollView, TouchableOpacity, StatusBar,
     SafeAreaView, Image,
@@ -6,6 +6,7 @@ import {
 import { useRouter } from 'expo-router';
 import { Text } from '@/components/Themed';
 import { Ionicons } from '@expo/vector-icons';
+import LoadingOverlay from '@/components/LoadingOverlay';
 import { useOnboarding } from '@/components/OnboardingContext';
 import Constants from 'expo-constants';
 import { supabase } from '@/services/supabase';
@@ -23,6 +24,12 @@ export default function CustomerServiceScreen() {
     const router = useRouter();
     const { setShowOnboarding } = useOnboarding();
     const [legalDocs, setLegalDocs] = useState<LegalDoc[]>([]);
+    const [showLoadingPreview, setShowLoadingPreview] = useState(false);
+
+    const handleShowLoading = useCallback(() => {
+        setShowLoadingPreview(true);
+        setTimeout(() => setShowLoadingPreview(false), 3000);
+    }, []);
 
     const appVersion = Constants.expoConfig?.version ?? '1.0.0';
 
@@ -85,6 +92,13 @@ export default function CustomerServiceScreen() {
                         >
                             <Text style={st.menuItemText}>튜토리얼</Text>
                         </TouchableOpacity>
+                        <TouchableOpacity
+                            style={st.menuItem}
+                            onPress={handleShowLoading}
+                            activeOpacity={0.6}
+                        >
+                            <Text style={st.menuItemText}>로딩화면 보기</Text>
+                        </TouchableOpacity>
                     </View>
                 </View>
 
@@ -114,6 +128,17 @@ export default function CustomerServiceScreen() {
                 </View>
 
             </ScrollView>
+
+            {/* 로딩 화면 프리뷰 (터치하면 닫힘) */}
+            {showLoadingPreview && (
+                <TouchableOpacity
+                    style={StyleSheet.absoluteFill}
+                    activeOpacity={1}
+                    onPress={() => setShowLoadingPreview(false)}
+                >
+                    <LoadingOverlay visible={true} />
+                </TouchableOpacity>
+            )}
         </SafeAreaView>
     );
 }
