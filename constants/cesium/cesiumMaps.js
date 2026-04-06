@@ -774,7 +774,7 @@ export const CESIUM_MAPS = `
         '  material.alpha = color.a;',
         '  return material;',
         '}'
-      ].join('\\\\n');
+      ].join('\\n');
 
       function loadGeologyLinearData(geojsonFeatures) {
         if (!geologyLinearData) geologyLinearData = [];
@@ -901,7 +901,7 @@ export const CESIUM_MAPS = `
                       '  material.alpha = color.a * u_alpha;',
                       '  return material;',
                       '}'
-                    ].join('\\\\n')
+                    ].join('\\n')
                   }
                 }),
                 translucent: true,

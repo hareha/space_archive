@@ -657,7 +657,7 @@ export default function MoonScreen() {
     if (enabled && !geologyUnitLoaded) {
       try {
         const { Asset } = require('expo-asset');
-        const FileSystem = require('expo-file-system');
+        const FileSystem = require('expo-file-system/legacy');
         const asset = Asset.fromModule(require('@/assets/images/geology_units.png'));
         await asset.downloadAsync();
         if (asset.localUri) {
