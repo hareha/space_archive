@@ -1462,6 +1462,19 @@ function handleRNMessage(data) {
             }
             console.log('[SET_ENV_MINERAL_FILTER] activeMineralFilter is now:', activeMineralFilter);
         }
+        // ═══ 지질맵 (USGS Unified Geologic Map) ═══
+        if (message.type === 'LOAD_GEOLOGY_LINEAR') {
+            loadGeologyLinearData(message.features);
+        }
+        if (message.type === 'TOGGLE_GEOLOGY_LINEAR') {
+            toggleGeologyLinear(message.enabled);
+        }
+        if (message.type === 'LOAD_GEOLOGY_UNIT_IMAGE') {
+            loadGeologyUnitImage(message.data);
+        }
+        if (message.type === 'TOGGLE_GEOLOGY_UNIT') {
+            toggleGeologyUnit(message.enabled);
+        }
         if (message.type === 'TOGGLE_LANDMARKS') {
             toggleLandmarks(message.enabled);
         }

@@ -752,4 +752,180 @@ export const CESIUM_MAPS = `
         else if (prevFilter === 'neutron') renderNeutronMap();
       }
 
+
+      // ==================================================
+      // 6. 지질 선형 피처 (USGS Unified Geologic Map)
+      // ==================================================
+
+      var geologyLinearData = null;
+      var geologyLinearPrimitive = null;
+      var showGeologyLinear = false;
+
+      // 지질 유닛 래스터
+      var geologyUnitPrimitive = null;
+      var showGeologyUnit = false;
+
+      var GEOLOGY_LINE_SHADER = [
+        'czm_material czm_getMaterial(czm_materialInput materialInput) {',
+        '  czm_material material = czm_getDefaultMaterial(materialInput);',
+        '  vec2 st = materialInput.st;',
+        '  vec4 color = texture(image, st);',
+        '  material.diffuse = color.rgb;',
+        '  material.alpha = color.a;',
+        '  return material;',
+        '}'
+      ].join('\\\\n');
+
+      function loadGeologyLinearData(geojsonFeatures) {
+        if (!geologyLinearData) geologyLinearData = [];
+        geologyLinearData = geologyLinearData.concat(geojsonFeatures);
+        console.log('[Geology] Linear features chunk loaded, total:', geologyLinearData.length);
+        // 매 청크마다 렌더링 (마지막 청크 시 최종 결과)
+        renderGeologyLinear();
+      }
+
+      function renderGeologyLinear() {
+        if (!geologyLinearData || geologyLinearData.length === 0) return;
+
+        var width = 4096;
+        var height = 2048;
+        var canvas = document.createElement('canvas');
+        canvas.width = width;
+        canvas.height = height;
+        var ctx = canvas.getContext('2d');
+        ctx.clearRect(0, 0, width, height);
+
+        // 타입별 색상 + 선 굵기
+        var typeStyles = {
+          'crest of crater rim':         { color: 'rgba(255,107,107,0.85)', width: 1.5 },
+          'crest of buried crater':      { color: 'rgba(255,159,67,0.7)',  width: 1.0 },
+          'ridge crest (type 1), certain': { color: 'rgba(78,205,196,0.85)', width: 1.5 },
+          'ridge crest (type 1), approx.': { color: 'rgba(78,205,196,0.5)',  width: 1.0 },
+          'graben trace, certain':       { color: 'rgba(162,155,254,0.85)', width: 1.5 },
+          'graben trace, approx.':       { color: 'rgba(162,155,254,0.5)',  width: 1.0 },
+          'lineament':                   { color: 'rgba(255,234,167,0.8)', width: 1.0 },
+          'channel (volcanic)':          { color: 'rgba(225,112,85,0.85)', width: 2.0 },
+          'basin ring':                  { color: 'rgba(116,185,255,0.85)', width: 2.5 },
+        };
+        var defaultStyle = { color: 'rgba(223,230,233,0.6)', width: 1.0 };
+
+        for (var i = 0; i < geologyLinearData.length; i++) {
+          var feat = geologyLinearData[i];
+          var coords = feat.geometry.coordinates;
+          if (!coords || coords.length < 2) continue;
+
+          var ftype = feat.properties.type || '';
+          var style = typeStyles[ftype] || defaultStyle;
+
+          ctx.beginPath();
+          ctx.strokeStyle = style.color;
+          ctx.lineWidth = style.width;
+          ctx.lineJoin = 'round';
+          ctx.lineCap = 'round';
+
+          for (var j = 0; j < coords.length; j++) {
+            var lon = coords[j][0];
+            var lat = coords[j][1];
+            var x = (lon + 180) / 360 * width;
+            var y = (90 - lat) / 180 * height;
+
+            if (j === 0) ctx.moveTo(x, y);
+            else ctx.lineTo(x, y);
+          }
+          ctx.stroke();
+        }
+
+        // 구체에 매핑
+        var radius = moonEllipsoid.maximumRadius + 15000;
+        if (!geologyLinearPrimitive) {
+          var geometry = new Cesium.EllipsoidGeometry({
+            radii: new Cesium.Cartesian3(radius, radius, radius)
+          });
+          geologyLinearPrimitive = new Cesium.Primitive({
+            geometryInstances: new Cesium.GeometryInstance({ geometry: geometry }),
+            appearance: new Cesium.MaterialAppearance({
+              material: new Cesium.Material({
+                fabric: {
+                  type: 'GeologyLinear_' + Date.now(),
+                  uniforms: { image: canvas },
+                  source: GEOLOGY_LINE_SHADER
+                }
+              }),
+              translucent: true,
+              renderState: {
+                depthTest: { enabled: true },
+                cull: { enabled: true, face: Cesium.CullFace.BACK }
+              }
+            }),
+            show: showGeologyLinear
+          });
+          viewer.scene.primitives.add(geologyLinearPrimitive);
+          console.log('[Geology] Linear primitive created');
+        } else {
+          var dataUrl = canvas.toDataURL('image/png');
+          geologyLinearPrimitive.appearance.material.uniforms.image = dataUrl;
+        }
+      }
+
+      function toggleGeologyLinear(enabled) {
+        showGeologyLinear = enabled;
+        if (geologyLinearPrimitive) {
+          geologyLinearPrimitive.show = enabled;
+        }
+      }
+
+      // ==================================================
+      // 7. 지질 유닛 래스터 오버레이 (PNG 이미지)
+      // ==================================================
+
+      function loadGeologyUnitImage(dataUri) {
+        var radius = moonEllipsoid.maximumRadius + 10000;
+        var img = new Image();
+        img.onload = function() {
+          if (!geologyUnitPrimitive) {
+            var geometry = new Cesium.EllipsoidGeometry({
+              radii: new Cesium.Cartesian3(radius, radius, radius)
+            });
+            geologyUnitPrimitive = new Cesium.Primitive({
+              geometryInstances: new Cesium.GeometryInstance({ geometry: geometry }),
+              appearance: new Cesium.MaterialAppearance({
+                material: new Cesium.Material({
+                  fabric: {
+                    type: 'GeologyUnit_' + Date.now(),
+                    uniforms: { image: img, u_alpha: 0.6 },
+                    source: [
+                      'czm_material czm_getMaterial(czm_materialInput materialInput) {',
+                      '  czm_material material = czm_getDefaultMaterial(materialInput);',
+                      '  vec4 color = texture(image, materialInput.st);',
+                      '  material.diffuse = color.rgb;',
+                      '  material.alpha = color.a * u_alpha;',
+                      '  return material;',
+                      '}'
+                    ].join('\\\\n')
+                  }
+                }),
+                translucent: true,
+                renderState: {
+                  depthTest: { enabled: true },
+                  cull: { enabled: true, face: Cesium.CullFace.BACK }
+                }
+              }),
+              show: showGeologyUnit
+            });
+            viewer.scene.primitives.add(geologyUnitPrimitive);
+            console.log('[Geology] Unit raster primitive created');
+          } else {
+            geologyUnitPrimitive.appearance.material.uniforms.image = img;
+          }
+        };
+        img.src = dataUri;
+      }
+
+      function toggleGeologyUnit(enabled) {
+        showGeologyUnit = enabled;
+        if (geologyUnitPrimitive) {
+          geologyUnitPrimitive.show = enabled;
+        }
+      }
+
 `;

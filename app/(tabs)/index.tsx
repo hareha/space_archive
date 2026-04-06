@@ -320,6 +320,11 @@ export default function MoonScreen() {
   const [mineralCellInfo, setMineralCellInfo] = useState<{ latMin: number; latMax: number; lonMin: number; lonMax: number; value: number; filter: string; unit: string } | null>(null);
   // 광물 데이터 로딩 완료 여부
   const [mineralDataLoaded, setMineralDataLoaded] = useState(false);
+  // 지질맵 상태
+  const [showGeologyLinear, setShowGeologyLinear] = useState(false);
+  const [showGeologyUnit, setShowGeologyUnit] = useState(false);
+  const [geologyLinearLoaded, setGeologyLinearLoaded] = useState(false);
+  const [geologyUnitLoaded, setGeologyUnitLoaded] = useState(false);
 
   const [landmarkListData, setLandmarkListData] = useState<any>(null);
   const [selectedLandmark, setSelectedLandmark] = useState<any>(null);
@@ -603,6 +608,75 @@ export default function MoonScreen() {
       }
     }
   }, [mineralDataLoaded]);
+
+  // ═══ Phase 4: 지질맵 데이터 (+12초) ═══
+  useEffect(() => {
+    if (loading) return;
+    const loadGeology = async () => {
+      try {
+        console.log('[Phase 4] Geology data loading started');
+        const geojson = require('@/assets/data/lunar_linear_features.json');
+        const features = geojson.features;
+        console.log('[Phase 4] Geology linear features:', features.length);
+
+        // 청크 분할 전송 (각 500개씩)
+        const chunkSize = 500;
+        for (let i = 0; i < features.length; i += chunkSize) {
+          const chunk = features.slice(i, i + chunkSize);
+          const isLast = i + chunkSize >= features.length;
+          const chunkIdx = i / chunkSize;
+          setTimeout(() => {
+            webviewRef.current?.postMessage(JSON.stringify({
+              type: 'LOAD_GEOLOGY_LINEAR',
+              features: chunk,
+            }));
+            if (isLast) {
+              console.log('[Phase 4] Geology linear data sent completely');
+              setGeologyLinearLoaded(true);
+            }
+          }, 200 * chunkIdx);
+        }
+      } catch (error) {
+        console.error('[Phase 4] Geology data error:', error);
+      }
+    };
+    const timer = setTimeout(loadGeology, 12000);
+    return () => clearTimeout(timer);
+  }, [loading]);
+
+  // 지질맵 토글 핸들러
+  const toggleGeologyLinear = (enabled: boolean) => {
+    setShowGeologyLinear(enabled);
+    webviewRef.current?.postMessage(JSON.stringify({
+      type: 'TOGGLE_GEOLOGY_LINEAR', enabled
+    }));
+  };
+
+  const toggleGeologyUnit = async (enabled: boolean) => {
+    setShowGeologyUnit(enabled);
+    if (enabled && !geologyUnitLoaded) {
+      try {
+        const { Asset } = require('expo-asset');
+        const FileSystem = require('expo-file-system');
+        const asset = Asset.fromModule(require('@/assets/images/geology_units.png'));
+        await asset.downloadAsync();
+        if (asset.localUri) {
+          const base64 = await FileSystem.readAsStringAsync(asset.localUri, { encoding: 'base64' });
+          const dataUri = 'data:image/png;base64,' + base64;
+          webviewRef.current?.postMessage(JSON.stringify({
+            type: 'LOAD_GEOLOGY_UNIT_IMAGE', data: dataUri
+          }));
+          setGeologyUnitLoaded(true);
+          console.log('[Phase 4] Geology unit raster sent');
+        }
+      } catch (e) {
+        console.error('[Phase 4] Geology unit load error:', e);
+      }
+    }
+    webviewRef.current?.postMessage(JSON.stringify({
+      type: 'TOGGLE_GEOLOGY_UNIT', enabled
+    }));
+  };
 
   // ═══ 딥링크 수신 핸들러: 공유 링크로 앱 열릴 때 해당 위치로 이동 ═══
   useEffect(() => {
@@ -2185,7 +2259,35 @@ export default function MoonScreen() {
           />
         )}
 
-
+        {/* 지질맵 토글 버튼 (좌측 하단, 스캐너 독립) */}
+        {mainMode === 'exploration' && !showResourceScanner && !(selectedLandingSite && landingSiteDetailMode === 'occupation') && !(selectedFeature && featureDetailMode === 'occupation') && (
+          <View style={{ position: 'absolute', left: 12, bottom: 100, gap: 8, zIndex: 9 }} pointerEvents="box-none">
+            <TouchableOpacity
+              style={{
+                width: 44, height: 44, borderRadius: 10,
+                backgroundColor: showGeologyLinear ? 'rgba(78,205,196,0.9)' : 'rgba(50,57,80,0.8)',
+                borderWidth: 1, borderColor: showGeologyLinear ? 'rgba(78,205,196,0.5)' : 'rgba(255,255,255,0.07)',
+                justifyContent: 'center', alignItems: 'center',
+              }}
+              onPress={() => toggleGeologyLinear(!showGeologyLinear)}
+              activeOpacity={0.7}
+            >
+              <Ionicons name="git-branch-outline" size={20} color="#fff" />
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={{
+                width: 44, height: 44, borderRadius: 10,
+                backgroundColor: showGeologyUnit ? 'rgba(162,155,254,0.9)' : 'rgba(50,57,80,0.8)',
+                borderWidth: 1, borderColor: showGeologyUnit ? 'rgba(162,155,254,0.5)' : 'rgba(255,255,255,0.07)',
+                justifyContent: 'center', alignItems: 'center',
+              }}
+              onPress={() => toggleGeologyUnit(!showGeologyUnit)}
+              activeOpacity={0.7}
+            >
+              <Ionicons name="map-outline" size={20} color="#fff" />
+            </TouchableOpacity>
+          </View>
+        )}
 
         {/* 필터 모달 (캔버스 영역 내부) */}
         {showFilterModal && (
