@@ -484,11 +484,10 @@ export default function ARMoonViewer({ onClose }: Props) {
                 { radius: 1.35, eccentricity: 0.1, tilt: 85, duration: 2 },    // LRO
                 { radius: 1.5, eccentricity: 0.1, tilt: 90, duration: 2 },     // 다누리
                 { radius: 1.7, eccentricity: 0.1, tilt: 80, duration: 2 },     // 찬드라얀-2
-                { radius: 1.6, eccentricity: 0.38, tilt: -75, duration: 6 },   // 찬드라얀-3P
                 { radius: 3.0, eccentricity: 0.7, tilt: 45, duration: 24 },    // CAPSTONE
                 { radius: 3.5, eccentricity: 0.6, tilt: 30, duration: 24 },    // ARTEMIS-P1
                 { radius: 4.0, eccentricity: 0.6, tilt: -30, duration: 24 },   // ARTEMIS-P2
-                { radius: 2.5, eccentricity: 0.6, tilt: 30, duration: 12 },    // Queqiao-2
+                { radius: 5.0, eccentricity: 0.9, tilt: 15, duration: 96 },    // Artemis II
             ];
 
             let index = 0;
@@ -500,7 +499,7 @@ export default function ARMoonViewer({ onClose }: Props) {
                     try {
                         const [position, trajectory] = await Promise.all([
                             fetchSpacecraftPosition(mission.id),
-                            fetchSpacecraftTrajectory(mission.id, params.duration)
+                            fetchSpacecraftTrajectory(mission.id, params.duration, undefined, mission.launchDate)
                         ]);
 
                         results.push({

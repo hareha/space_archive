@@ -1,13 +1,12 @@
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import {
   View, Text, TouchableOpacity, TextInput, StyleSheet, SafeAreaView, ScrollView,
-  StatusBar, KeyboardAvoidingView, Platform, Animated, Dimensions, ActivityIndicator,
+  StatusBar, KeyboardAvoidingView, Platform, ActivityIndicator, Keyboard,
+  TouchableWithoutFeedback,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { useAuth } from '@/components/AuthContext';
-
-const { width, height } = Dimensions.get('window');
 
 export default function LoginScreen() {
   const router = useRouter();
@@ -17,9 +16,11 @@ export default function LoginScreen() {
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
+  const scrollRef = useRef<ScrollView>(null);
 
   const handleEmailLogin = async () => {
     if (!email.trim() || !password.trim()) return;
+    Keyboard.dismiss();
     setLoading(true);
     const success = await login(email, password);
     setLoading(false);
@@ -28,272 +29,209 @@ export default function LoginScreen() {
     }
   };
 
-  const handleSNSLogin = async (provider: 'kakao' | 'apple' | 'naver' | 'facebook') => {
+  const handleSNSLogin = async (provider: 'kakao' | 'apple' | 'naver') => {
     await loginWithSNS(provider);
     router.dismiss();
   };
 
+  const scrollToEnd = () => {
+    setTimeout(() => scrollRef.current?.scrollToEnd({ animated: true }), 300);
+  };
+
   return (
-    <View style={s.container}>
-      <StatusBar barStyle="light-content" />
-      <View style={[StyleSheet.absoluteFillObject, { backgroundColor: '#0F172A' }]} />
+    <SafeAreaView style={s.container}>
+      <StatusBar barStyle="dark-content" />
 
-      {/* 배경 장식 */}
-      <View style={s.bgCircle1} />
-      <View style={s.bgCircle2} />
-      <View style={s.bgCircle3} />
-
-      <SafeAreaView style={{ flex: 1 }}>
-        {/* 닫기 버튼 */}
-        <TouchableOpacity style={s.closeBtn} onPress={() => router.back()}>
-          <Ionicons name="close" size={28} color="#9CA3AF" />
-        </TouchableOpacity>
-
-        <KeyboardAvoidingView
-          style={{ flex: 1 }}
-          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-        >
+      <KeyboardAvoidingView
+        style={{ flex: 1 }}
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 0}
+      >
+        <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
           <ScrollView
+            ref={scrollRef}
             contentContainerStyle={s.scrollContent}
             showsVerticalScrollIndicator={false}
             keyboardShouldPersistTaps="handled"
           >
             {/* 로고 영역 */}
             <View style={s.logoSection}>
-              <View style={s.logoGlow}>
-                <Text style={s.logoEmoji}>🌙</Text>
-              </View>
-              <Text style={s.logoTitle}>Plus Ultra</Text>
-              <Text style={s.logoSubtitle}>달의 새로운 가능성을 탐험하세요</Text>
+              <Text style={s.logoTitle}>Welcome!</Text>
+              <Text style={s.logoSubtitle}>
+                달의 새로운 가능성을 탐험하세요.{'\n'}우주 개척의 첫 걸음을 함께 시작합니다.
+              </Text>
             </View>
 
-            {/* SNS 로그인 */}
+            {/* SNS 로그인 버튼들 */}
             <View style={s.snsSection}>
-              {/* 카카오 말풍선 */}
-              <View style={s.speechBubbleContainer}>
-                <View style={s.speechBubble}>
-                  <Text style={s.speechBubbleText}>✨ 3초만에 빠른 회원가입</Text>
-                </View>
-                <View style={s.speechBubbleArrow} />
-              </View>
               {/* 카카오 */}
               <TouchableOpacity
                 style={[s.snsBtn, { backgroundColor: '#FEE500' }]}
                 onPress={() => handleSNSLogin('kakao')}
                 activeOpacity={0.85}
               >
-                <Text style={[s.snsBtnText, { color: '#391B1B' }]}>TALK  카카오톡으로 계속하기</Text>
+                <Text style={[s.snsBtnText, { color: '#000' }]}>카카오톡으로 계속하기</Text>
               </TouchableOpacity>
 
-              {/* Apple */}
+              {/* 네이버 */}
               <TouchableOpacity
-                style={[s.snsBtn, { backgroundColor: '#FFFFFF' }]}
-                onPress={() => handleSNSLogin('apple')}
+                style={[s.snsBtn, { backgroundColor: '#03C75A' }]}
+                onPress={() => handleSNSLogin('naver')}
                 activeOpacity={0.85}
               >
-                <Ionicons name="logo-apple" size={20} color="#000" style={{ marginRight: 8 }} />
-                <Text style={[s.snsBtnText, { color: '#000' }]}>Apple로 계속하기</Text>
+                <Text style={[s.snsBtnText, { color: '#fff' }]}>네이버로 계속하기</Text>
               </TouchableOpacity>
 
-              {/* 네이버 & 페이스북 작은 버튼 */}
-              <View style={s.snsSmallRow}>
+              {/* Apple (iOS 전용) */}
+              {Platform.OS === 'ios' && (
                 <TouchableOpacity
-                  style={[s.snsSmallBtn, { backgroundColor: '#03C75A' }]}
-                  onPress={() => handleSNSLogin('naver')}
+                  style={[s.snsBtn, { backgroundColor: '#000' }]}
+                  onPress={() => handleSNSLogin('apple')}
                   activeOpacity={0.85}
                 >
-                  <Text style={s.snsSmallText}>N</Text>
+                  <Ionicons name="logo-apple" size={20} color="#fff" style={{ marginRight: 4 }} />
+                  <Text style={[s.snsBtnText, { color: '#fff' }]}>Apple로 계속하기</Text>
                 </TouchableOpacity>
+              )}
+
+
+              {/* 이메일 로그인 */}
+              {!showEmailForm ? (
                 <TouchableOpacity
-                  style={[s.snsSmallBtn, { backgroundColor: '#1877F2' }]}
-                  onPress={() => handleSNSLogin('facebook')}
+                  style={[s.snsBtn, { backgroundColor: '#EAECF6' }]}
+                  onPress={() => { setShowEmailForm(true); scrollToEnd(); }}
                   activeOpacity={0.85}
                 >
-                  <Text style={s.snsSmallText}>f</Text>
+                  <Text style={[s.snsBtnText, { color: '#1A1A1A' }]}>이메일로 로그인</Text>
                 </TouchableOpacity>
-              </View>
-            </View>
-
-            {/* 구분선 */}
-            <View style={s.dividerRow}>
-              <View style={s.dividerLine} />
-              <Text style={s.dividerText}>또는</Text>
-              <View style={s.dividerLine} />
-            </View>
-
-            {/* 이메일 로그인 */}
-            {!showEmailForm ? (
-              <View style={s.emailLinks}>
-                <TouchableOpacity onPress={() => setShowEmailForm(true)}>
-                  <Text style={s.emailLinkText}>이메일로 로그인</Text>
-                </TouchableOpacity>
-                <View style={s.emailLinkDot} />
-                <TouchableOpacity onPress={() => router.push('/auth/signup')}>
-                  <Text style={s.emailLinkText}>이메일로 회원가입</Text>
-                </TouchableOpacity>
-              </View>
-            ) : (
-              <View style={s.emailForm}>
-                <View style={s.inputContainer}>
-                  <Ionicons name="mail-outline" size={18} color="#6B7280" style={s.inputIcon} />
+              ) : (
+                <View style={s.emailForm}>
                   <TextInput
                     style={s.input}
                     placeholder="이메일 주소"
-                    placeholderTextColor="#6B7280"
+                    placeholderTextColor="#B2B2B2"
                     value={email}
                     onChangeText={setEmail}
                     keyboardType="email-address"
                     autoCapitalize="none"
                     autoCorrect={false}
+                    onFocus={scrollToEnd}
+                    returnKeyType="next"
                   />
-                </View>
-                <View style={s.inputContainer}>
-                  <Ionicons name="lock-closed-outline" size={18} color="#6B7280" style={s.inputIcon} />
-                  <TextInput
-                    style={s.input}
-                    placeholder="비밀번호"
-                    placeholderTextColor="#6B7280"
-                    value={password}
-                    onChangeText={setPassword}
-                    secureTextEntry={!showPassword}
-                    autoCapitalize="none"
-                  />
-                  <TouchableOpacity onPress={() => setShowPassword(!showPassword)}>
-                    <Ionicons name={showPassword ? 'eye-outline' : 'eye-off-outline'} size={20} color="#6B7280" />
+                  <View style={s.passwordRow}>
+                    <TextInput
+                      style={s.passwordInput}
+                      placeholder="비밀번호"
+                      placeholderTextColor="#B2B2B2"
+                      value={password}
+                      onChangeText={setPassword}
+                      secureTextEntry={!showPassword}
+                      autoCapitalize="none"
+                      onFocus={scrollToEnd}
+                      returnKeyType="done"
+                      onSubmitEditing={handleEmailLogin}
+                    />
+                    <TouchableOpacity onPress={() => setShowPassword(!showPassword)} style={s.eyeBtn}>
+                      <Ionicons name={showPassword ? 'eye-outline' : 'eye-off-outline'} size={20} color="#B2B2B2" />
+                    </TouchableOpacity>
+                  </View>
+
+                  <TouchableOpacity
+                    style={[s.loginBtn, (!email.trim() || !password.trim()) && s.loginBtnDisabled]}
+                    onPress={handleEmailLogin}
+                    disabled={loading || !email.trim() || !password.trim()}
+                    activeOpacity={0.85}
+                  >
+                    {loading ? (
+                      <ActivityIndicator color="#fff" />
+                    ) : (
+                      <Text style={s.loginBtnText}>로그인</Text>
+                    )}
                   </TouchableOpacity>
                 </View>
+              )}
+            </View>
 
-                <TouchableOpacity
-                  style={[s.loginBtn, (!email.trim() || !password.trim()) && s.loginBtnDisabled]}
-                  onPress={handleEmailLogin}
-                  disabled={loading || !email.trim() || !password.trim()}
-                  activeOpacity={0.85}
-                >
-                  {loading ? (
-                    <ActivityIndicator color="#fff" />
-                  ) : (
-                    <Text style={s.loginBtnText}>로그인</Text>
-                  )}
-                </TouchableOpacity>
-              </View>
-            )}
-
-            {/* 하단 */}
-            <TouchableOpacity style={s.helpLink}>
-              <Text style={s.helpLinkText}>로그인에 문제가 있으신가요?</Text>
-            </TouchableOpacity>
+            {/* 하단 링크 */}
+            <View style={s.bottomLinks}>
+              <TouchableOpacity onPress={() => router.push('/auth/signup')}>
+                <Text style={s.bottomLinkText}>이메일로 회원가입</Text>
+              </TouchableOpacity>
+              <View style={s.bottomDivider} />
+              <TouchableOpacity>
+                <Text style={s.troubleBtn}>로그인에 문제가 있으신가요?</Text>
+              </TouchableOpacity>
+            </View>
           </ScrollView>
-        </KeyboardAvoidingView>
-      </SafeAreaView>
-    </View>
+        </TouchableWithoutFeedback>
+      </KeyboardAvoidingView>
+    </SafeAreaView>
   );
 }
 
 const s = StyleSheet.create({
-  container: { flex: 1 },
-  bgCircle1: {
-    position: 'absolute', width: 300, height: 300, borderRadius: 150,
-    backgroundColor: 'rgba(59,130,246,0.06)', top: -80, right: -80,
-  },
-  bgCircle2: {
-    position: 'absolute', width: 200, height: 200, borderRadius: 100,
-    backgroundColor: 'rgba(139,92,246,0.05)', bottom: 100, left: -60,
-  },
-  bgCircle3: {
-    position: 'absolute', width: 150, height: 150, borderRadius: 75,
-    backgroundColor: 'rgba(236,72,153,0.04)', top: height * 0.4, right: -30,
-  },
-  closeBtn: {
-    position: 'absolute', top: 16, left: 16, zIndex: 10,
-    padding: 8,
-  },
+  container: { flex: 1, backgroundColor: '#FFFFFF' },
   scrollContent: {
-    flexGrow: 1, paddingHorizontal: 32, paddingTop: 80, paddingBottom: 40,
-    justifyContent: 'center',
+    flexGrow: 1, paddingHorizontal: 16, justifyContent: 'center', paddingBottom: 34,
   },
 
   // 로고
-  logoSection: { alignItems: 'center', marginBottom: 40 },
-  logoGlow: {
-    width: 72, height: 72, borderRadius: 36,
-    backgroundColor: 'rgba(59,130,246,0.15)',
-    justifyContent: 'center', alignItems: 'center', marginBottom: 16,
-  },
-  logoEmoji: { fontSize: 36 },
+  logoSection: { alignItems: 'center', paddingTop: 30, marginBottom: 40 },
   logoTitle: {
-    fontSize: 32, fontWeight: '800', color: '#F9FAFB',
-    letterSpacing: 1, marginBottom: 8,
+    fontSize: 26, fontWeight: '500', color: '#333', fontFamily: 'Pretendard',
+    marginBottom: 10,
   },
   logoSubtitle: {
-    fontSize: 14, color: '#9CA3AF', letterSpacing: 0.5,
-  },
-
-  // 말풍선 (카카오 위)
-  speechBubbleContainer: {
-    alignItems: 'center', marginBottom: 4,
-  },
-  speechBubble: {
-    backgroundColor: '#FBBF24', borderRadius: 14,
-    paddingVertical: 6, paddingHorizontal: 14,
-  },
-  speechBubbleText: { color: '#1A1A1A', fontSize: 12, fontWeight: '700' },
-  speechBubbleArrow: {
-    width: 0, height: 0,
-    borderLeftWidth: 6, borderRightWidth: 6, borderTopWidth: 6,
-    borderLeftColor: 'transparent', borderRightColor: 'transparent',
-    borderTopColor: '#FBBF24',
+    fontSize: 16, color: '#B2B2B2', lineHeight: 24, textAlign: 'center',
+    fontFamily: 'Pretendard',
   },
 
   // SNS
-  snsSection: { gap: 10, marginBottom: 20 },
+  snsSection: { gap: 12 },
   snsBtn: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
-    borderRadius: 12, paddingVertical: 16, gap: 4,
+    borderRadius: 5, height: 56,
   },
-  snsBtnText: { fontSize: 15, fontWeight: '700' },
-  snsSmallRow: {
-    flexDirection: 'row', justifyContent: 'center', gap: 16, marginTop: 4,
-  },
-  snsSmallBtn: {
-    width: 52, height: 52, borderRadius: 26,
-    justifyContent: 'center', alignItems: 'center',
-  },
-  snsSmallText: { fontSize: 22, fontWeight: '800', color: '#fff' },
-
-  // 구분선
-  dividerRow: {
-    flexDirection: 'row', alignItems: 'center', marginVertical: 20, gap: 12,
-  },
-  dividerLine: { flex: 1, height: 1, backgroundColor: 'rgba(255,255,255,0.08)' },
-  dividerText: { color: '#6B7280', fontSize: 12 },
-
-  // 이메일 링크
-  emailLinks: {
-    flexDirection: 'row', justifyContent: 'center', alignItems: 'center', gap: 16,
-  },
-  emailLinkText: { color: '#9CA3AF', fontSize: 14, fontWeight: '500' },
-  emailLinkDot: { width: 3, height: 3, borderRadius: 1.5, backgroundColor: '#4B5563' },
+  snsBtnText: { fontSize: 16, fontWeight: '600', fontFamily: 'Pretendard' },
 
   // 이메일 폼
-  emailForm: { gap: 12 },
-  inputContainer: {
-    flexDirection: 'row', alignItems: 'center',
-    backgroundColor: 'rgba(255,255,255,0.06)',
-    borderRadius: 12, borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)',
-    paddingHorizontal: 14, height: 52,
-  },
-  inputIcon: { marginRight: 10 },
+  emailForm: { gap: 10, marginTop: 4 },
   input: {
-    flex: 1, color: '#F9FAFB', fontSize: 15,
+    borderWidth: 1, borderColor: '#B2B2B2', borderRadius: 5,
+    height: 46, paddingHorizontal: 16,
+    fontSize: 14, fontWeight: '500', color: '#000', fontFamily: 'Pretendard',
   },
+  passwordRow: {
+    flexDirection: 'row', alignItems: 'center',
+    borderWidth: 1, borderColor: '#B2B2B2', borderRadius: 5,
+    height: 46, paddingHorizontal: 16,
+  },
+  passwordInput: {
+    flex: 1, fontSize: 14, fontWeight: '500', color: '#000', fontFamily: 'Pretendard',
+  },
+  eyeBtn: { padding: 4 },
   loginBtn: {
-    backgroundColor: '#3B82F6', borderRadius: 12,
-    paddingVertical: 16, alignItems: 'center', marginTop: 4,
+    backgroundColor: '#3C57E9', borderRadius: 5,
+    height: 56, alignItems: 'center', justifyContent: 'center',
   },
   loginBtnDisabled: { opacity: 0.4 },
-  loginBtnText: { color: '#fff', fontSize: 16, fontWeight: '700' },
+  loginBtnText: { color: '#fff', fontSize: 16, fontWeight: '600', fontFamily: 'Pretendard' },
 
   // 하단
-  helpLink: { alignItems: 'center', marginTop: 24 },
-  helpLinkText: { color: '#6B7280', fontSize: 13 },
+  bottomLinks: {
+    flexDirection: 'row', justifyContent: 'center', alignItems: 'center',
+    marginTop: 36, paddingBottom: 46,
+  },
+  bottomLinkText: {
+    fontSize: 16, color: '#808080', fontWeight: '600',
+    textDecorationLine: 'underline', fontFamily: 'Pretendard',
+  },
+  bottomDivider: {
+    width: 1, height: 23, backgroundColor: '#808080', marginHorizontal: 11,
+  },
+  troubleBtn: {
+    fontSize: 14, color: '#808080', backgroundColor: '#EAECF6',
+    borderRadius: 15, paddingVertical: 5, paddingHorizontal: 23,
+    overflow: 'hidden', fontFamily: 'Pretendard',
+  },
 });

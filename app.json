@@ -23,6 +23,7 @@
       }
     },
     "android": {
+      "package": "com.harehare31.plusultra",
       "adaptiveIcon": {
         "foregroundImage": "./assets/images/plusultra_icon.png",
         "backgroundColor": "#ffffff"
@@ -57,7 +58,8 @@
         {
           "locationWhenInUsePermission": "정확한 달 위치 계산을 위해 위치 정보가 필요합니다"
         }
-      ]
+      ],
+      "expo-sqlite"
     ],
     "experiments": {
       "typedRoutes": true

@@ -18,9 +18,10 @@ import { CESIUM_CONTROLS_OCCUPATION } from './cesiumControlsOccupation.js';
  * Apollo LM GLB 로컬 URI를 주입하여 HTML 생성
  * @param {string} apolloModelUri - Asset.localUri (e.g. 'file:///...') 또는 빈 문자열 시 CDN fallback
  */
-export function createCesiumHtml(apolloModelUri, danuriModelUri) {
+export function createCesiumHtml(apolloModelUri, danuriModelUri, earthTextureData) {
   const uriJson = JSON.stringify(apolloModelUri || '');
   const danuriJson = JSON.stringify(danuriModelUri || '');
+  const earthJson = JSON.stringify(earthTextureData || '');
   return `<!DOCTYPE html>
 <html lang="ko">
 <head>
@@ -49,6 +50,8 @@ ${CESIUM_STYLES}
     // Apollo LM GLB URI (로컬 파일 또는 CDN fallback)
     window.APOLLO_LM_URI = ${uriJson};
     window.DANURI_GLB_URI = ${danuriJson};
+    // 지구 텍스처 (base64 data URI)
+    window.EARTH_TEXTURE_DATA = ${earthJson};
   </script>
 </head>
 
@@ -58,10 +61,12 @@ ${CESIUM_STYLES}
   <div id="occInfoPopup">
     <div class="occ-card">
       <div class="occ-status" id="occStatusText"></div>
-      <div class="occ-row"><span class="occ-label">TOKEN</span></div>
-      <div class="occ-row"><span class="occ-value" id="occTokenText"></span></div>
-      <div class="occ-row" style="margin-top:4px"><span class="occ-label">COORD</span></div>
-      <div class="occ-row"><span class="occ-value" id="occCoordText"></span></div>
+      <div class="occ-info-section">
+        <div class="occ-row"><span class="occ-label">셀 토큰</span></div>
+        <div class="occ-row"><span class="occ-value" id="occTokenText"></span></div>
+        <div class="occ-row" style="margin-top:6px"><span class="occ-label">좌표</span></div>
+        <div class="occ-row"><span class="occ-value" id="occCoordText"></span></div>
+      </div>
       <div class="occ-owner-row" id="occOwnerRow" style="display:none">
         <div class="occ-avatar" id="occAvatar"></div>
         <span class="occ-nickname" id="occNickname"></span>
@@ -74,7 +79,7 @@ ${CESIUM_STYLES}
       <div id="errorDisplay"></div>
   </div>
 
-  <script type="module">
+  <script>
 ${CESIUM_INIT}
 ${CESIUM_GRID}
 ${CESIUM_MAPS}

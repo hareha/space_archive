@@ -30,7 +30,7 @@ const SLIDES_B = [
         id: '3',
         image: require('../assets/images/onboarding/3.png'),
         title: '나만의 흔적을\n남겨보세요.',
-        subtitle: '약 250여 개의 공간 속에서\n나만의 장소를 새겨보세요.',
+        subtitle: '약 256억 개의 공간 속에서\n나만의 장소를 새겨보세요.',
     },
     {
         id: '4',

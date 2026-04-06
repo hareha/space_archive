@@ -9,6 +9,7 @@ import {
     ActivityIndicator,
     Platform,
     Animated,
+    Alert,
 } from 'react-native';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
@@ -66,9 +67,48 @@ export default function AR2MoonViewer({ onClose }: Props) {
     // ── 초점 ──
     const [isFocusedMode, setIsFocusedMode] = useState(false);
     const [cesiumReady, setCesiumReady] = useState(false);
+    const [cesiumLoadFailed, setCesiumLoadFailed] = useState(false);
+    const cesiumTimeoutRef = useRef<any>(null);
+    const cesiumRetryCount = useRef(0);
     const [showTerritory, setShowTerritory] = useState(false);
     const cesiumWebViewRef = useRef<WebView>(null);
+    const [cesiumKey, setCesiumKey] = useState(0);
     const cesiumARHtml = useMemo(() => createCesiumARHtml(), []);
+
+    // ── Cesium 로딩 타임아웃 (5초) + 자동 재시도 (최대 3회, 초기 로딩 시에만) ──
+    const cesiumWasReady = useRef(false); // 한번이라도 로딩 성공했으면 true
+    useEffect(() => {
+        if (isFocusedMode && !cesiumReady && !cesiumWasReady.current) {
+            cesiumTimeoutRef.current = setTimeout(() => {
+                if (cesiumRetryCount.current < 2) {
+                    cesiumRetryCount.current += 1;
+                    console.log(`[Cesium] 재시도 ${cesiumRetryCount.current}/3`);
+                    setCesiumKey(k => k + 1);
+                } else {
+                    Alert.alert('로딩 실패', '네트워크 연결을 확인해주세요.', [{ text: '확인' }]);
+                    setIsFocusedMode(false);
+                    setCesiumReady(false);
+                    setShowTerritory(false);
+                    cesiumRetryCount.current = 0;
+                }
+            }, 5000);
+        }
+        if (cesiumReady) {
+            cesiumWasReady.current = true;
+            cesiumRetryCount.current = 0;
+            setCesiumLoadFailed(false);
+            if (cesiumTimeoutRef.current) {
+                clearTimeout(cesiumTimeoutRef.current);
+                cesiumTimeoutRef.current = null;
+            }
+        }
+        if (!isFocusedMode) {
+            cesiumWasReady.current = false; // 포커스 해제 시 리셋
+        }
+        return () => {
+            if (cesiumTimeoutRef.current) clearTimeout(cesiumTimeoutRef.current);
+        };
+    }, [isFocusedMode, cesiumReady, cesiumKey]);
 
     // ── 초점 트리거 ──
     const focusTimerRef = React.useRef<any>(null);
@@ -453,32 +493,43 @@ export default function AR2MoonViewer({ onClose }: Props) {
                 <CameraView style={styles.camera} facing="back">
                     <View style={styles.overlay}>
 
-                        {/* ═══ ① 상단 헤더: 오늘의 달 + 닫기 버튼 (포커스 모드에서 숨김) ═══ */}
+                        {/* ═══ ① 상단 헤더 (Figma: 264:21726) ═══ */}
                         {!isFocusedMode && (
-                            <View style={[styles.topPanel, { paddingTop: insets.top + 12 }]}>
-                                <View style={styles.topPanelContent}>
-                                    <View style={styles.topPanelLeft}>
+                            <View style={[styles.topPanel, { paddingTop: insets.top, zIndex: 50, elevation: 50 }]}>
+                                {/* 타이틀 행: Today's Moon + X 닫기 */}
+                                <View style={styles.topTitleRow}>
+                                    <View style={styles.topTitleLeft}>
                                         <Text style={styles.topLabel}>오늘의 달</Text>
                                         <Text style={styles.topPhaseName}>
-                                            {getPhaseKorean(moonPosition.phase)} ({getPhaseEnglish(moonPosition.phase)})
+                                            {getPhaseKorean(moonPosition.phase)}
                                         </Text>
-                                        <View style={styles.topInfoRow}>
-                                            <Text style={styles.topInfoText}>
-                                                월출 {riseSetInfo.riseTime ?? '--:--'}
-                                            </Text>
-                                            <Text style={styles.topInfoDot}>·</Text>
-                                            <Text style={styles.topInfoText}>
-                                                월몰 {riseSetInfo.setTime ?? '--:--'}
-                                            </Text>
-                                            <Text style={styles.topInfoDot}>·</Text>
-                                            <Text style={styles.topInfoText}>
-                                                {moonRiseDirection
-                                                    ? `${moonRiseDirection.direction} ${moonRiseDirection.azimuth}°`
-                                                    : '--'}
-                                            </Text>
-                                        </View>
+                                    </View>
+                                    <TouchableOpacity onPress={onClose} style={styles.closeBtn} hitSlop={{ top: 16, bottom: 16, left: 16, right: 16 }}>
+                                        <Ionicons name="close" size={28} color="#EBECF1" />
+                                    </TouchableOpacity>
                                 </View>
-                            </View>
+                                {/* 소항목 행: Illumination | Moonrise | Moonset | Altitude */}
+                                <View style={styles.topInfoBar}>
+                                    <View style={styles.topInfoItem}>
+                                        <Text style={styles.topInfoLabel}>밝기</Text>
+                                        <Text style={styles.topInfoValue}>{(moonPosition.illumination * 100).toFixed(0)}%</Text>
+                                    </View>
+                                    <View style={styles.topInfoDivider} />
+                                    <View style={styles.topInfoItem}>
+                                        <Text style={styles.topInfoLabel}>월출</Text>
+                                        <Text style={styles.topInfoValue}>{riseSetInfo.riseTime ?? '--:--'}</Text>
+                                    </View>
+                                    <View style={styles.topInfoDivider} />
+                                    <View style={styles.topInfoItem}>
+                                        <Text style={styles.topInfoLabel}>월몰</Text>
+                                        <Text style={styles.topInfoValue}>{riseSetInfo.setTime ?? '--:--'}</Text>
+                                    </View>
+                                    <View style={styles.topInfoDivider} />
+                                    <View style={styles.topInfoItem}>
+                                        <Text style={styles.topInfoLabel}>고도</Text>
+                                        <Text style={styles.topInfoValue}>{moonPosition.altitude.toFixed(0)}°</Text>
+                                    </View>
+                                </View>
                             </View>
                         )}
 
@@ -534,39 +585,43 @@ export default function AR2MoonViewer({ onClose }: Props) {
                                     <Polyline
                                         key={`traj-${i}`}
                                         points={seg.points}
-                                        stroke={seg.above ? 'rgba(255,255,255,0.4)' : 'rgba(255,255,255,0.12)'}
-                                        strokeWidth={seg.above ? 1.5 : 1}
-                                        strokeDasharray={seg.above ? undefined : '4,4'}
+                                        stroke={'rgba(255,255,255,0.35)'}
+                                        strokeWidth={1}
                                         fill="none"
                                     />
                                 ));
                             })()}
 
-                            {/* 궤적 위 시간 라벨 (매 2시간) */}
+                            {/* 궤적 위 시간 라벨 + 달 아이콘 (매 2시간) */}
                             {trajectoryScreenPoints.map((pt, idx) => {
                                 if (!pt.inFront) return null;
                                 if (pt.hour % 2 !== 0) return null;
                                 if (Math.abs(pt.x) > SCREEN_WIDTH * 2 || Math.abs(pt.y) > SCREEN_HEIGHT * 2) return null;
 
                                 const isNow = Math.abs(pt.hour - nowHour) < 0.5;
-                                const label = `${Math.floor(pt.hour)}시`;
+                                const h = Math.floor(pt.hour);
+                                const label = `${h.toString().padStart(2, '0')}:00`;
+                                const moonR = 7.5; // 달 위상 아이콘 반지름
 
                                 return (
                                     <G key={`label-${idx}`}>
+                                        {/* 달 위상 아이콘 (속 빈 테두리 원) */}
                                         <Circle
                                             cx={pt.x}
                                             cy={pt.y}
-                                            r={isNow ? 4 : 2.5}
-                                            fill={isNow ? '#FF6B6B' : pt.isAboveHorizon ? 'rgba(255,255,255,0.5)' : 'rgba(255,255,255,0.2)'}
+                                            r={moonR}
+                                            fill="none"
+                                            stroke={isNow ? '#EBECF1' : 'rgba(235,236,241,0.5)'}
+                                            strokeWidth={1.5}
                                         />
+                                        {/* 시간 텍스트 */}
                                         <SvgText
                                             x={pt.x}
-                                            y={pt.y - 10}
-                                            fill={isNow ? '#FF6B6B' : '#fff'}
-                                            fontSize={isNow ? 12 : 10}
-                                            fontWeight={isNow ? 'bold' : 'normal'}
+                                            y={pt.y + moonR + 14}
+                                            fill={isNow ? '#EBECF1' : 'rgba(235,236,241,0.7)'}
+                                            fontSize={14}
+                                            fontWeight="500"
                                             textAnchor="middle"
-                                            opacity={isNow ? 1 : 0.6}
                                         >
                                             {label}
                                         </SvgText>
@@ -600,25 +655,7 @@ export default function AR2MoonViewer({ onClose }: Props) {
                                         r={3}
                                         fill={isMatched ? '#00f0ff' : '#FFD700'}
                                     />
-                                    <SvgText
-                                        x={moonScreenX}
-                                        y={moonScreenY - (isMatched ? 48 : 38)}
-                                        fill="#fff"
-                                        fontSize={14}
-                                        fontWeight="bold"
-                                        textAnchor="middle"
-                                    >
-                                        🌙 Moon
-                                    </SvgText>
-                                    <SvgText
-                                        x={moonScreenX}
-                                        y={moonScreenY + (isMatched ? 55 : 45)}
-                                        fill="rgba(255,255,255,0.8)"
-                                        fontSize={10}
-                                        textAnchor="middle"
-                                    >
-                                        {Math.round(moonPosition.distance).toLocaleString()}km
-                                    </SvgText>
+
                                 </G>
                             )}
 
@@ -633,37 +670,37 @@ export default function AR2MoonViewer({ onClose }: Props) {
                             )}
                         </AnimatedSvg>
 
-                        {/* ═══ ② 하단: 조도/거리/고도 카드 (포커스 모드에서 숨김) ═══ */}
-                        {!isFocusedMode && <View style={[styles.bottomCards, { paddingBottom: Math.max(16, insets.bottom + 10) }]}>
-                            {/* 조도 (밝기) */}
-                            <View style={styles.infoCard}>
-                                <Text style={styles.cardLabel}>밝기</Text>
-                                <View style={styles.cardValueRow}>
-                                    <Text style={styles.cardValueLarge}>{(moonPosition.illumination * 100).toFixed(0)}</Text>
-                                    <Text style={styles.cardUnit}>%</Text>
+                        {/* ═══ ② 하단 — 실시간 바라보는 방향 (자이로 연동) ═══ */}
+                        {!isFocusedMode && <View style={[styles.bottomPanel, { paddingBottom: Math.max(8, insets.bottom) }]}>
+                            <View style={styles.bottomRow}>
+                                {/* 방위 */}
+                                <View style={styles.bottomStatus}>
+                                    <Text style={styles.bottomStatusLabel}>방위</Text>
+                                    <View style={styles.bottomValueRow}>
+                                        <Text style={styles.bottomValue}>{deviceOrientation.azimuth.toFixed(0)}</Text>
+                                        <Text style={styles.bottomUnit}>°</Text>
+                                    </View>
                                 </View>
-                                <View style={styles.progressBarBg}>
-                                    <View style={[styles.progressBarFill, { width: `${moonPosition.illumination * 100}%` }]} />
-                                </View>
-                            </View>
 
-                            {/* 거리 */}
-                            <View style={styles.infoCard}>
-                                <Text style={styles.cardLabel}>거리</Text>
-                                <View style={styles.cardValueRow}>
-                                    <Text style={styles.cardValueMed}>{Math.round(moonPosition.distance).toLocaleString()}</Text>
-                                    <Text style={styles.cardUnitSmall}>km</Text>
-                                </View>
-                            </View>
+                                <View style={styles.bottomDivider} />
 
-                            {/* 고도 */}
-                            <View style={styles.infoCard}>
-                                <Text style={styles.cardLabel}>고도</Text>
-                                <View style={styles.cardValueRow}>
-                                    <Text style={[styles.cardValueLarge, moonPosition.altitude < 0 && { color: '#FF6B6B' }]}>
-                                        {moonPosition.altitude.toFixed(1)}
-                                    </Text>
-                                    <Text style={styles.cardUnit}>°</Text>
+                                {/* 기울기 */}
+                                <View style={styles.bottomStatus}>
+                                    <Text style={styles.bottomStatusLabel}>기울기</Text>
+                                    <View style={styles.bottomValueRow}>
+                                        <Text style={styles.bottomValue}>{deviceOrientation.altitude.toFixed(0)}</Text>
+                                        <Text style={styles.bottomUnit}>°</Text>
+                                    </View>
+                                </View>
+
+                                <View style={styles.bottomDivider} />
+
+                                {/* 방향 */}
+                                <View style={styles.bottomStatus}>
+                                    <Text style={styles.bottomStatusLabel}>방향</Text>
+                                    <View style={styles.bottomValueRow}>
+                                        <Text style={styles.bottomValue}>{azToDirectionKr(deviceOrientation.azimuth)}</Text>
+                                    </View>
                                 </View>
                             </View>
                         </View>}
@@ -740,14 +777,14 @@ export default function AR2MoonViewer({ onClose }: Props) {
                                 <Rect x="0" y="0" width={SCREEN_WIDTH} height={SCREEN_HEIGHT} fill="url(#bgGrad)" />
 
                                 {/* 은하수 띠 (대각선) */}
-                                <G rotation={-25} origin={`${SCREEN_WIDTH/2}, ${SCREEN_HEIGHT/2}`}>
-                                    <Rect x={-SCREEN_WIDTH*0.3} y={SCREEN_HEIGHT*0.3} width={SCREEN_WIDTH*1.6} height={SCREEN_HEIGHT*0.25} fill="url(#milkyway)" />
+                                <G rotation={-25} origin={`${SCREEN_WIDTH / 2}, ${SCREEN_HEIGHT / 2}`}>
+                                    <Rect x={-SCREEN_WIDTH * 0.3} y={SCREEN_HEIGHT * 0.3} width={SCREEN_WIDTH * 1.6} height={SCREEN_HEIGHT * 0.25} fill="url(#milkyway)" />
                                 </G>
 
                                 {/* 성운 */}
-                                <Ellipse cx={SCREEN_WIDTH*0.12} cy={SCREEN_HEIGHT*0.18} rx={SCREEN_WIDTH*0.28} ry={SCREEN_WIDTH*0.22} fill="url(#neb1)" />
-                                <Ellipse cx={SCREEN_WIDTH*0.85} cy={SCREEN_HEIGHT*0.72} rx={SCREEN_WIDTH*0.24} ry={SCREEN_WIDTH*0.2} fill="url(#neb2)" />
-                                <Ellipse cx={SCREEN_WIDTH*0.45} cy={SCREEN_HEIGHT*0.88} rx={SCREEN_WIDTH*0.2} ry={SCREEN_WIDTH*0.16} fill="url(#neb3)" />
+                                <Ellipse cx={SCREEN_WIDTH * 0.12} cy={SCREEN_HEIGHT * 0.18} rx={SCREEN_WIDTH * 0.28} ry={SCREEN_WIDTH * 0.22} fill="url(#neb1)" />
+                                <Ellipse cx={SCREEN_WIDTH * 0.85} cy={SCREEN_HEIGHT * 0.72} rx={SCREEN_WIDTH * 0.24} ry={SCREEN_WIDTH * 0.2} fill="url(#neb2)" />
+                                <Ellipse cx={SCREEN_WIDTH * 0.45} cy={SCREEN_HEIGHT * 0.88} rx={SCREEN_WIDTH * 0.2} ry={SCREEN_WIDTH * 0.16} fill="url(#neb3)" />
 
                                 {/* 별 200개 */}
                                 {Array.from({ length: 200 }, (_, i) => {
@@ -773,8 +810,8 @@ export default function AR2MoonViewer({ onClose }: Props) {
                                     let glowId: string;
                                     if (ct < 70) { fill = `rgba(255,255,255,${brightness.toFixed(2)})`; glowId = 'starGlow1'; }
                                     else if (ct < 82) { fill = `rgba(170,200,255,${brightness.toFixed(2)})`; glowId = 'starGlow2'; }
-                                    else if (ct < 92) { fill = `rgba(255,235,180,${(brightness*0.9).toFixed(2)})`; glowId = 'starGlow3'; }
-                                    else { fill = `rgba(255,180,160,${(brightness*0.8).toFixed(2)})`; glowId = 'starGlow3'; }
+                                    else if (ct < 92) { fill = `rgba(255,235,180,${(brightness * 0.9).toFixed(2)})`; glowId = 'starGlow3'; }
+                                    else { fill = `rgba(255,180,160,${(brightness * 0.8).toFixed(2)})`; glowId = 'starGlow3'; }
 
                                     return (
                                         <G key={`s${i}`}>
@@ -864,8 +901,9 @@ export default function AR2MoonViewer({ onClose }: Props) {
                             pointerEvents="box-none"
                         >
                             <WebView
+                                key={`cesium-${cesiumKey}`}
                                 ref={cesiumWebViewRef}
-                                source={{ html: cesiumARHtml, baseUrl: 'https://moon.com' }}
+                                source={{ html: cesiumARHtml, baseUrl: 'https://cesium.com' }}
                                 style={styles.cesiumWebView}
                                 originWhitelist={['*']}
                                 javaScriptEnabled={true}
@@ -878,7 +916,11 @@ export default function AR2MoonViewer({ onClose }: Props) {
                                 allowFileAccess={true}
                                 allowFileAccessFromFileURLs={true}
                                 allowUniversalAccessFromFileURLs={true}
-                                {...(Platform.OS === 'ios' ? { opaque: false } as any : { androidLayerType: 'hardware' as const })}
+                                mixedContentMode="always"
+                                {...(Platform.OS === 'ios'
+                                    ? { opaque: false } as any
+                                    : {}
+                                )}
                                 onMessage={(event) => {
                                     try {
                                         const data = JSON.parse(event.nativeEvent.data);
@@ -890,6 +932,10 @@ export default function AR2MoonViewer({ onClose }: Props) {
                                                 if (window.setMoonPhase) window.setMoonPhase(${phase});
                                                 true;
                                             `);
+                                        } else if (data.type === 'AR_CESIUM_ERROR') {
+                                            console.warn('[AR Cesium] Init error:', data.error);
+                                        } else if (data.type === 'AR_CESIUM_LOG') {
+                                            console.log('[AR Cesium]', data.step, data.error || '');
                                         } else if (data.type === 'TERRITORY_TOGGLED') {
                                             setShowTerritory(data.visible);
                                         } else if (data.type === 'CLOSE_AR') {
@@ -897,16 +943,25 @@ export default function AR2MoonViewer({ onClose }: Props) {
                                             setCesiumReady(false);
                                             setShowTerritory(false);
                                         }
-                                    } catch (e) {}
+                                    } catch (e) { }
                                 }}
                                 onError={(err) => {
-                                    console.log('[AR Cesium] WebView error:', err.nativeEvent);
+                                    console.warn('[AR Cesium] WebView error:', err.nativeEvent);
+                                }}
+                                onHttpError={(syntheticEvent) => {
+                                    console.warn('[AR Cesium] HTTP error:', syntheticEvent.nativeEvent);
                                 }}
                             />
                             {!cesiumReady && (
                                 <View style={styles.cesiumLoading}>
-                                    <ActivityIndicator size="large" color="#00f0ff" />
-                                    <Text style={styles.cesiumLoadingText}>로딩 중...</Text>
+                                    {cesiumLoadFailed ? (
+                                        <Text style={[styles.cesiumLoadingText, { color: '#999' }]}>네트워크 연결을 확인해주세요</Text>
+                                    ) : (
+                                        <>
+                                            <ActivityIndicator size="large" color="#00f0ff" />
+                                            <Text style={styles.cesiumLoadingText}>로딩 중...</Text>
+                                        </>
+                                    )}
                                 </View>
                             )}
                         </View>
@@ -932,7 +987,7 @@ export default function AR2MoonViewer({ onClose }: Props) {
                                 style={[styles.territoryBtn, showTerritory && styles.territoryBtnActive]}
                                 onPress={() => {
                                     if (purchasedTerritories.length === 0) return;
-                                    
+
                                     // 실제 구매한 셀을 위치별로 그룹핑
                                     const cellsByRegion: Record<string, { lat: number; lng: number; count: number; cells: string[] }> = {};
                                     purchasedTerritories.forEach(c => {
@@ -969,17 +1024,7 @@ export default function AR2MoonViewer({ onClose }: Props) {
                     </>
                 )}
 
-                {/* ═══ 비-포커스 모드 닫기 버튼 — container 최상위 (CameraView 위) ═══ */}
-                {!isFocusedMode && (
-                    <TouchableOpacity
-                        style={[styles.closeBtnFloat, { top: insets.top + 14 }]}
-                        onPress={onClose}
-                        activeOpacity={0.6}
-                        hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
-                    >
-                        <Ionicons name="close" size={22} color="#fff" />
-                    </TouchableOpacity>
-                )}
+                {/* 닫기 버튼은 상단 헤더에 포함 */}
             </View>
         </Modal>
     );
@@ -993,70 +1038,66 @@ const styles = StyleSheet.create({
     camera: { flex: 1 },
     overlay: { flex: 1 },
 
-    // ═══ ① 상단 패널 ═══
+    // ═══ ① 상단 패널 (Figma: 264:21726) ═══
     topPanel: {
-        paddingBottom: 14,
-        paddingHorizontal: 20,
-        backgroundColor: 'rgba(0, 0, 0, 0.6)',
+        paddingBottom: 2,
+        paddingHorizontal: 16,
+        backgroundColor: 'rgba(0, 0, 0, 0.75)',
     },
-    topPanelContent: {
+    topTitleRow: {
         flexDirection: 'row',
         alignItems: 'flex-start',
         justifyContent: 'space-between',
+        paddingTop: 20,
     },
-    topPanelLeft: {
+    topTitleLeft: {
         flex: 1,
-        marginRight: 12,
+        gap: 2,
     },
     topLabel: {
-        color: 'rgba(255,255,255,0.5)',
-        fontSize: 11,
-        fontWeight: '600',
-        letterSpacing: 0.5,
-        textTransform: 'uppercase',
-        marginBottom: 4,
+        color: '#999999',
+        fontSize: 14,
+        fontWeight: '400',
+        lineHeight: 21,
     },
     topPhaseName: {
-        color: '#fff',
-        fontSize: 20,
-        fontWeight: '700',
-        marginBottom: 10,
+        color: '#EBECF1',
+        fontSize: 18,
+        fontWeight: '600',
     },
-    topInfoRow: {
+    closeBtn: {
+        padding: 10,
+        zIndex: 100,
+    },
+    topInfoBar: {
         flexDirection: 'row',
         alignItems: 'center',
-        flexWrap: 'wrap',
-    },
-    topInfoText: {
-        color: 'rgba(255,255,255,0.7)',
-        fontSize: 13,
-    },
-    topInfoDot: {
-        color: 'rgba(255,255,255,0.3)',
-        fontSize: 13,
-        marginHorizontal: 6,
-    },
-
-    // ═══ 닫기 버튼 (상단 패널 내부 우측) ═══
-    closeBtn: {
-        width: 32,
-        height: 32,
-        borderRadius: 16,
-        backgroundColor: 'rgba(255,255,255,0.15)',
-        alignItems: 'center',
         justifyContent: 'center',
-        marginTop: 2,
+        height: 44,
+        borderRadius: 8,
+        marginTop: 15,
     },
-    closeBtnFloat: {
-        position: 'absolute',
-        right: 20,
-        zIndex: 100,
-        width: 36,
-        height: 36,
-        borderRadius: 18,
-        backgroundColor: 'rgba(255,255,255,0.15)',
+    topInfoItem: {
+        flex: 1,
         alignItems: 'center',
-        justifyContent: 'center',
+        gap: 2,
+    },
+    topInfoLabel: {
+        color: '#999999',
+        fontSize: 12,
+        fontWeight: '400',
+        letterSpacing: -0.24,
+    },
+    topInfoValue: {
+        color: '#7295FE',
+        fontSize: 12,
+        fontWeight: '400',
+        letterSpacing: -0.24,
+    },
+    topInfoDivider: {
+        width: 1,
+        height: 20,
+        backgroundColor: 'rgba(255,255,255,0.15)',
     },
 
     // ═══ 중앙 타겟 ═══
@@ -1075,78 +1116,126 @@ const styles = StyleSheet.create({
     crosshairV: { position: 'absolute', height: 140, width: 1, backgroundColor: 'rgba(255,255,255,0.3)' },
     glowEffect: { position: 'absolute', width: 100, height: 100, borderRadius: 50, backgroundColor: 'rgba(0, 240, 255, 0.15)' },
 
-    // ═══ ② 하단 카드 ═══
-    bottomCards: {
+    // ═══ ② 하단 패널 (Figma: 264:21709) ═══
+    bottomPanel: {
         position: 'absolute',
         bottom: 0,
         left: 0,
         right: 0,
-        flexDirection: 'row',
+        backgroundColor: 'rgba(0, 0, 0, 0.75)',
+    },
+    axisContainer: {
+        paddingVertical: 12,
+        paddingHorizontal: 20,
         gap: 10,
-        paddingHorizontal: 16,
-        paddingTop: 14,
-        paddingBottom: 16,
-        backgroundColor: 'rgba(0, 0, 0, 0.55)',
     },
-    infoCard: {
-        flex: 1,
-        backgroundColor: 'rgba(255, 255, 255, 0.08)',
-        borderRadius: 16,
-        borderWidth: 1,
-        borderColor: 'rgba(255, 255, 255, 0.12)',
-        paddingVertical: 14,
-        paddingHorizontal: 12,
-        alignItems: 'center',
-    },
-    cardLabel: {
-        color: 'rgba(255, 255, 255, 0.5)',
-        fontSize: 11,
-        fontWeight: '600',
-        letterSpacing: 0.5,
-        textTransform: 'uppercase',
-        marginBottom: 6,
-    },
-    cardValueRow: {
+    axisRow: {
         flexDirection: 'row',
-        alignItems: 'baseline',
+        alignItems: 'center',
+        gap: 10,
     },
-    cardValueLarge: {
-        color: '#fff',
-        fontSize: 26,
-        fontWeight: '800',
-        fontVariant: ['tabular-nums'],
-    },
-    cardUnit: {
-        color: 'rgba(255, 255, 255, 0.5)',
-        fontSize: 14,
-        fontWeight: '500',
-        marginLeft: 2,
-    },
-    cardValueMed: {
-        color: '#fff',
-        fontSize: 20,
-        fontWeight: '800',
-        fontVariant: ['tabular-nums'],
-    },
-    cardUnitSmall: {
-        color: 'rgba(255, 255, 255, 0.5)',
+    axisLabel: {
+        color: 'rgba(255,255,255,0.5)',
         fontSize: 12,
+        fontWeight: '600',
+        width: 28,
+        textAlign: 'center',
+    },
+    axisTrack: {
+        flex: 1,
+        height: 6,
+        backgroundColor: 'rgba(255,255,255,0.12)',
+        borderRadius: 3,
+        position: 'relative' as const,
+        justifyContent: 'center' as const,
+    },
+    axisCenter: {
+        position: 'absolute' as const,
+        left: '50%',
+        width: 2,
+        height: 14,
+        marginLeft: -1,
+        backgroundColor: 'rgba(255,255,255,0.25)',
+        borderRadius: 1,
+    },
+    axisIndicator: {
+        position: 'absolute' as const,
+        width: 12,
+        height: 12,
+        borderRadius: 6,
+        marginLeft: -6,
+        backgroundColor: '#7295FE',
+    },
+    axisIndicatorClose: {
+        backgroundColor: '#6ff59a',
+        shadowColor: '#6ff59a',
+        shadowOpacity: 0.6,
+        shadowRadius: 6,
+        shadowOffset: { width: 0, height: 0 },
+    },
+    axisArrow: {
+        color: 'rgba(255,255,255,0.5)',
+        fontSize: 18,
+        fontWeight: '600',
+        width: 24,
+        textAlign: 'center' as const,
+    },
+    axisArrowClose: {
+        color: '#6ff59a',
+    },
+    bottomRow: {
+        flexDirection: 'row' as const,
+        alignItems: 'center' as const,
+        paddingTop: 6,
+        paddingBottom: 8,
+    },
+    bottomStatus: {
+        flex: 1,
+        alignItems: 'center' as const,
+        gap: 5,
+    },
+    bottomStatusLabel: {
+        color: '#999999',
+        fontSize: 14,
+        fontWeight: '400',
+        lineHeight: 21,
+    },
+    bottomValueRow: {
+        flexDirection: 'row' as const,
+        alignItems: 'flex-end' as const,
+        gap: 4,
+    },
+    bottomValue: {
+        color: '#EBECF1',
+        fontSize: 18,
         fontWeight: '500',
-        marginLeft: 2,
-        marginBottom: 2,
     },
-    progressBarBg: {
-        width: '80%',
-        height: 4,
-        backgroundColor: 'rgba(0,0,0,0.1)',
-        borderRadius: 2,
-        marginTop: 6,
-        overflow: 'hidden',
+    bottomUnit: {
+        color: '#808080',
+        fontSize: 12,
+        fontWeight: '600',
+        letterSpacing: -0.24,
+        paddingBottom: 1,
     },
-    progressBarFill: {
+    bottomDivider: {
+        width: 1,
+        height: 44,
+        backgroundColor: 'rgba(255,255,255,0.15)',
+    },
+    gageContainer: {
+        paddingHorizontal: 18,
+        width: '100%',
+    },
+    gageBg: {
+        height: 7,
+        backgroundColor: '#707070',
+        borderRadius: 10,
+        overflow: 'hidden' as const,
+    },
+    gageFill: {
         height: '100%',
-        backgroundColor: '#3B82F6',
-        borderRadius: 2,
+        borderRadius: 10,
+        backgroundColor: '#7295FE',
     },
 
     // ═══ 매칭 토스트 ═══

@@ -65,7 +65,10 @@ const DEFAULT_VISIBLE = 5;
 // 보유 기간 계산
 function daysSince(dateStr: string): number {
     if (!dateStr) return 0;
-    const [y, m, d] = dateStr.split('.').map(Number);
+    // '2026.04.02' 또는 '2026-04-02' 둘 다 지원
+    const parts = dateStr.split(/[.\-]/).map(Number);
+    if (parts.length < 3 || parts.some(isNaN)) return 0;
+    const [y, m, d] = parts;
     const past = new Date(y, m - 1, d);
     const now = new Date();
     const diff = Math.floor((now.getTime() - past.getTime()) / (1000 * 60 * 60 * 24));
@@ -169,7 +172,7 @@ export default function TerritoryDetailScreen() {
 
         await injectGlb(require('../../assets/3d/apollo_11_lunar_module.glb'), 'apollo');
         await injectGlb(require('../../assets/3d/danuri.glb'), 'danuri');
-        await injectGlb(require('../../assets/3d/chandrayaan.glb'), 'chandrayaan');
+        await injectGlb(require('../../assets/3d/chandrayaan-2.glb'), 'chandrayaan');
         await injectGlb(require('../../assets/3d/capstone.glb'), 'capstone');
         await injectGlb(require('../../assets/3d/lro.glb'), 'lro');
     };
@@ -283,6 +286,19 @@ export default function TerritoryDetailScreen() {
         initTimers.current.forEach(t => clearTimeout(t));
         initTimers.current = [];
 
+        // 1인칭 모드에서는 셀 하이라이트/orbit/모델 로드 건너뛰고 바로 1인칭 진입
+        if (firstPersonMode) {
+            initTimers.current.push(setTimeout(() => {
+                webviewRef.current?.postMessage(JSON.stringify({
+                    type: 'FIRST_PERSON_ENTER',
+                    lat: territory.lat,
+                    lng: territory.lng,
+                    token: territory.token,
+                }));
+            }, 1500));
+            return;
+        }
+
         // 1단계: S2 셀 하이라이트
         initTimers.current.push(setTimeout(() => {
             webviewRef.current?.postMessage(JSON.stringify({
@@ -313,73 +329,63 @@ export default function TerritoryDetailScreen() {
         <View style={{ flex: 1, backgroundColor: '#000' }}>
             <StatusBar barStyle={firstPersonMode ? 'light-content' : 'dark-content'} />
 
-            {/* ── 헤더 — 1인칭 시 숨김 (LayoutAnimation이 자연스럽게 전환) ── */}
+            {/* ── 헤더 — 1인칭 시 숨김 ── */}
             {!firstPersonMode && (
                 <SafeAreaView edges={['top']} style={{ backgroundColor: '#FFFFFF' }}>
                     <View style={styles.headerBar}>
                         <TouchableOpacity onPress={() => router.back()} style={styles.backBtn}>
-                            <Ionicons name="arrow-back" size={22} color="#1A1A1A" />
+                            <Ionicons name="arrow-back" size={24} color="#1A1A1A" />
                         </TouchableOpacity>
-                        <Text style={styles.headerTitle}>구역 상세</Text>
-                        <View style={{ width: 38 }} />
+                        <Text style={styles.headerTitle} numberOfLines={1}>{'MAG-L' + territory.level + '-' + territory.token.slice(0, 9)}</Text>
+                        <View style={{ width: 40 }} />
                     </View>
                 </SafeAreaView>
             )}
 
-            {/* ── WebView 영역 — 1인칭 시 flex:1로 전체화면 (LayoutAnimation 전환) ── */}
-            <View style={firstPersonMode ? { flex: 1 } : { height: MAP_HEIGHT }}>
-                <WebView
-                    ref={webviewRef}
-                    originWhitelist={['*']}
-                    source={cesiumHtmlUri ? { uri: cesiumHtmlUri } : { html: '<html><body style="background:#000"></body></html>' }}
-                    style={{ flex: 1 }}
-                    onLoadEnd={onWebViewLoad}
-                    onMessage={onWebViewMessage}
-                    injectedJavaScript={`
-                        if (!window.ReactNativeWebView) {
-                            window.ReactNativeWebView = { postMessage: function() {} };
-                        }
-                        window._autoRotate = false;
-                        true;
-                    `}
-                    javaScriptEnabled={true}
-                    domStorageEnabled={true}
-                    scrollEnabled={false}
-                    allowFileAccess={true}
-                    allowFileAccessFromFileURLs={true}
-                    allowUniversalAccessFromFileURLs={true}
-                    allowingReadAccessToURL={'file:///'}
-                />
-                {/* 1인칭 뷰 버튼 (평상시) */}
-                {!firstPersonMode && (
-                    <TouchableOpacity onPress={enterFirstPerson} style={styles.fpButton}>
-                        <Ionicons name="eye" size={18} color="#fff" />
-                        <Text style={styles.fpButtonText}>1인칭</Text>
+            {/* ── 1인칭 모드: WebView 전체화면 ── */}
+            {firstPersonMode && (
+                <View style={{ flex: 1 }}>
+                    <WebView
+                        ref={webviewRef}
+                        originWhitelist={['*']}
+                        source={cesiumHtmlUri ? { uri: cesiumHtmlUri } : { html: '<html><body style="background:#000"></body></html>' }}
+                        style={{ flex: 1 }}
+                        onLoadEnd={onWebViewLoad}
+                        onMessage={onWebViewMessage}
+                        injectedJavaScript={`
+                            if (!window.ReactNativeWebView) {
+                                window.ReactNativeWebView = { postMessage: function() {} };
+                            }
+                            window._autoRotate = false;
+                            true;
+                        `}
+                        javaScriptEnabled={true}
+                        domStorageEnabled={true}
+                        scrollEnabled={false}
+                        allowFileAccess={true}
+                        allowFileAccessFromFileURLs={true}
+                        allowUniversalAccessFromFileURLs={true}
+                        allowingReadAccessToURL={'file:///'}
+                    />
+                    <TouchableOpacity onPress={exitFirstPerson} style={styles.fpBackBtn}>
+                        <Ionicons name="arrow-back" size={24} color="#fff" />
                     </TouchableOpacity>
-                )}
-                {/* 1인칭 모드 UI */}
-                {firstPersonMode && (
-                    <>
-                        <TouchableOpacity onPress={exitFirstPerson} style={styles.fpBackBtn}>
-                            <Ionicons name="arrow-back" size={24} color="#fff" />
-                        </TouchableOpacity>
-                        {!fpReady && (
-                            <View style={styles.fpLoadingOverlay}>
-                                <Text style={styles.fpLoadingText}>지표면으로 이동 중...</Text>
+                    {!fpReady && (
+                        <View style={styles.fpLoadingOverlay}>
+                            <Text style={styles.fpLoadingText}>지표면으로 이동 중...</Text>
+                        </View>
+                    )}
+                    {showFpGuide && (
+                        <Animated.View style={[styles.fpGuideOverlay, { opacity: fpGuideAnim }]}>
+                            <View style={styles.fpGuideCard}>
+                                <Text style={styles.fpGuideText}>📱 휴대폰을 움직여{"\n"}시점을 전환해보세요</Text>
                             </View>
-                        )}
-                        {showFpGuide && (
-                            <Animated.View style={[styles.fpGuideOverlay, { opacity: fpGuideAnim }]}>
-                                <View style={styles.fpGuideCard}>
-                                    <Text style={styles.fpGuideText}>📱 휴대폰을 움직여{"\n"}시점을 전환해보세요</Text>
-                                </View>
-                            </Animated.View>
-                        )}
-                    </>
-                )}
-            </View>
+                        </Animated.View>
+                    )}
+                </View>
+            )}
 
-            {/* ── 스크롤 컨텐츠 — 1인칭 시 숨김 (LayoutAnimation 전환) ── */}
+            {/* ── 스크롤 컨텐츠 — 1인칭 시 숨김 ── */}
             {!firstPersonMode && (
             <View style={{ flex: 1, backgroundColor: '#FFFFFF' }}>
                 <Animated.ScrollView
@@ -389,64 +395,111 @@ export default function TerritoryDetailScreen() {
                     showsVerticalScrollIndicator={false}
                     scrollEnabled={scrollEnabled}
                 >
-                    {/* ── MAG ID + 면적/위경도 ── */}
-                    <View style={styles.tokenSection}>
-                        <View style={{ flex: 1 }}>
-                            <Text style={styles.tokenId}>
-                                {'MAG-L' + territory.level + '-' + territory.token}
-                            </Text>
-                            <Text style={styles.tokenSub}>
-                                {(() => { const v = parseFloat(territory.area); return isNaN(v) ? '1,740' : v.toLocaleString(); })() + ' m²  ·  ' + Math.abs(territory.lat).toFixed(2) + '°' + (territory.lat >= 0 ? 'N' : 'S') + ' ' + Math.abs(territory.lng).toFixed(2) + '°' + (territory.lng >= 0 ? 'E' : 'W')}
-                            </Text>
+                    {/* ── 메타 정보 (border-left 4px #666) ── */}
+                    <View style={styles.metaSection}>
+                        <View style={styles.metaRow}>
+                            <Text style={styles.metaLabel}>S2cellId</Text>
+                            <Text style={styles.metaValue}>{territory.token.slice(0, 9)}</Text>
+                        </View>
+                        <View style={styles.metaRow}>
+                            <Text style={styles.metaLabel}>Area</Text>
+                            <Text style={styles.metaValue}>1,740 m²</Text>
+                        </View>
+                        <View style={styles.metaRow}>
+                            <Text style={styles.metaLabel}>Urn</Text>
+                            <Text style={styles.metaValue}>301:{territory.level}:{territory.token.slice(0, 9)}</Text>
                         </View>
                     </View>
 
-                    {/* URN */}
-                    <Text style={styles.urnText}>urn:mag:301:{territory.level}:{territory.token}</Text>
-
-                    {/* ── 소유 정보 ── */}
-                    <View style={styles.sectionCard}>
-                        <Text style={styles.sectionTitle}>개척 정보</Text>
-                        <View style={styles.infoRow}>
-                            <Text style={styles.infoLabel}>개척일</Text>
-                            <Text style={styles.infoValue}>{territory.occupiedDate}</Text>
+                    {/* ── 3D 맵 (라운드 박스) — 터치 시 스크롤 잠금 ── */}
+                    <View
+                        style={styles.mapBox}
+                        onTouchStart={() => setScrollEnabled(false)}
+                        onTouchEnd={() => setScrollEnabled(true)}
+                        onTouchCancel={() => setScrollEnabled(true)}
+                    >
+                        <WebView
+                            ref={webviewRef}
+                            originWhitelist={['*']}
+                            source={cesiumHtmlUri ? { uri: cesiumHtmlUri } : { html: '<html><body style="background:#000"></body></html>' }}
+                            style={{ flex: 1 }}
+                            onLoadEnd={onWebViewLoad}
+                            onMessage={onWebViewMessage}
+                            injectedJavaScript={`
+                                if (!window.ReactNativeWebView) {
+                                    window.ReactNativeWebView = { postMessage: function() {} };
+                                }
+                                window._autoRotate = false;
+                                true;
+                            `}
+                            javaScriptEnabled={true}
+                            domStorageEnabled={true}
+                            scrollEnabled={false}
+                            allowFileAccess={true}
+                            allowFileAccessFromFileURLs={true}
+                            allowUniversalAccessFromFileURLs={true}
+                            allowingReadAccessToURL={'file:///'}
+                        />
+                        {/* 좌표 레이블 */}
+                        <View style={styles.mapCoordLabel}>
+                            <Text style={styles.mapCoordText}>
+                                {Math.abs(territory.lat).toFixed(2)}°{territory.lat >= 0 ? 'N' : 'S'} {Math.abs(territory.lng).toFixed(2)}°{territory.lng >= 0 ? 'E' : 'W'}
+                            </Text>
                         </View>
-                        <View style={styles.infoDivider} />
-                        <View style={styles.infoRow}>
-                            <Text style={styles.infoLabel}>보유 기간</Text>
-                            <View style={styles.daysRow}>
-                                <Text style={styles.daysValue}>{days}</Text>
-                                <Text style={styles.daysUnit}>일째</Text>
+                        {/* 1인칭 뷰 버튼 — 극지방(위도 ±60° 이상)에서는 타일맵 과부하로 숨김 */}
+                        {Math.abs(territory.lat) < 60 && (
+                        <TouchableOpacity onPress={enterFirstPerson} style={styles.fpButton}>
+                            <Ionicons name="eye" size={18} color="#fff" />
+                            <Text style={styles.fpButtonText}>1인칭</Text>
+                        </TouchableOpacity>
+                        )}
+                    </View>
+
+                    {/* ── Ownership Details (bg #EAECF6 rounded 6) ── */}
+                    <View style={styles.ownershipCard}>
+                        <Text style={styles.ownershipTitle}>개척 정보</Text>
+                        <View style={styles.ownershipBody}>
+                            <View style={styles.ownershipRow}>
+                                <View style={styles.ownershipLabelRow}>
+                                    <View style={styles.ownershipDot} />
+                                    <Text style={styles.ownershipLabel}>개척일</Text>
+                                </View>
+                                <Text style={styles.ownershipValue}>{territory.occupiedDate}</Text>
                             </View>
-                        </View>
-                        <View style={styles.infoDivider} />
-                        <View style={styles.infoRow}>
-                            <Text style={styles.infoLabel}>개척 비용</Text>
-                            <Text style={styles.infoValue}>{territory.magCost} Mag</Text>
+                            <View style={styles.ownershipRow}>
+                                <View style={styles.ownershipLabelRow}>
+                                    <View style={styles.ownershipDot} />
+                                    <Text style={styles.ownershipLabel}>보유 기간</Text>
+                                </View>
+                                <Text style={styles.ownershipValue}>{days}일</Text>
+                            </View>
+                            <View style={styles.ownershipRow}>
+                                <View style={styles.ownershipLabelRow}>
+                                    <View style={styles.ownershipDot} />
+                                    <Text style={styles.ownershipLabel}>규모</Text>
+                                </View>
+                                <Text style={styles.ownershipValue}>{territory.magCost} Mag</Text>
+                            </View>
+
                         </View>
                     </View>
 
-                    {/* ── 자원 현황 ── */}
-                    <View style={styles.sectionCard}>
-                        <Text style={styles.sectionTitle}>자원 현황</Text>
+                    {/* ── 추정 자원 (Gage) ── */}
+                    <View style={styles.resourceSection}>
+                        <Text style={styles.resourceSectionTitle}>추정 자원</Text>
+                        <Text style={styles.resourceDisclaimer}>※ 원격 탐사 추정치, 실측과 차이 있을 수 있음</Text>
                         {ALL_RESOURCES.slice(0, resourceExpanded ? ALL_RESOURCES.length : DEFAULT_VISIBLE).map((m, i) => {
                             const info = MINERAL_INFO[m];
                             const concentration = getResourceValue(territory.lat, territory.lng, m);
                             const barWidth = Math.min(concentration * 4, 100);
                             return (
-                                <View key={i} style={styles.mineralRow}>
-                                    <View style={styles.mineralLeft}>
-                                        <Text style={styles.mineralIcon}>{info?.icon || '🔬'}</Text>
-                                        <View>
-                                            <Text style={styles.mineralFormula}>{m}</Text>
-                                            <Text style={styles.mineralName}>{info?.name || '미확인'}</Text>
-                                        </View>
+                                <View key={i} style={styles.gageItem}>
+                                    <View style={styles.gageHeader}>
+                                        <Text style={styles.gageName}>{m}</Text>
+                                        <Text style={styles.gagePct}>{concentration} wt%</Text>
                                     </View>
-                                    <View style={styles.mineralRight}>
-                                        <View style={styles.mineralBarBg}>
-                                            <View style={[styles.mineralBarFill, { width: `${barWidth}%`, backgroundColor: info?.color || '#999' }]} />
-                                        </View>
-                                        <Text style={styles.mineralPct}>{concentration} wt%</Text>
+                                    <View style={styles.gageBarBg}>
+                                        <View style={[styles.gageBarFill, { width: `${barWidth}%`, backgroundColor: info?.color || '#D5922E' }]} />
                                     </View>
                                 </View>
                             );
@@ -462,13 +515,12 @@ export default function TerritoryDetailScreen() {
                                 </Text>
                             </TouchableOpacity>
                         )}
-                        <Text style={styles.mineralNote}>※ 원격 탐사 추정치, 실측과 차이 있을 수 있음</Text>
                     </View>
 
-                    {/* ── 빠른 액션 ── */}
-                    <View style={{ paddingHorizontal: 16 }}>
+                    {/* ── 하단 버튼 (단일) ── */}
+                    <View style={styles.bottomBtnRow}>
                         <TouchableOpacity
-                            style={styles.actionCardFull}
+                            style={styles.mapBtn}
                             onPress={() => {
                                 requestJumpToCell({
                                     token: territory.token,
@@ -476,13 +528,11 @@ export default function TerritoryDetailScreen() {
                                     lat: territory.lat,
                                     lng: territory.lng,
                                 });
-                                // profile stack을 닫고 tabs로 복귀 (탭 전환은 index.tsx 리스너에서 처리)
                                 navigation.getParent()?.goBack();
                             }}
                             activeOpacity={0.7}
                         >
-                            <Ionicons name="navigate-outline" size={20} color="#fff" />
-                            <Text style={styles.actionFullText}>지도에서 보기</Text>
+                            <Text style={styles.mapBtnText}>지도에서 보기</Text>
                         </TouchableOpacity>
                     </View>
 
@@ -513,120 +563,93 @@ const styles = StyleSheet.create({
     headerBar: {
         flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
         paddingHorizontal: 16, paddingVertical: 12,
-        borderBottomWidth: 1, borderBottomColor: '#F0F0F0',
         backgroundColor: '#FFFFFF',
         zIndex: 20,
     },
     backBtn: { padding: 8 },
-    headerTitle: { fontSize: 17, fontWeight: '700', color: '#1A1A1A' },
+    headerTitle: { fontSize: 18, fontWeight: '600', color: '#1A1A1A' },
 
-    // ── 맵 (CesiumJS WebView) ──
-    mapContainer: { height: MAP_HEIGHT, backgroundColor: 'transparent', overflow: 'hidden', borderRadius: 0 },
-    webview: { flex: 1 },
+    // ── 맵 박스 (라운드) ──
+    mapBox: {
+        marginHorizontal: 16, marginBottom: 20,
+        height: 215, borderRadius: 10, overflow: 'hidden',
+        backgroundColor: '#000',
+    },
+    mapCoordLabel: {
+        position: 'absolute', bottom: 12, alignSelf: 'center',
+        backgroundColor: 'rgba(0,0,0,0.55)', borderRadius: 14,
+        paddingHorizontal: 14, paddingVertical: 5,
+    },
+    mapCoordText: { color: '#fff', fontSize: 13, fontWeight: '500' },
 
-    // ── 스크롤 컨텐츠 ──
+    // ── 스크롤 ──
     contentScroll: { flex: 1 },
-    contentInner: { paddingBottom: 30 },
+    contentInner: { paddingBottom: 30, paddingTop: 20 },
 
-    // ── 토큰 섹션 ──
-    tokenSection: {
-        flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between',
-        paddingHorizontal: 20, paddingTop: 20, marginBottom: 4,
+    // ── 메타 정보 (border-left 4px #666) ──
+    metaSection: {
+        marginHorizontal: 16, paddingLeft: 16,
+        borderLeftWidth: 4, borderLeftColor: '#666666',
+        gap: 4, marginBottom: 24,
     },
-    tokenId: { fontSize: 17, fontWeight: '700', color: '#111', letterSpacing: 0.3 },
-    tokenSub: { fontSize: 13, color: '#999', marginTop: 6 },
-
-    urnText: {
-        fontSize: 11, color: '#BDBDBD', fontFamily: 'monospace',
-        paddingHorizontal: 20, marginTop: 2, marginBottom: 24,
-    },
-
-    // ── 섹션 카드 ──
-    sectionCard: {
-        marginHorizontal: 16, marginBottom: 12,
-        backgroundColor: '#FAFAFA', borderRadius: 14,
-        paddingVertical: 16, paddingHorizontal: 18,
-    },
-    sectionTitle: { fontSize: 14, fontWeight: '700', color: '#1A1A1A', marginBottom: 14 },
-
-    // ── 소유 정보 행 ──
-    infoRow: {
+    metaRow: {
         flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
-        paddingVertical: 10,
+        height: 17,
     },
-    infoLabel: { fontSize: 13, color: '#9E9E9E' },
-    infoValue: { fontSize: 14, fontWeight: '600', color: '#1A1A1A' },
-    infoDivider: { height: 1, backgroundColor: '#F0F0F0' },
-    daysRow: { flexDirection: 'row', alignItems: 'baseline', gap: 2 },
-    daysValue: { fontSize: 20, fontWeight: '800', color: '#4A90D9' },
-    daysUnit: { fontSize: 12, fontWeight: '600', color: '#4A90D9' },
+    metaLabel: { fontSize: 14, fontWeight: '400', color: '#999999', lineHeight: 21 },
+    metaValue: { fontSize: 14, fontWeight: '500', color: '#1A1A1A' },
 
-    // ── 자원 가치 ──
-    scoreTitleRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 },
-    scoreLabelBadge: { borderRadius: 6, paddingVertical: 3, paddingHorizontal: 8 },
-    scoreLabelText: { fontSize: 11, fontWeight: '700' },
-    scoreDisplay: { flexDirection: 'row', alignItems: 'baseline', gap: 2, marginBottom: 10 },
-    scoreBig: { fontSize: 36, fontWeight: '800' },
-    scoreMax: { fontSize: 14, fontWeight: '600', color: '#BDBDBD' },
-    scoreBarBg: { height: 6, backgroundColor: '#E8E8E8', borderRadius: 3 },
-    scoreBarFill: { height: 6, borderRadius: 3 },
+    // ── Ownership (bg #EAECF6 rounded 6) ──
+    ownershipCard: {
+        marginHorizontal: 16, marginBottom: 20,
+        backgroundColor: '#EAECF6', borderRadius: 6,
+        paddingTop: 16, paddingBottom: 18, paddingHorizontal: 16,
+    },
+    ownershipTitle: {
+        fontSize: 14, fontWeight: '500', color: '#707070',
+        marginBottom: 14,
+    },
+    ownershipBody: { gap: 6 },
+    ownershipRow: {
+        flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
+        height: 17,
+    },
+    ownershipLabelRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+    ownershipDot: { width: 3, height: 3, borderRadius: 1.5, backgroundColor: '#999999' },
+    ownershipLabel: { fontSize: 14, fontWeight: '400', color: '#999999', lineHeight: 21 },
+    ownershipValue: { fontSize: 14, fontWeight: '500', color: '#1A1A1A' },
 
-    // ── 자원 현황 ──
-    mineralRow: {
-        flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-        paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: '#F0F0F0',
-    },
-    mineralLeft: { flexDirection: 'row', alignItems: 'center', gap: 10, width: 100 },
-    mineralIcon: { fontSize: 18 },
-    mineralFormula: { fontSize: 14, fontWeight: '700', color: '#1A1A1A' },
-    mineralName: { fontSize: 10, color: '#9E9E9E' },
-    mineralRight: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: 10, marginLeft: 16 },
-    mineralBarBg: { flex: 1, height: 6, backgroundColor: '#E8E8E8', borderRadius: 3 },
-    mineralBarFill: { height: 6, borderRadius: 3 },
-    mineralPct: { fontSize: 12, fontWeight: '700', color: '#666', width: 55, textAlign: 'right' },
-    mineralNote: { fontSize: 10, color: '#BDBDBD', marginTop: 10, fontStyle: 'italic' },
-    expandBtn: {
-        alignItems: 'center', paddingVertical: 12, marginTop: 4,
-        borderTopWidth: 1, borderTopColor: '#F0F0F0',
-    },
-    expandBtnText: { fontSize: 13, fontWeight: '600', color: '#4A90D9' },
+    // ── 자원 섹션 ──
+    resourceSection: { paddingHorizontal: 16, marginBottom: 20 },
+    resourceSectionTitle: { fontSize: 14, fontWeight: '500', color: '#3C57E9', marginBottom: 6 },
+    resourceDisclaimer: { fontSize: 12, fontWeight: '400', color: '#999999', marginBottom: 14 },
 
-    // ── 탐사 CTA ──
-    exploreCta: {
-        flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-        marginHorizontal: 16, marginBottom: 12,
-        backgroundColor: '#F0F7FF', borderRadius: 14,
-        paddingVertical: 16, paddingHorizontal: 18,
-    },
-    exploreLeft: { flexDirection: 'row', alignItems: 'center', gap: 12 },
-    exploreTitle: { fontSize: 14, fontWeight: '700', color: '#1A1A1A' },
-    exploreSub: { fontSize: 11, color: '#9E9E9E', marginTop: 2 },
+    // ── Gage (자원 바) ──
+    gageItem: { gap: 7, marginBottom: 14 },
+    gageHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+    gageName: { fontSize: 14, fontWeight: '500', color: '#3B4576', lineHeight: 21 },
+    gagePct: { fontSize: 12, fontWeight: '400', color: '#999999', lineHeight: 17 },
+    gageBarBg: { height: 13, backgroundColor: '#EAEAEA', borderRadius: 10, overflow: 'hidden' },
+    gageBarFill: { height: 13, borderRadius: 10 },
+    expandBtn: { alignItems: 'center', paddingVertical: 12, marginTop: 4 },
+    expandBtnText: { fontSize: 13, fontWeight: '600', color: '#3C57E9' },
 
-    // ── 액션 그리드 ──
-    actionGrid: {
-        flexDirection: 'row', gap: 10,
-        paddingHorizontal: 16,
+    // ── 하단 버튼 (단일 파란 버튼) ──
+    bottomBtnRow: { paddingHorizontal: 16, paddingTop: 10 },
+    mapBtn: {
+        backgroundColor: '#3C57E9', borderRadius: 5,
+        height: 56, alignItems: 'center', justifyContent: 'center',
     },
-    actionCard: {
-        flex: 1, alignItems: 'center', justifyContent: 'center', gap: 8,
-        backgroundColor: '#F7F7FA', borderRadius: 14,
-        paddingVertical: 20,
-    },
-    actionCardFull: {
-        flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8,
-        backgroundColor: '#4A90D9', borderRadius: 14,
-        paddingVertical: 16,
-    },
-    actionFullText: { fontSize: 15, fontWeight: '700', color: '#FFFFFF' },
-    actionText: { fontSize: 13, fontWeight: '600', color: '#333' },
+    mapBtnText: { fontSize: 16, fontWeight: '600', color: '#FFFFFF' },
+
+    // ── 1인칭 ──
     fpButton: {
-        position: 'absolute', bottom: 12, right: 12,
+        position: 'absolute', top: 12, right: 12,
         flexDirection: 'row', alignItems: 'center', gap: 4,
         backgroundColor: 'rgba(0,0,0,0.65)', paddingHorizontal: 10, paddingVertical: 6,
         borderRadius: 20,
     },
     fpButtonText: { color: '#fff', fontSize: 11, fontWeight: '600' },
-
     fpBackBtn: {
         position: 'absolute', top: 56, left: 16,
         width: 40, height: 40, borderRadius: 20,

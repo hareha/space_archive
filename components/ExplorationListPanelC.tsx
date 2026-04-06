@@ -85,6 +85,9 @@ export default function ExplorationListPanelC({
         if (g.dy > 80 || g.vy > 0.5) {
           panelOffset.current = SCREEN_H;
           Animated.timing(panelAnim, { toValue: SCREEN_H, duration: 200, useNativeDriver: false }).start(() => onClose());
+        } else if (g.vy < -0.5) {
+          panelOffset.current = SNAP_OPEN;
+          Animated.spring(panelAnim, { toValue: SNAP_OPEN, useNativeDriver: false, tension: 120, friction: 14 }).start();
         } else {
           panelOffset.current = SNAP_OPEN;
           Animated.spring(panelAnim, { toValue: SNAP_OPEN, useNativeDriver: false, tension: 120, friction: 14 }).start();
@@ -105,6 +108,9 @@ export default function ExplorationListPanelC({
         if (g.dy > 80 || g.vy > 0.5) {
           resultOffset.current = SCREEN_H;
           Animated.timing(resultAnim, { toValue: SCREEN_H, duration: 200, useNativeDriver: false }).start(() => onClose());
+        } else if (g.vy < -0.5) {
+          resultOffset.current = RESULT_SNAP;
+          Animated.spring(resultAnim, { toValue: RESULT_SNAP, useNativeDriver: false, tension: 120, friction: 14 }).start();
         } else {
           resultOffset.current = RESULT_SNAP;
           Animated.spring(resultAnim, { toValue: RESULT_SNAP, useNativeDriver: false, tension: 120, friction: 14 }).start();
@@ -202,24 +208,24 @@ export default function ExplorationListPanelC({
             {/* 가로 3열 컴팩트 버튼 (아이콘+라벨+토글 가로 배치) */}
             <View style={st.menuRow}>
               <TouchableOpacity style={[st.menuCard, isSatActive && st.menuCardActive]} onPress={() => toggleSection('satellite')} activeOpacity={0.7}>
-                <Ionicons name="planet-outline" size={18} color={isSatActive ? '#FCD34D' : '#6B7280'} />
-                <Text style={[st.menuCardLabel, { color: isSatActive ? '#FCD34D' : '#6B7280' }]}>위성</Text>
+                <Ionicons name="planet-outline" size={18} color={isSatActive ? '#EBECF1' : '#666666'} />
+                <Text style={[st.menuCardLabel, { color: isSatActive ? '#EBECF1' : '#666666' }]}>위성</Text>
                 <View style={[st.toggleTrack, isSatActive && st.toggleOn]}>
                   <View style={[st.toggleThumb, isSatActive && st.toggleThumbOn]} />
                 </View>
               </TouchableOpacity>
 
               <TouchableOpacity style={[st.menuCard, isLandActive && st.menuCardActive]} onPress={() => toggleSection('landing')} activeOpacity={0.7}>
-                <Ionicons name="flag-outline" size={18} color={isLandActive ? '#60A5FA' : '#6B7280'} />
-                <Text style={[st.menuCardLabel, { color: isLandActive ? '#60A5FA' : '#6B7280' }]}>착륙지</Text>
+                <Ionicons name="flag-outline" size={18} color={isLandActive ? '#EBECF1' : '#666666'} />
+                <Text style={[st.menuCardLabel, { color: isLandActive ? '#EBECF1' : '#666666' }]}>착륙지</Text>
                 <View style={[st.toggleTrack, isLandActive && st.toggleOn]}>
                   <View style={[st.toggleThumb, isLandActive && st.toggleThumbOn]} />
                 </View>
               </TouchableOpacity>
 
               <TouchableOpacity style={[st.menuCard, isTerrainActive && st.menuCardActive]} onPress={() => toggleSection('terrain')} activeOpacity={0.7}>
-                <Ionicons name="earth-outline" size={18} color={isTerrainActive ? '#A78BFA' : '#6B7280'} />
-                <Text style={[st.menuCardLabel, { color: isTerrainActive ? '#A78BFA' : '#6B7280' }]}>지형</Text>
+                <Ionicons name="earth-outline" size={18} color={isTerrainActive ? '#EBECF1' : '#666666'} />
+                <Text style={[st.menuCardLabel, { color: isTerrainActive ? '#EBECF1' : '#666666' }]}>지형</Text>
                 <View style={[st.toggleTrack, isTerrainActive && st.toggleOn]}>
                   <View style={[st.toggleThumb, isTerrainActive && st.toggleThumbOn]} />
                 </View>
@@ -229,7 +235,7 @@ export default function ExplorationListPanelC({
             {/* 칩 라인: 국가 (위성 OR 착륙지 하나라도 ON이면 표시) */}
             {(isSatActive || isLandActive) && (
               <ScrollView horizontal showsHorizontalScrollIndicator={false} style={st.chipLine} contentContainerStyle={st.chipRow}>
-                <Text style={[st.chipLabel, { color: '#60A5FA' }]}>국가</Text>
+                <Text style={[st.chipLabel, { color: '#3C57E9' }]}>국가</Text>
                 {COUNTRIES.map(c => (
                   <TouchableOpacity key={c} style={[st.chip, selection.countries.includes(c) && st.chipSelected]} onPress={() => toggleChip('country', c)}>
                     <Text style={[st.chipText, selection.countries.includes(c) && st.chipTextSelected]}>{c}</Text>
@@ -239,7 +245,7 @@ export default function ExplorationListPanelC({
             )}
             {isTerrainActive && (
               <ScrollView horizontal showsHorizontalScrollIndicator={false} style={st.chipLine} contentContainerStyle={st.chipRow}>
-                <Text style={[st.chipLabel, { color: '#A78BFA' }]}>유형</Text>
+                <Text style={[st.chipLabel, { color: '#3C57E9' }]}>유형</Text>
                 {FEATURE_TYPES.map(t => (
                   <TouchableOpacity key={t} style={[st.chip, selection.featureTypes.includes(t) && st.chipSelected]} onPress={() => toggleChip('feature', t)}>
                     <Text style={[st.chipText, selection.featureTypes.includes(t) && st.chipTextSelected]}>{t}</Text>
@@ -265,12 +271,12 @@ export default function ExplorationListPanelC({
               panelOffset.current = SNAP_OPEN;
               Animated.spring(panelAnim, { toValue: SNAP_OPEN, useNativeDriver: false, tension: 100, friction: 15 }).start();
             }} style={{ marginRight: 8 }}>
-              <Ionicons name="chevron-back" size={22} color="#9CA3AF" />
+              <Ionicons name="chevron-back" size={22} color="#666666" />
             </TouchableOpacity>
             <Text style={st.headerTitle}>검색 결과 ({totalResults})</Text>
             <View style={{ flex: 1 }} />
             <TouchableOpacity onPress={handleCloseResult} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
-              <Ionicons name="close" size={22} color="#6B7280" />
+              <Ionicons name="close" size={22} color="#666666" />
             </TouchableOpacity>
           </View>
 
@@ -284,15 +290,17 @@ export default function ExplorationListPanelC({
           <ScrollView style={{ flex: 1, paddingHorizontal: 16 }} showsVerticalScrollIndicator={false}>
             {resultSats.length > 0 && (
               <View style={st.resultSection}>
-                <Text style={[st.resultSectionTitle, { color: '#FCD34D' }]}>궤도 위성 ({resultSats.length})</Text>
+                <Text style={[st.resultSectionTitle, { color: '#EBECF1' }]}>궤도 위성 ({resultSats.length})</Text>
                 {resultSats.map((sat: any, i: number) => (
                   <TouchableOpacity key={sat.id || i} style={st.listItem} onPress={() => { handleCloseResult(); onSelectSatellite(sat); }} activeOpacity={0.7}>
-                    <View style={[st.dot, { backgroundColor: sat.color || '#FCD34D' }]} />
-                    <View style={{ flex: 1 }}>
-                      <Text style={st.itemTitle}>{sat.nameKo !== sat.name ? `${sat.nameKo} (${sat.name})` : sat.name}</Text>
+                    <View style={{ width: 52, height: 52, borderRadius: 8, backgroundColor: 'rgba(255,255,255,0.06)', justifyContent: 'center', alignItems: 'center' }}>
+                      <Ionicons name="planet-outline" size={22} color={sat.color || '#FCD34D'} />
+                    </View>
+                    <View style={{ flex: 1, gap: 2 }}>
+                      <Text style={st.itemTitle} numberOfLines={1}>{sat.nameKo !== sat.name ? sat.nameKo : sat.name}</Text>
                       <Text style={st.itemSub}>{sat.agency || sat.country}</Text>
                     </View>
-                    <Ionicons name="chevron-forward" size={16} color="#4B5563" />
+                    <Ionicons name="chevron-forward" size={22} color="#666666" />
                   </TouchableOpacity>
                 ))}
               </View>
@@ -300,17 +308,20 @@ export default function ExplorationListPanelC({
 
             {resultLandings.length > 0 && (
               <View style={st.resultSection}>
-                <Text style={[st.resultSectionTitle, { color: '#60A5FA' }]}>착륙 지점 ({resultLandings.length})</Text>
+                <Text style={[st.resultSectionTitle, { color: '#EBECF1' }]}>착륙 지점 ({resultLandings.length})</Text>
                 {resultLandings.map((site, i) => (
                   <TouchableOpacity key={`${site.officialName}-${i}`} style={st.listItem} onPress={() => { handleCloseResult(); onSelectLandingSite(site); }} activeOpacity={0.7}>
-                    <View style={{ flex: 1 }}>
+                    <View style={{ width: 52, height: 52, borderRadius: 8, backgroundColor: 'rgba(255,255,255,0.06)', justifyContent: 'center', alignItems: 'center' }}>
+                      <Ionicons name="location" size={22} color="#60A5FA" />
+                    </View>
+                    <View style={{ flex: 1, gap: 2 }}>
                       <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                        <Text style={st.itemTitle}>{site.nameKr}</Text>
-                        <Text style={st.itemNameEn}>{site.officialName}</Text>
+                        <Text style={st.itemTitle} numberOfLines={1}>{site.nameKr}</Text>
+                        <Text style={st.itemNameEn} numberOfLines={1}>{site.officialName}</Text>
                       </View>
                       <Text style={st.itemSub}>{site.year} · {site.country} {site.agency}</Text>
                     </View>
-                    <Ionicons name="chevron-forward" size={16} color="#60A5FA" />
+                    <Ionicons name="chevron-forward" size={22} color="#666666" />
                   </TouchableOpacity>
                 ))}
               </View>
@@ -318,18 +329,20 @@ export default function ExplorationListPanelC({
 
             {resultFeatures.length > 0 && (
               <View style={st.resultSection}>
-                <Text style={[st.resultSectionTitle, { color: '#A78BFA' }]}>주요 지형 ({resultFeatures.length})</Text>
+                <Text style={[st.resultSectionTitle, { color: '#EBECF1' }]}>주요 지형 ({resultFeatures.length})</Text>
                 {resultFeatures.map(feat => (
                   <TouchableOpacity key={feat.id} style={st.listItem} onPress={() => { handleCloseResult(); onSelectFeature(feat); }} activeOpacity={0.7}>
-                    <Text style={{ fontSize: 18, marginRight: 8 }}>{getFeatureTypeEmoji(feat.typeKr)}</Text>
-                    <View style={{ flex: 1 }}>
+                    <View style={{ width: 52, height: 52, borderRadius: 8, backgroundColor: 'rgba(255,255,255,0.06)', justifyContent: 'center', alignItems: 'center' }}>
+                      <Text style={{ fontSize: 22 }}>{getFeatureTypeEmoji(feat.typeKr)}</Text>
+                    </View>
+                    <View style={{ flex: 1, gap: 2 }}>
                       <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                        <Text style={st.itemTitle}>{feat.nameKr}</Text>
-                        <Text style={st.itemNameEn}>{feat.nameEn}</Text>
+                        <Text style={st.itemTitle} numberOfLines={1}>{feat.nameKr}</Text>
+                        <Text style={st.itemNameEn} numberOfLines={1}>{feat.nameEn}</Text>
                       </View>
                       <Text style={st.itemSub}>{feat.typeKr} · {feat.diameterKm}km · {isFarSide(feat) ? '뒷면' : '앞면'}</Text>
                     </View>
-                    <Ionicons name="chevron-forward" size={16} color={getFeatureTypeColor(feat.typeKr)} />
+                    <Ionicons name="chevron-forward" size={22} color="#666666" />
                   </TouchableOpacity>
                 ))}
               </View>
@@ -337,12 +350,12 @@ export default function ExplorationListPanelC({
 
             {totalResults === 0 && (
               <View style={{ alignItems: 'center', paddingTop: 40 }}>
-                <Ionicons name="search-outline" size={36} color="#4B5563" />
-                <Text style={{ color: '#6B7280', fontSize: 14, marginTop: 12 }}>선택한 카테고리에 해당하는 항목이 없습니다</Text>
+                <Ionicons name="search-outline" size={36} color="#666666" />
+                <Text style={{ color: '#666666', fontSize: 14, marginTop: 12 }}>선택한 카테고리에 해당하는 항목이 없습니다</Text>
               </View>
             )}
 
-            <View style={{ height: 60 }} />
+            <View style={{ height: 300 }} />
           </ScrollView>
         </Animated.View>
       )}
@@ -358,49 +371,49 @@ const st = StyleSheet.create({
     shadowColor: '#000', shadowOffset: { width: 0, height: -4 }, shadowOpacity: 0.5, shadowRadius: 16, elevation: 20,
   },
   handleArea: { alignItems: 'center', paddingTop: 8, paddingBottom: 4 },
-  handleBar: { width: 48, height: 4, backgroundColor: 'rgba(255,255,255,0.2)', borderRadius: 1 },
+  handleBar: { width: 49, height: 4, backgroundColor: 'rgba(255,255,255,0.2)', borderRadius: 2 },
   headerRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 14, paddingBottom: 6 },
-  headerTitle: { color: '#F9FAFB', fontSize: 15, fontWeight: '700' },
+  headerTitle: { color: '#EBECF1', fontSize: 15, fontWeight: '600' },
 
-  doneBtn: { backgroundColor: '#2175FA', paddingHorizontal: 12, paddingVertical: 4, borderRadius: 6 },
+  doneBtn: { backgroundColor: '#3C57E9', paddingHorizontal: 12, paddingVertical: 4, borderRadius: 6 },
   doneBtnText: { color: '#fff', fontSize: 12, fontWeight: '700' },
 
   dimOverlay: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.5)', zIndex: 19 } as any,
 
   // 가로 3열 컴팩트 버튼 (flexDirection: row)
-  menuRow: { flexDirection: 'row', gap: 8, paddingHorizontal: 12, paddingBottom: 6 } as any,
+  menuRow: { flexDirection: 'row', gap: 0, paddingHorizontal: 12, paddingBottom: 6 } as any,
   menuCard: {
     flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6,
     paddingVertical: 12, borderRadius: 10,
-    backgroundColor: 'rgba(255,255,255,0.04)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.06)',
+    backgroundColor: 'transparent', borderWidth: 0, borderColor: 'transparent',
   } as any,
-  menuCardActive: { backgroundColor: 'rgba(59,130,246,0.1)', borderColor: 'rgba(59,130,246,0.3)' },
-  menuCardLabel: { fontSize: 12, fontWeight: '700' },
+  menuCardActive: { backgroundColor: 'rgba(255,255,255,0.06)' },
+  menuCardLabel: { fontSize: 12, fontWeight: '500' },
 
-  toggleTrack: { width: 28, height: 16, borderRadius: 8, backgroundColor: '#2A2C30', justifyContent: 'center', paddingHorizontal: 2 } as any,
-  toggleOn: { backgroundColor: '#2175FA' },
-  toggleThumb: { width: 10, height: 10, borderRadius: 5, backgroundColor: '#fff', alignSelf: 'flex-start' } as any,
+  toggleTrack: { width: 67, height: 28, borderRadius: 14, backgroundColor: '#666666', justifyContent: 'center', paddingHorizontal: 3 } as any,
+  toggleOn: { backgroundColor: '#3C57E9' },
+  toggleThumb: { width: 37, height: 22, borderRadius: 12, backgroundColor: '#fff', alignSelf: 'flex-start' } as any,
   toggleThumbOn: { alignSelf: 'flex-end' } as any,
 
   // 칩 라인 (라벨 + 칩 같은 줄)
   chipLine: { paddingHorizontal: 12, marginBottom: 2 },
   chipRow: { gap: 5, alignItems: 'center', paddingRight: 12 } as any,
-  chipLabel: { fontSize: 11, fontWeight: '700', marginRight: 2 },
-  chip: { paddingHorizontal: 9, paddingVertical: 4, borderRadius: 12, borderWidth: 1, borderColor: '#374151', backgroundColor: 'transparent' },
-  chipSelected: { backgroundColor: 'rgba(59,130,246,0.15)', borderColor: '#3B82F6' },
-  chipText: { color: '#9CA3AF', fontSize: 11, fontWeight: '500' },
-  chipTextSelected: { color: '#60A5FA', fontWeight: '700' },
+  chipLabel: { fontSize: 11, fontWeight: '600', marginRight: 2 },
+  chip: { paddingHorizontal: 12, paddingVertical: 4, borderRadius: 20, backgroundColor: 'rgba(255,255,255,0.06)', borderWidth: 0 },
+  chipSelected: { backgroundColor: '#EBECF1' },
+  chipText: { color: '#666666', fontSize: 11, fontWeight: '500' },
+  chipTextSelected: { color: '#000000', fontWeight: '600' },
 
   // 결과
   resultTag: { paddingHorizontal: 8, paddingVertical: 3, borderRadius: 10, backgroundColor: 'rgba(255,255,255,0.06)' },
   resultTagText: { fontSize: 11, fontWeight: '600' },
   resultSection: { marginBottom: 12 },
-  resultSectionTitle: { fontSize: 13, fontWeight: '700', paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: 'rgba(255,255,255,0.06)' },
+  resultSectionTitle: { fontSize: 13, fontWeight: '600', paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: 'rgba(255,255,255,0.07)' },
 
   // 리스트 아이템
-  listItem: { flexDirection: 'row', alignItems: 'center', paddingVertical: 12, paddingHorizontal: 10, borderBottomWidth: 1, borderBottomColor: 'rgba(255,255,255,0.06)' },
-  dot: { width: 3, height: 28, borderRadius: 2, marginRight: 10 },
-  itemTitle: { color: '#F9FAFB', fontSize: 14, fontWeight: '600' },
-  itemNameEn: { color: '#9CA3AF', fontSize: 12 },
-  itemSub: { color: '#6B7280', fontSize: 11, marginTop: 1 },
+  listItem: { flexDirection: 'row', alignItems: 'center', paddingVertical: 12, paddingHorizontal: 0, borderBottomWidth: 1, borderBottomColor: 'rgba(255,255,255,0.07)', gap: 14 },
+  dot: { width: 3, height: 28, borderRadius: 2, marginRight: 0 },
+  itemTitle: { color: '#EBECF1', fontSize: 14, fontWeight: '500' },
+  itemNameEn: { color: '#666666', fontSize: 12 },
+  itemSub: { color: '#666666', fontSize: 11, marginTop: 1 },
 });

@@ -5,6 +5,7 @@ import { Stack } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import { useEffect, useState } from 'react';
 import 'react-native-reanimated';
+import { Text, TextInput } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 import { useColorScheme } from '@/components/useColorScheme';
@@ -13,11 +14,16 @@ import OnboardingScreenB from '@/components/OnboardingScreenB';
 import { OnboardingProvider, useOnboarding } from '@/components/OnboardingContext';
 import { AuthProvider } from '@/components/AuthContext';
 import { EllProvider } from '@/components/EllContext';
+import GlobalErrorBoundary from '@/components/GlobalErrorBoundary';
 
-export {
-  // Catch any errors thrown by the Layout component.
-  ErrorBoundary,
-} from 'expo-router';
+// iOS 시스템 글자 크기에 무관하게 앱 내 폰트 크기 고정
+(Text as any).defaultProps = (Text as any).defaultProps || {};
+(Text as any).defaultProps.allowFontScaling = false;
+(TextInput as any).defaultProps = (TextInput as any).defaultProps || {};
+(TextInput as any).defaultProps.allowFontScaling = false;
+
+// 커스텀 ErrorBoundary로 교체 — 빨간 에러 화면 대신 깔끔한 안내 화면 표시
+export { default as ErrorBoundary } from '@/components/GlobalErrorBoundary';
 
 export const unstable_settings = {
   // Ensure that reloading on `/modal` keeps a back button present.
@@ -49,13 +55,15 @@ export default function RootLayout() {
   }
 
   return (
-    <OnboardingProvider>
-      <AuthProvider>
-        <EllProvider>
-          <RootLayoutNav />
-        </EllProvider>
-      </AuthProvider>
-    </OnboardingProvider>
+    <GlobalErrorBoundary>
+      <OnboardingProvider>
+        <AuthProvider>
+          <EllProvider>
+            <RootLayoutNav />
+          </EllProvider>
+        </AuthProvider>
+      </OnboardingProvider>
+    </GlobalErrorBoundary>
   );
 }
 
@@ -105,10 +113,11 @@ function RootLayoutNav() {
 
   return (
     <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
-      <Stack>
+      <Stack screenOptions={{ contentStyle: { backgroundColor: '#FFFFFF' } }}>
         <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
         <Stack.Screen name="auth" options={{ headerShown: false, presentation: 'modal' }} />
         <Stack.Screen name="profile" options={{ headerShown: false }} />
+        <Stack.Screen name="news" options={{ headerShown: false }} />
         <Stack.Screen name="modal" options={{ presentation: 'modal' }} />
       </Stack>
     </ThemeProvider>

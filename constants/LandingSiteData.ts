@@ -11,9 +11,9 @@ export interface LandingSite {
   landingDate: string;
   year: number;
   mode: 'Manned' | 'Unmanned';
-  missionType: string; // 착륙선, 로버, 충돌선, 샘플귀환, 자위성
+  missionType: string;
   description: string;
-  contactType: string; // 정상 연착륙, 실패(추락), 의도적 충돌, 전도 착륙, 성공 착륙
+  contactType: string;
 }
 
 export const LANDING_SITES: LandingSite[] = [

@@ -139,7 +139,7 @@ export const CESIUM_GRID_OCCUPATION = `
               var wp = Cesium.SceneTransforms.worldToWindowCoordinates(viewer.scene, cellPos);
               if (!wp) return false;
               var w = viewer.scene.canvas.width, h = viewer.scene.canvas.height;
-              var mx = w * 0.3, my = h * 0.3;
+              var mx = w * 0.6, my = h * 0.6;
               return wp.x >= -mx && wp.x <= w+mx && wp.y >= -my && wp.y <= h+my;
           } catch(e) { return true; }
       }
@@ -394,23 +394,43 @@ export const CESIUM_GRID_OCCUPATION = `
           return [u, v, w];
       }
 
-      // Linear 보간: 부모 4꼭짓점을 2삼각형으로 분할하여 선형 보간
+      // Linear 보간: 부모 4꼭짓점을 2삼각형으로 분할, 3D Cartesian 기반 barycentric (극지방 안전)
       function interpolateHeight(lat, lon, parentVerts) {
           var v0 = parentVerts[0], v1 = parentVerts[1], v2 = parentVerts[2], v3 = parentVerts[3];
+          // lat/lon → 단위구 3D 좌표
+          function toXYZ(la, lo) {
+              var cl = Math.cos(la);
+              return [cl * Math.cos(lo), cl * Math.sin(lo), Math.sin(la)];
+          }
+          var p  = toXYZ(lat, lon);
+          var q0 = toXYZ(v0.lat, v0.lon);
+          var q1 = toXYZ(v1.lat, v1.lon);
+          var q2 = toXYZ(v2.lat, v2.lon);
+          var q3 = toXYZ(v3.lat, v3.lon);
+          // 4꼭짓점 xyz 범위 → spread 가장 작은 축 제거하여 2D 투영
+          var xr = Math.max(q0[0],q1[0],q2[0],q3[0]) - Math.min(q0[0],q1[0],q2[0],q3[0]);
+          var yr = Math.max(q0[1],q1[1],q2[1],q3[1]) - Math.min(q0[1],q1[1],q2[1],q3[1]);
+          var zr = Math.max(q0[2],q1[2],q2[2],q3[2]) - Math.min(q0[2],q1[2],q2[2],q3[2]);
+          var ai, bi; // 사용할 축 인덱스
+          if (xr <= yr && xr <= zr) { ai = 1; bi = 2; }
+          else if (yr <= xr && yr <= zr) { ai = 0; bi = 2; }
+          else { ai = 0; bi = 1; }
           // 삼각형 1: v0-v1-v2
-          var b = _bary(lat, lon, v0.lat, v0.lon, v1.lat, v1.lon, v2.lat, v2.lon);
+          var b = _bary(p[ai], p[bi], q0[ai], q0[bi], q1[ai], q1[bi], q2[ai], q2[bi]);
           if (b && b[0] >= -0.01 && b[1] >= -0.01 && b[2] >= -0.01) {
               return b[0]*v0.h + b[1]*v1.h + b[2]*v2.h;
           }
           // 삼각형 2: v0-v2-v3
-          b = _bary(lat, lon, v0.lat, v0.lon, v2.lat, v2.lon, v3.lat, v3.lon);
+          b = _bary(p[ai], p[bi], q0[ai], q0[bi], q2[ai], q2[bi], q3[ai], q3[bi]);
           if (b && b[0] >= -0.01 && b[1] >= -0.01 && b[2] >= -0.01) {
               return b[0]*v0.h + b[1]*v2.h + b[2]*v3.h;
           }
-          // fallback: 가장 가까운 꼭짓점
+          // fallback: 3D 거리 최근접 꼭짓점
           var minD = Infinity, minH = 0;
           for (var i = 0; i < parentVerts.length; i++) {
-              var d = (lat-parentVerts[i].lat)*(lat-parentVerts[i].lat) + (lon-parentVerts[i].lon)*(lon-parentVerts[i].lon);
+              var qi = toXYZ(parentVerts[i].lat, parentVerts[i].lon);
+              var dx = p[0]-qi[0], dy = p[1]-qi[1], dz = p[2]-qi[2];
+              var d = dx*dx + dy*dy + dz*dz;
               if (d < minD) { minD = d; minH = parentVerts[i].h; }
           }
           return minH;
@@ -435,22 +455,23 @@ export const CESIUM_GRID_OCCUPATION = `
           var labelCol = null;
 
           if (isLeafLevel) {
-              var MY_OCC_COLOR = new Cesium.Color(0.5, 0.95, 0.6, 0.7);
-              var OTHER_OCC_COLOR = new Cesium.Color(0.95, 0.45, 0.4, 0.65);
-              var MY_FILL = new Cesium.Color(0.4, 0.85, 0.5, 0.7);
-              var OTHER_FILL = new Cesium.Color(0.85, 0.35, 0.3, 0.7);
+              // 내 점유: #2F57FD, 남 점유: #101010, 선택 가능: 기본 화이트
+              var MY_OCC_COLOR = new Cesium.Color(0.184, 0.341, 0.992, 0.85);   // #2F57FD
+              var OTHER_OCC_COLOR = new Cesium.Color(0.063, 0.063, 0.063, 0.75); // #101010
+              var MY_FILL = new Cesium.Color(0.184, 0.341, 0.992, 0.45);         // #2F57FD fill
+              var OTHER_FILL = new Cesium.Color(0.063, 0.063, 0.063, 0.45);      // #101010 fill
               var FREE_COLOR = Cesium.Color.WHITE.withAlpha(0.25);
 
               for (var i = 0; i < children.length; i++) {
-                  if (!isCellVisibleTR(children[i])) continue;
+
                   var childToken = s2.cellid.toToken(children[i]);
-                  var isOccupied = occupiedTokens.indexOf(childToken) !== -1;
-                  var isMine = (typeof myOccupiedTokens !== 'undefined') && myOccupiedTokens.indexOf(childToken) !== -1;
+                  var isMine = !!_myOccupiedSet[childToken];
+                  var isOccupied = !isMine && !!_occupiedSet[childToken];
 
                   var cellColor, fillColor, lw;
                   if (isMine) { cellColor = MY_OCC_COLOR; fillColor = MY_FILL; lw = 0.8; }
                   else if (isOccupied) { cellColor = OTHER_OCC_COLOR; fillColor = OTHER_FILL; lw = 0.8; }
-                  else { cellColor = FREE_COLOR; fillColor = Cesium.Color.WHITE.withAlpha(0.01); lw = 0.5; }
+                  else { cellColor = FREE_COLOR; lw = 0.5; }
 
                   // 지형 보간 좌표
                   var hc = s2.Cell.fromCellID(children[i]);
@@ -468,9 +489,11 @@ export const CESIUM_GRID_OCCUPATION = `
                       geometry: new Cesium.PolylineGeometry({ positions: pos, width: lw, arcType: Cesium.ArcType.NONE }),
                       attributes: { color: Cesium.ColorGeometryInstanceAttribute.fromColor(cellColor) }
                   }));
+                  // 모든 셀에 polygon fill (pick 감지에 id 필요)
+                  var pFill = (isMine || isOccupied) ? fillColor : Cesium.Color.WHITE.withAlpha(0.01);
                   polyInstances.push(new Cesium.GeometryInstance({
                       geometry: new Cesium.PolygonGeometry({ polygonHierarchy: new Cesium.PolygonHierarchy(pp), ellipsoid: Cesium.Ellipsoid.MOON, perPositionHeight: true }),
-                      attributes: { color: Cesium.ColorGeometryInstanceAttribute.fromColor(fillColor) },
+                      attributes: { color: Cesium.ColorGeometryInstanceAttribute.fromColor(pFill) },
                       id: children[i]
                   }));
               }
@@ -485,7 +508,7 @@ export const CESIUM_GRID_OCCUPATION = `
               labelCol = viewer.scene.primitives.add(new Cesium.LabelCollection());
 
               for (var i = 0; i < children.length; i++) {
-                  if (!isCellVisibleTR(children[i])) continue;
+
                   var childToken = s2.cellid.toToken(children[i]);
                   var occCount = occupationMap[childToken] || 0;
                   var ratio = maxCount > 0 ? occCount / maxCount : 0;

@@ -2,10 +2,10 @@
  * AIZoneRecommendModal.tsx
  * 5단계 설문 → 분석 프로그레스 → 상위 3개 결과 모달
  */
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   View, Text, TouchableOpacity, ScrollView, Modal,
-  Animated, StyleSheet, ActivityIndicator,
+  StyleSheet, Image,
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -21,7 +21,6 @@ interface Props {
 const QUESTIONS = [
   {
     id: 'side',
-    num: 'Q 1 / 5',
     title: '달의 어느 쪽으로\n가볼까요?',
     options: [
       { key: 'near', label: '지구와 통신하기 좋은 \'달의 앞면\'', sub: 'Earth 방향, 안정적인 통신 환경\n기존 탐사 데이터 풍부' },
@@ -30,9 +29,7 @@ const QUESTIONS = [
   },
   {
     id: 'resources',
-    num: 'Q 2 / 5',
     title: '가장 찾고 싶은\n자원은 무엇인가요?',
-
     options: [
       { key: 'building', label: '기지를 지을 건축 자재', sub: '철, 티타늄 등 견고한 구조 소재' },
       { key: 'energy', label: '강력한 특수 에너지원', sub: '우라늄, 트륨 등 핵연료 자원' },
@@ -42,7 +39,6 @@ const QUESTIONS = [
   },
   {
     id: 'temperature',
-    num: 'Q 3 / 5',
     title: '어떤 온도의 환경을\n대비할까요?',
     options: [
       { key: 'normal', label: '낮과 밤의 온도 차가 극심한 일반 표면', sub: '+120°C ~ -170°C, 일반 달 표면 환경' },
@@ -52,7 +48,6 @@ const QUESTIONS = [
   },
   {
     id: 'history',
-    num: 'Q 4 / 5',
     title: '탐사 지역의 역사는\n어떨으면 하나요?',
     options: [
       { key: 'explored', label: '과거 탐사선이 다녀간 기록이 있는 곳', sub: 'Apollo, Lunar 시리즈 데이터 보유\n비교 분석 자료 풍부, 안전성 검증됨' },
@@ -63,7 +58,6 @@ const QUESTIONS = [
   },
   {
     id: 'terrain',
-    num: 'Q 5 / 5  마지막!',
     title: '어떤 지형 위를\n걷고 싶으신가요?',
     options: [
       { key: 'mare', label: '바다', sub: '평탄하게 굳어진 넓은 용암 대지\n바다(Mare), 만(Sinus) — 이동·건설 최적' },
@@ -89,27 +83,32 @@ export default function AIZoneRecommendModal({ visible, onClose, onSelectZone }:
   const [results, setResults] = useState<RecommendResult[]>([]);
   const [analysisProg, setAnalysisProg] = useState(0);
   const [analysisCheckIdx, setAnalysisCheckIdx] = useState(-1);
-  const progressAnim = useRef(new Animated.Value(0)).current;
 
   // 리셋
   useEffect(() => {
     if (visible) {
       setStep(0); setAnswers({}); setResults([]);
       setAnalysisProg(0); setAnalysisCheckIdx(-1);
-      progressAnim.setValue(0);
     }
   }, [visible]);
 
   // ── 설문 답변 처리 ──
+  const [pendingKey, setPendingKey] = useState<string | null>(null);
+
   const handleOption = (key: string) => {
     const q = QUESTIONS[step];
     const newAnswers = { ...answers, [q.id]: key };
     setAnswers(newAnswers);
-    if (step < QUESTIONS.length - 1) {
-      setStep(step + 1);
-    } else {
-      startAnalysis(newAnswers);
-    }
+    setPendingKey(key);
+    // 선택 표시 후 딜레이 뒤 다음으로
+    setTimeout(() => {
+      setPendingKey(null);
+      if (step < QUESTIONS.length - 1) {
+        setStep(step + 1);
+      } else {
+        startAnalysis(newAnswers);
+      }
+    }, 120);
   };
 
   const handleBack = () => {
@@ -119,16 +118,9 @@ export default function AIZoneRecommendModal({ visible, onClose, onSelectZone }:
 
   // ── 분석 시작 ──
   const startAnalysis = async (finalAnswers: Record<string, any>) => {
-    setStep(5); // 분석 중
+    setStep(5);
     setAnalysisProg(0);
     setAnalysisCheckIdx(-1);
-
-    // 프로그레스 애니메이션 시작
-    Animated.timing(progressAnim, {
-      toValue: 1,
-      duration: 4000,
-      useNativeDriver: false,
-    }).start();
 
     // 체크리스트 순차 표시
     for (let i = 0; i < ANALYSIS_STEPS.length; i++) {
@@ -177,33 +169,54 @@ export default function AIZoneRecommendModal({ visible, onClose, onSelectZone }:
     return (
       <View style={s.questionContainer}>
         <View>
-          {/* 헤더 */}
-          <TouchableOpacity onPress={handleBack} style={s.backBtn}>
-            <Text style={s.backText}>← 뒤로</Text>
-          </TouchableOpacity>
-
-          {/* 프로그레스 바 */}
-          <View style={s.progressBar}>
-            <View style={[s.progressFill, { width: `${((step + 1) / QUESTIONS.length) * 100}%` }]} />
+          {/* 헤더: 뒤로 + 제목 */}
+          <View style={s.headerRow}>
+            <TouchableOpacity onPress={handleBack} style={s.backBtn}>
+              <Ionicons name="chevron-back" size={24} color="#fff" />
+            </TouchableOpacity>
+            <Text style={s.headerTitle}>Investment Size</Text>
+            <View style={{ width: 24 }} />
           </View>
 
-          {/* 질문 */}
-          <Text style={s.questionNum}>{q.num}</Text>
-          <Text style={s.questionTitle}>{q.title}</Text>
+          {/* 스텝 인디케이터 (1~5) */}
+          <View style={s.stepIndicator}>
+            {[0, 1, 2, 3, 4].map((i) => {
+              const isCompleted = i < step;
+              const isCurrent = i === step;
+              const isActive = isCompleted || isCurrent;
+              return (
+                <React.Fragment key={i}>
+                  {i > 0 && (
+                    <View style={[s.stepLine, isActive && s.stepLineActive]} />
+                  )}
+                  <View style={[s.stepCircle, isActive && s.stepCircleActive]}>
+                    <Text style={[s.stepNumber, isActive && s.stepNumberActive]}>{i + 1}</Text>
+                  </View>
+                </React.Fragment>
+              );
+            })}
+          </View>
+
+          {/* 질문 제목: Q번호. 제목 */}
+          <Text style={s.questionTitle}>
+            <Text style={s.questionBold}>Q{step + 1}.</Text>
+            {' '}{q.title}
+          </Text>
 
           {/* 옵션들 */}
           <ScrollView style={{ marginTop: 24 }} showsVerticalScrollIndicator={false}>
             {q.options.map((opt: any) => {
-              const selected = answers[q.id] === opt.key;
+              const selected = pendingKey === opt.key || answers[q.id] === opt.key;
               return (
                 <TouchableOpacity
                   key={opt.key}
                   style={[s.optionCard, selected && s.optionCardSelected]}
                   onPress={() => handleOption(opt.key)}
                   activeOpacity={0.7}
+                  disabled={pendingKey !== null}
                 >
                   <Text style={[s.optionLabel, selected && s.optionLabelSelected]}>{opt.label}</Text>
-                  <Text style={s.optionSub}>{opt.sub}</Text>
+                  <Text style={[s.optionSub, selected && s.optionSubSelected]}>{opt.sub}</Text>
                 </TouchableOpacity>
               );
             })}
@@ -215,87 +228,99 @@ export default function AIZoneRecommendModal({ visible, onClose, onSelectZone }:
     );
   }
 
-  // ─── 분석 중 화면 ───
+  // ─── 분석 중 화면 (Figma AI_5) ───
   function renderAnalysis() {
-    const progWidth = progressAnim.interpolate({
-      inputRange: [0, 1],
-      outputRange: ['0%', '100%'],
-    });
-
     return (
       <View style={s.analysisContainer}>
-        <Ionicons name="planet" size={60} color="#3B82F6" style={{ marginBottom: 24, opacity: 0.8 }} />
-        <Text style={s.analysisTitle}>
-          AI가 최적 구역을 분석하고 있어요
-        </Text>
-        <Text style={s.analysisSub}>
-          5가지 조건을 달 지도와 매칭 중...
-        </Text>
-
-        {/* 체크리스트 */}
-        <View style={s.checkList}>
-          {ANALYSIS_STEPS.map((label, i) => (
-            <View key={i} style={s.checkItem}>
-              {i <= analysisCheckIdx
-                ? <Ionicons name="checkmark-circle" size={18} color="#34D399" />
-                : <View style={s.checkDot} />
-              }
-              <Text style={[s.checkText, i <= analysisCheckIdx && s.checkTextDone]}>{label}</Text>
-            </View>
-          ))}
+        {/* 앱 로고 */}
+        <View style={s.analysisLogoWrap}>
+          <Image
+            source={require('@/assets/images/logo_white.png')}
+            style={{ width: 51, height: 51, tintColor: '#7295FE' }}
+            resizeMode="contain"
+          />
+          <Text style={s.analysisLogoText}>AI</Text>
         </View>
 
-        {/* 프로그레스 */}
-        <View style={s.bigProgressBar}>
-          <Animated.View style={[s.bigProgressFill, { width: progWidth }]} />
+        {/* 설명 텍스트 */}
+        <View style={s.analysisTextWrap}>
+          <Text style={s.analysisMainText}>
+            AI가 최적 구역을 분석하고 있습니다.
+          </Text>
+          <Text style={s.analysisSubText}>
+            잠시만 기다려 주세요...
+          </Text>
+          <Text style={s.analysisBlueText}>
+            약 25,769,803,776개 구역 데이터 분석 중.
+          </Text>
         </View>
-        <Text style={s.progPercent}>{analysisProg}%</Text>
+
+        {/* 3 dots (나중에 Lottie로 교체) */}
+        <View style={s.dotsRow}>
+          <View style={[s.dot, { opacity: 0.4 }]} />
+          <View style={[s.dot, { opacity: 0.7 }]} />
+          <View style={s.dot} />
+        </View>
       </View>
     );
   }
 
-  // ─── 결과 화면 ───
+  // ─── 결과 화면 (Figma AI result) ───
   function renderResults() {
+    const RANK_LABELS = ['1위', '2위', '3위'];
     return (
       <View style={s.resultContainer}>
-        {/* 헤더 */}
-        <View style={s.resultHeader}>
-          <Text style={s.resultMainTitle}>AI 추천 결과</Text>
-          <Text style={s.resultSub}>자원 채굴 · 중위 투자 · 미래 가치</Text>
+        {/* 헤더: X + AI 추천 결과 */}
+        <View style={s.resultHeaderBar}>
+          <TouchableOpacity onPress={onClose} style={{ padding: 4 }}>
+            <Ionicons name="close" size={24} color="#EBECF1" />
+          </TouchableOpacity>
+          <Text style={s.resultHeaderTitle}>AI 추천 결과</Text>
+          <View style={{ width: 24 }} />
         </View>
 
-        <ScrollView style={{ flex: 1 }} showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 40 }}>
+        {/* 서브타이틀 */}
+        <View style={{ paddingHorizontal: 16, paddingTop: 20, paddingBottom: 8 }}>
+          <Text style={s.resultSubtitle}>
+            자원 채굴 · 중위 투자 · 미래 가치
+          </Text>
+        </View>
+
+        <ScrollView style={{ flex: 1 }} showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: 16, paddingTop: 20, gap: 12, paddingBottom: 40 }}>
           {results.map((r, i) => (
             <View key={i} style={s.resultCard}>
-              {/* 카드 헤더 */}
-              <View style={s.cardHeader}>
-                <Text style={s.rankText}>{r.rank}위</Text>
-                <Text style={s.matchText}>{r.matchPercent}% 매칭</Text>
+              {/* 카드 헤더: 1위 + 96% 매칭 */}
+              <View style={s.cardHeaderRow}>
+                <Text style={s.cardRank}>{RANK_LABELS[i] || `${i+1}위`}</Text>
+                <Text style={s.cardMatch}>{r.matchPercent}% 매칭</Text>
               </View>
 
-              {/* 지형 정보 */}
-              <View style={s.cardMeta}>
-                <Text style={s.metaItem}>{Math.abs(r.feature.lat).toFixed(0)} mag</Text>
-                <Text style={s.metaItem}>{r.tempC}°C</Text>
-                <Text style={s.metaItem}>{r.terrainLabel}</Text>
+              {/* 메타 정보 */}
+              <View style={s.cardMetaRow}>
+                <Text style={s.cardMetaText}>{Math.abs(r.feature.lat).toFixed(0)} mag</Text>
+                <View style={s.cardMetaDivider} />
+                <Text style={s.cardMetaText}>{r.tempC}°C</Text>
+                <View style={s.cardMetaDivider} />
+                <Text style={s.cardMetaText}>{r.terrainLabel}</Text>
               </View>
-
-              <Text style={s.featureName}>{r.feature.name_kr}</Text>
 
               {/* 추천 사유 */}
-              {r.reasons.slice(0, 4).map((reason, ri) => (
-                <Text key={ri} style={s.reasonText}>• {reason}</Text>
-              ))}
+              <View style={{ gap: 0 }}>
+                {r.reasons.slice(0, 4).map((reason, ri) => (
+                  <Text key={ri} style={s.cardReason}>{reason}</Text>
+                ))}
+              </View>
 
-              {/* 상세보기 버튼 */}
+              {/* 상세보기 → */}
               <TouchableOpacity
-                style={s.detailBtn}
+                style={s.cardDetailBtn}
                 onPress={() => {
                   onSelectZone(r.feature.lat, r.feature.lng, r.feature.name_kr, r.feature.diameter_km);
                   onClose();
                 }}
               >
-                <Text style={s.detailBtnText}>상세 보기 →</Text>
+                <Text style={s.cardDetailText}>상세보기</Text>
+                <Ionicons name="arrow-forward" size={20} color="#FFFFFF" />
               </TouchableOpacity>
             </View>
           ))}
@@ -308,13 +333,10 @@ export default function AIZoneRecommendModal({ visible, onClose, onSelectZone }:
           )}
         </ScrollView>
 
-        {/* 하단 버튼 */}
-        <View style={[s.resultFooter, { paddingBottom: Math.max(16, insets.bottom) }]}>
-          <TouchableOpacity style={s.retryBtn} onPress={() => { setStep(0); setAnswers({}); }}>
-            <Text style={s.retryText}>다시하기</Text>
-          </TouchableOpacity>
-          <TouchableOpacity style={s.closeBtn} onPress={onClose}>
-            <Text style={s.closeBtnText}>닫기</Text>
+        {/* 하단 다시하기 버튼 */}
+        <View style={[s.rematchWrap, { paddingBottom: Math.max(16, insets.bottom) }]}>
+          <TouchableOpacity style={s.rematchBtn} onPress={() => { setStep(0); setAnswers({}); }}>
+            <Text style={s.rematchText}>다시하기</Text>
           </TouchableOpacity>
         </View>
       </View>
@@ -329,68 +351,80 @@ const s = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#15171C' },
 
   // 설문
-  questionContainer: { flex: 1, paddingHorizontal: 28, paddingTop: 20, paddingBottom: 30, justifyContent: 'space-between' },
-  backBtn: { alignSelf: 'flex-start', padding: 8, marginLeft: -8, marginBottom: 16 },
-  backText: { color: '#9CA3AF', fontSize: 16, fontWeight: '500' },
-  progressBar: { height: 3, backgroundColor: 'rgba(255,255,255,0.1)', borderRadius: 2, marginBottom: 28 },
-  progressFill: { height: '100%', backgroundColor: '#3B82F6', borderRadius: 2 },
-  questionNum: { color: '#6B7280', fontSize: 13, fontWeight: '600', marginBottom: 8, letterSpacing: 0.5 },
-  questionTitle: { color: '#F9FAFB', fontSize: 24, fontWeight: '800', lineHeight: 34 },
-  optionCard: {
-    backgroundColor: 'rgba(255,255,255,0.04)', borderRadius: 14, padding: 20,
-    marginBottom: 12, borderWidth: 1, borderColor: 'rgba(255,255,255,0.08)',
+  questionContainer: { flex: 1, paddingHorizontal: 24, paddingTop: 12, paddingBottom: 30, justifyContent: 'space-between' },
+  headerRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 20, paddingVertical: 8 },
+  headerTitle: { color: '#FFFFFF', fontSize: 17, fontWeight: '700' },
+  backBtn: { padding: 4 },
+  // 스텝 인디케이터
+  stepIndicator: { flexDirection: 'row', alignItems: 'center', marginBottom: 24 },
+  stepCircle: {
+    width: 30, height: 30, borderRadius: 15, backgroundColor: '#25272C',
+    justifyContent: 'center', alignItems: 'center',
+    borderWidth: 1.5, borderColor: '#3A3D44',
   },
-  optionCardSelected: { borderColor: '#3B82F6', backgroundColor: 'rgba(59,130,246,0.12)' },
-  optionLabel: { color: '#E5E7EB', fontSize: 16, fontWeight: '700', marginBottom: 6 },
-  optionLabelSelected: { color: '#93C5FD' },
+  stepCircleActive: { backgroundColor: '#FFFFFF', borderColor: '#FFFFFF' },
+  stepNumber: { color: '#6B7280', fontSize: 13, fontWeight: '700' },
+  stepNumberActive: { color: '#1A1B1E' },
+  stepLine: { width: 18, height: 2, backgroundColor: '#3A3D44', marginHorizontal: 4, borderRadius: 1 },
+  stepLineActive: { backgroundColor: '#9CA3AF' },
+  questionTitle: { color: '#F9FAFB', fontSize: 18, fontWeight: '500', lineHeight: 26 },
+  questionBold: { fontWeight: '800', fontSize: 18 },
+  optionCard: {
+    backgroundColor: '#25272C', borderRadius: 6, padding: 20,
+    marginBottom: 12,
+  },
+  optionCardSelected: { borderColor: '#3C57E9', backgroundColor: '#3C57E9' },
+  optionLabel: { color: '#E5E7EB', fontSize: 15, fontWeight: '600', marginBottom: 4 },
+  optionLabelSelected: { color: '#FFFFFF' },
   optionSub: { color: '#6B7280', fontSize: 12, lineHeight: 18 },
+  optionSubSelected: { color: 'rgba(255,255,255,0.7)' },
   nextBtn: {
-    backgroundColor: '#3B82F6', borderRadius: 14, paddingVertical: 16,
+    backgroundColor: '#3C57E9', borderRadius: 14, paddingVertical: 16,
     alignItems: 'center', marginTop: 12,
   },
   nextBtnDisabled: { backgroundColor: '#1F2937', opacity: 0.5 },
   nextText: { color: '#fff', fontSize: 16, fontWeight: '700' },
 
-  // 분석
-  analysisContainer: { flex: 1, justifyContent: 'center', alignItems: 'center', padding: 36 },
-  analysisTitle: { color: '#F9FAFB', fontSize: 20, fontWeight: '800', textAlign: 'center', marginBottom: 8 },
-  analysisSub: { color: '#6B7280', fontSize: 14, textAlign: 'center', marginBottom: 32 },
-  checkList: { alignSelf: 'stretch', marginBottom: 32, gap: 14 },
-  checkItem: { flexDirection: 'row', alignItems: 'center', gap: 10 },
-  checkDot: { width: 18, height: 18, borderRadius: 9, borderWidth: 1.5, borderColor: '#374151' },
-  checkText: { color: '#4B5563', fontSize: 14 },
-  checkTextDone: { color: '#D1D5DB' },
-  bigProgressBar: { alignSelf: 'stretch', height: 6, backgroundColor: 'rgba(255,255,255,0.08)', borderRadius: 3 },
-  bigProgressFill: { height: '100%', backgroundColor: '#3B82F6', borderRadius: 3 },
-  progPercent: { color: '#6B7280', fontSize: 14, marginTop: 10, fontWeight: '600' },
+  // 분석 (Figma AI_5)
+  analysisContainer: { flex: 1, justifyContent: 'center', alignItems: 'center', paddingHorizontal: 16 },
+  analysisLogoWrap: { alignItems: 'center', gap: 4, paddingTop: 48 },
+  analysisLogoText: { color: '#EBECF1', fontSize: 20, fontWeight: '500' },
+  analysisTextWrap: { alignItems: 'center', gap: 3, paddingTop: 23, paddingHorizontal: 16 },
+  analysisMainText: { color: '#EBECF1', fontSize: 16, fontWeight: '400', lineHeight: 24, textAlign: 'center' },
+  analysisSubText: { color: '#808080', fontSize: 14, fontWeight: '400', lineHeight: 21, textAlign: 'center' },
+  analysisBlueText: { color: '#7295FE', fontSize: 14, fontWeight: '400', lineHeight: 21, textAlign: 'center' },
+  dotsRow: { flexDirection: 'row', gap: 6, paddingTop: 19 },
+  dot: { width: 8, height: 8, borderRadius: 4, backgroundColor: '#EBECF1' },
 
-  // 결과
-  resultContainer: { flex: 1, paddingHorizontal: 20, paddingTop: 20 },
-  resultHeader: { marginBottom: 20 },
-  resultMainTitle: { color: '#F9FAFB', fontSize: 22, fontWeight: '800', marginBottom: 4 },
-  resultSub: { color: '#6B7280', fontSize: 13 },
+  // 결과 (Figma AI result)
+  resultContainer: { flex: 1 },
+  resultHeaderBar: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+    paddingHorizontal: 16, paddingTop: 14, paddingBottom: 14,
+  },
+  resultHeaderTitle: { color: '#EBECF1', fontSize: 18, fontWeight: '600' },
+  resultSubtitle: { color: '#EBECF1', fontSize: 18, fontWeight: '600' },
   resultCard: {
-    backgroundColor: '#1F2937', borderRadius: 16, padding: 20,
-    marginBottom: 14, borderWidth: 1, borderColor: 'rgba(255,255,255,0.06)',
+    borderWidth: 1, borderColor: '#333333', borderRadius: 6,
+    paddingHorizontal: 16, paddingTop: 18, paddingBottom: 24, gap: 8,
   },
-  cardHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 },
-  rankText: { color: '#93C5FD', fontSize: 15, fontWeight: '800' },
-  matchText: { color: '#34D399', fontSize: 16, fontWeight: '800' },
-  cardMeta: { flexDirection: 'row', gap: 16, marginBottom: 8 },
-  metaItem: { color: '#9CA3AF', fontSize: 12, fontWeight: '500' },
-  featureName: { color: '#F3F4F6', fontSize: 17, fontWeight: '700', marginBottom: 10 },
-  reasonText: { color: '#9CA3AF', fontSize: 12, lineHeight: 20, marginLeft: 4 },
-  detailBtn: { marginTop: 14, alignSelf: 'flex-end' },
-  detailBtnText: { color: '#60A5FA', fontSize: 13, fontWeight: '600' },
-  resultFooter: { flexDirection: 'row', gap: 12, paddingVertical: 16 },
-  retryBtn: {
-    flex: 1, backgroundColor: '#374151', borderRadius: 14,
-    paddingVertical: 16, alignItems: 'center',
+  cardHeaderRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-end', paddingBottom: 10 },
+  cardRank: { color: '#EBECF1', fontSize: 20, fontWeight: '500' },
+  cardMatch: { color: '#999999', fontSize: 14, fontWeight: '500' },
+  cardMetaRow: { flexDirection: 'row', alignItems: 'center', gap: 12 },
+  cardMetaText: { color: '#808080', fontSize: 14, fontWeight: '400' },
+  cardMetaDivider: { width: 1, height: 14, backgroundColor: '#333333' },
+  cardReason: { color: '#EBECF1', fontSize: 14, fontWeight: '400', lineHeight: 21 },
+  cardDetailBtn: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end',
+    gap: 9, paddingTop: 2, paddingLeft: 24, paddingVertical: 6,
+    alignSelf: 'flex-end',
   },
-  retryText: { color: '#D1D5DB', fontSize: 15, fontWeight: '700' },
-  closeBtn: {
-    flex: 1, backgroundColor: '#1F2937', borderRadius: 14,
-    paddingVertical: 16, alignItems: 'center', borderWidth: 1, borderColor: 'rgba(255,255,255,0.08)',
+  cardDetailText: { color: '#FFFFFF', fontSize: 14, fontWeight: '500', textAlign: 'center' },
+  rematchWrap: { paddingHorizontal: 16, paddingTop: 16 },
+  rematchBtn: {
+    backgroundColor: '#3C57E9', borderRadius: 5, height: 56,
+    alignItems: 'center', justifyContent: 'center',
   },
-  closeBtnText: { color: '#6B7280', fontSize: 15, fontWeight: '600' },
+  rematchText: { color: '#FFFFFF', fontSize: 16, fontWeight: '600' },
 });

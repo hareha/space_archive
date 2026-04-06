@@ -10,7 +10,7 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { getOccupationStats } from '@/constants/s2CellUtils';
-import { getOccupationInCircle, getOccupationInEllipse, OccupationInRange } from '@/services/database';
+import { getOccupationInCircle, getOccupationInEllipse, OccupationInRange } from '@/services/CellService';
 
 interface OccupationStatusPanelProps {
   onBack: () => void;
@@ -46,7 +46,6 @@ export default function OccupationStatusPanel({
     });
   }, [target]);
 
-  // DB에서 점유 데이터 로드
   useEffect(() => {
     const loadData = async () => {
       setLoading(true);
@@ -70,8 +69,8 @@ export default function OccupationStatusPanel({
 
   const occupiedCount = dbData?.occupiedCount || 0;
   const availableCount = Math.max(0, stats.totalCells - occupiedCount);
+  const occupiedPct = stats.totalCells > 0 ? (occupiedCount / stats.totalCells) * 100 : 0;
 
-  // 정렬된 소유자 리스트
   const sortedOwners = useMemo(() => {
     if (!dbData?.owners) return [];
     const owners = [...dbData.owners];
@@ -91,59 +90,73 @@ export default function OccupationStatusPanel({
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: '#15171C' }}>
-      {/* 헤더: 뒤로가기 + 지형명 */}
+      {/* 헤더: X + 지형명 */}
       <View style={st.header}>
-        <TouchableOpacity onPress={onBack} style={st.backBtn}>
-          <Ionicons name="chevron-back" size={20} color="#9CA3AF" />
+        <TouchableOpacity onPress={onBack} style={st.closeBtn}>
+          <Ionicons name="close" size={24} color="#EBECF1" />
         </TouchableOpacity>
         <Text style={st.headerTitle}>{target.name}</Text>
       </View>
 
-      <ScrollView showsVerticalScrollIndicator={false} style={{ flex: 1 }} contentContainerStyle={{ paddingBottom: 40 }}>
-        {/* ② 통계 카드 3개 */}
-        <View style={st.statsRow}>
-          <View style={st.statCard}>
-            <Text style={st.statLabel}>총 구역</Text>
-            <Text style={st.statValue}>{stats.totalCells.toLocaleString()} <Text style={st.statUnit}>Mag</Text></Text>
-          </View>
-          <View style={[st.statCard, { borderColor: occupiedCount > 0 ? 'rgba(239,68,68,0.3)' : 'rgba(107,114,128,0.3)' }]}>
-            <Text style={st.statLabel}>개척 완료</Text>
-            {loading ? (
-              <ActivityIndicator size="small" color="#9CA3AF" style={{ marginTop: 4 }} />
-            ) : (
-              <Text style={[st.statValue, occupiedCount > 0 && { color: '#EF4444' }]}>
-                {occupiedCount.toLocaleString()} <Text style={st.statUnit}>Mag</Text>
-              </Text>
-            )}
-          </View>
-          <View style={[st.statCard, { borderColor: 'rgba(107,114,128,0.3)' }]}>
-            <Text style={st.statLabel}>개척 가능</Text>
-            {loading ? (
-              <ActivityIndicator size="small" color="#9CA3AF" style={{ marginTop: 4 }} />
-            ) : (
-              <Text style={[st.statValue, { color: '#10B981' }]}>
-                {availableCount.toLocaleString()} <Text style={st.statUnit}>Mag</Text>
-              </Text>
-            )}
-          </View>
+      <ScrollView showsVerticalScrollIndicator={false} style={{ flex: 1 }} contentContainerStyle={{ paddingBottom: 40, paddingHorizontal: 16 }}>
+        {/* Claim Status 섹션 제목 */}
+        <Text style={st.sectionTitle}>개척 현황</Text>
+
+        {/* 3개 세로 통계 카드 */}
+        <View style={st.statCard}>
+          <Text style={st.statLabel}>총 구역</Text>
+          {loading ? (
+            <ActivityIndicator size="small" color="#999" style={{ marginTop: 8 }} />
+          ) : (
+            <View style={st.statValueRow}>
+              <Text style={st.statValueLarge}>{stats.totalCells.toLocaleString()}</Text>
+              <Text style={st.statUnitText}> Mag</Text>
+            </View>
+          )}
         </View>
 
-        {/* 점유율 바 */}
+        <View style={st.statCard}>
+          <Text style={st.statLabel}>개척 완료</Text>
+          {loading ? (
+            <ActivityIndicator size="small" color="#999" style={{ marginTop: 8 }} />
+          ) : (
+            <View style={st.statValueRow}>
+              <Text style={st.statValueLarge}>{occupiedCount.toLocaleString()}</Text>
+              <Text style={st.statUnitText}> Mag</Text>
+            </View>
+          )}
+        </View>
+
+        <View style={[st.statCard, { marginBottom: 16 }]}>
+          <Text style={st.statLabel}>개척 가능</Text>
+          {loading ? (
+            <ActivityIndicator size="small" color="#999" style={{ marginTop: 8 }} />
+          ) : (
+            <View style={st.statValueRow}>
+              <Text style={st.statValueLarge}>{availableCount.toLocaleString()}</Text>
+              <Text style={st.statUnitText}> Mag</Text>
+            </View>
+          )}
+        </View>
+
+        {/* 점유율 퍼센트 + 바 */}
         {!loading && stats.totalCells > 0 && (
           <View style={st.progressSection}>
+            <Text style={st.progressPctText}>{occupiedPct.toFixed(1)}%</Text>
             <View style={st.progressBar}>
-              <View style={[st.progressFill, { width: `${Math.min(100, (occupiedCount / stats.totalCells) * 100)}%` }]} />
+              <View style={[st.progressFillBlue, { flex: Math.max(0.01, occupiedPct / 100) }]} />
+              <View style={[st.progressFillDark, { flex: Math.max(0.01, 1 - occupiedPct / 100) }]} />
             </View>
-            <Text style={st.progressText}>
-              {((occupiedCount / stats.totalCells) * 100).toFixed(1)}% 개척됨
-            </Text>
           </View>
         )}
 
-        {/* ③ 점유 구역 리스트 */}
+        {/* 구분선 */}
+        <View style={{ height: 1, backgroundColor: 'rgba(255,255,255,0.07)', marginVertical: 16 }} />
+
+        {/* Claimed Sectors */}
         <View style={st.listSection}>
           <View style={st.listHeader}>
-            <Text style={st.listTitle}>개척 현황 목록 ({sortedOwners.length}명)</Text>
+            <Text style={st.listTitle}>개척 현황 목록</Text>
             <TouchableOpacity
               style={st.sortBtn}
               onPress={() => setShowSortMenu(!showSortMenu)}
@@ -162,8 +175,11 @@ export default function OccupationStatusPanel({
                   style={[st.sortMenuItem, sortBy === key && st.sortMenuItemActive]}
                   onPress={() => { setSortBy(key); setShowSortMenu(false); }}
                 >
+                  {sortBy === key && (
+                    <Ionicons name="checkmark" size={18} color="#1A1A1A" />
+                  )}
                   <Text style={[st.sortMenuText, sortBy === key && st.sortMenuTextActive]}>
-                    {SORT_LABELS[key]} {sortBy === key ? '✓' : ''}
+                    {SORT_LABELS[key]}
                   </Text>
                 </TouchableOpacity>
               ))}
@@ -173,46 +189,38 @@ export default function OccupationStatusPanel({
           {/* 소유자 리스트 */}
           {loading ? (
             <View style={st.emptyList}>
-              <ActivityIndicator size="large" color="#374151" />
+              <ActivityIndicator size="large" color="#999999" />
               <Text style={st.emptyListText}>데이터 로딩 중...</Text>
             </View>
           ) : sortedOwners.length === 0 ? (
             <View style={st.emptyList}>
-              <Ionicons name="people-outline" size={32} color="#374151" />
+              <Ionicons name="people-outline" size={32} color="#666666" />
               <Text style={st.emptyListText}>아직 개척된 구역이 없습니다</Text>
             </View>
           ) : (
-            <View style={{ gap: 2 }}>
+            <View>
               {sortedOwners.map((owner, idx) => (
                 <View key={owner.userId} style={st.ownerRow}>
-                  <View style={st.ownerRank}>
-                    <Text style={st.ownerRankText}>{idx + 1}</Text>
-                  </View>
-                  <View style={[st.ownerAvatar, { backgroundColor: owner.avatarColor }]}>
-                    <Text style={st.ownerAvatarText}>
-                      {owner.nickname.charAt(0).toUpperCase()}
-                    </Text>
-                  </View>
                   <View style={st.ownerInfo}>
                     <Text style={st.ownerName}>{owner.nickname}</Text>
-                    <Text style={st.ownerDate}>{owner.purchasedAt}</Text>
+                    <Text style={st.ownerSub}>Holdings</Text>
+                    <Text style={st.ownerDetail}>{owner.cellCount.toLocaleString()} Mag · Total Area 0.5 km²</Text>
                   </View>
-                  <View style={st.ownerCells}>
-                    <Text style={st.ownerCellCount}>{owner.cellCount}</Text>
-                    <Text style={st.ownerCellUnit}>Mag</Text>
-                  </View>
+                  {idx === 0 && (
+                    <View style={st.mySectorBadge}>
+                      <Text style={st.mySectorText}>내 구역</Text>
+                    </View>
+                  )}
                 </View>
               ))}
             </View>
           )}
         </View>
 
-        {/* ④ 점유 지형 확인 → 점유모드 전환 */}
-        <View style={{ paddingHorizontal: 20 }}>
-          <TouchableOpacity style={st.ctaBtn} activeOpacity={0.7} onPress={onGoToOccupation}>
-            <Text style={st.ctaText}>개척 현황 확인  →</Text>
-          </TouchableOpacity>
-        </View>
+        {/* 하단 CTA 버튼 */}
+        <TouchableOpacity style={st.ctaBtn} activeOpacity={0.7} onPress={onGoToOccupation}>
+          <Text style={st.ctaText}>지형 확인</Text>
+        </TouchableOpacity>
       </ScrollView>
     </SafeAreaView>
   );
@@ -225,130 +233,140 @@ const st = StyleSheet.create({
     paddingHorizontal: 16,
     paddingTop: 8,
     paddingBottom: 14,
-    gap: 6,
+    gap: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(255,255,255,0.07)',
   },
-  backBtn: {
+  closeBtn: {
     padding: 4,
   },
   headerTitle: {
-    color: '#F9FAFB',
+    color: '#EBECF1',
     fontSize: 18,
-    fontWeight: '700',
+    fontWeight: '600',
+    flex: 1,
   },
 
-  /* ② 통계 카드 */
-  statsRow: {
-    flexDirection: 'row',
-    gap: 8,
-    paddingHorizontal: 20,
+  /* Claim Status 제목 */
+  sectionTitle: {
+    color: '#7295FE',
+    fontSize: 14,
+    fontWeight: '400',
+    marginTop: 16,
+    marginBottom: 12,
+  },
+
+  /* 세로 통계 카드 (Figma 스타일) */
+  statCard: {
+    backgroundColor: 'rgba(255,255,255,0.04)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.07)',
+    borderRadius: 6,
+    paddingVertical: 14,
+    paddingHorizontal: 16,
     marginBottom: 8,
   },
-  statCard: {
-    flex: 1,
-    backgroundColor: '#1F2937',
-    borderRadius: 10,
-    paddingVertical: 14,
-    paddingHorizontal: 10,
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.08)',
-  },
   statLabel: {
-    color: '#9CA3AF',
-    fontSize: 11,
+    color: '#999999',
+    fontSize: 12,
+    fontWeight: '400',
     marginBottom: 4,
   },
-  statValue: {
-    color: '#F9FAFB',
-    fontSize: 20,
-    fontWeight: '800',
+  statValueRow: {
+    flexDirection: 'row',
+    alignItems: 'baseline',
   },
-  statUnit: {
-    fontSize: 13,
-    fontWeight: '500',
-    color: '#6B7280',
+  statValueLarge: {
+    color: '#EBECF1',
+    fontSize: 28,
+    fontWeight: '600',
+  },
+  statUnitText: {
+    color: '#999999',
+    fontSize: 14,
+    fontWeight: '400',
   },
 
   /* 점유율 바 */
   progressSection: {
-    paddingHorizontal: 20,
-    marginBottom: 16,
+    marginBottom: 0,
+  },
+  progressPctText: {
+    color: '#EBECF1',
+    fontSize: 14,
+    fontWeight: '500',
+    marginBottom: 8,
   },
   progressBar: {
-    height: 6,
-    backgroundColor: '#1F2937',
-    borderRadius: 3,
+    flexDirection: 'row',
+    height: 8,
+    borderRadius: 4,
     overflow: 'hidden',
-    marginBottom: 4,
   },
-  progressFill: {
-    height: '100%',
-    backgroundColor: '#EF4444',
-    borderRadius: 3,
+  progressFillBlue: {
+    backgroundColor: '#3C57E9',
+    borderRadius: 4,
   },
-  progressText: {
-    color: '#6B7280',
-    fontSize: 11,
-    textAlign: 'right',
+  progressFillDark: {
+    backgroundColor: '#1F2937',
   },
 
-  /* ③ 점유 구역 리스트 */
+  /* 리스트 */
   listSection: {
-    marginHorizontal: 20,
-    marginBottom: 16,
-    borderTopWidth: 1,
-    borderTopColor: 'rgba(255,255,255,0.06)',
-    paddingTop: 16,
+    marginBottom: 20,
   },
   listHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 12,
+    marginBottom: 14,
   },
   listTitle: {
-    color: '#D1D5DB',
+    color: '#7295FE',
     fontSize: 14,
-    fontWeight: '700',
+    fontWeight: '400',
   },
   sortBtn: {
-    backgroundColor: '#1F2937',
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.08)',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
   },
   sortBtnText: {
-    color: '#9CA3AF',
+    color: '#999999',
     fontSize: 12,
   },
   sortMenu: {
     position: 'absolute',
     right: 0,
     top: 40,
-    backgroundColor: '#1F2937',
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.1)',
+    backgroundColor: '#FFFFFF',
+    borderRadius: 12,
     zIndex: 10,
     overflow: 'hidden',
-    minWidth: 120,
+    minWidth: 160,
+    paddingVertical: 4,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.25,
+    shadowRadius: 12,
+    elevation: 8,
   },
   sortMenuItem: {
-    paddingHorizontal: 14,
-    paddingVertical: 10,
-    borderBottomWidth: 1,
-    borderBottomColor: 'rgba(255,255,255,0.05)',
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    gap: 8,
   },
   sortMenuItemActive: {
-    backgroundColor: 'rgba(96,165,250,0.1)',
   },
   sortMenuText: {
-    color: '#9CA3AF',
-    fontSize: 12,
+    color: '#999999',
+    fontSize: 16,
+    fontWeight: '400',
   },
   sortMenuTextActive: {
-    color: '#60A5FA',
+    color: '#1A1A1A',
     fontWeight: '600',
   },
   emptyList: {
@@ -357,79 +375,61 @@ const st = StyleSheet.create({
     gap: 8,
   },
   emptyListText: {
-    color: '#4B5563',
-    fontSize: 13,
+    color: '#999999',
+    fontSize: 14,
   },
 
   /* 소유자 행 */
   ownerRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#1F2937',
-    borderRadius: 10,
-    paddingVertical: 12,
-    paddingHorizontal: 12,
-    gap: 10,
-  },
-  ownerRank: {
-    width: 22,
-    alignItems: 'center',
-  },
-  ownerRankText: {
-    color: '#6B7280',
-    fontSize: 12,
-    fontWeight: '700',
-  },
-  ownerAvatar: {
-    width: 34,
-    height: 34,
-    borderRadius: 17,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  ownerAvatarText: {
-    color: '#fff',
-    fontSize: 14,
-    fontWeight: '800',
+    justifyContent: 'space-between',
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(255,255,255,0.07)',
+    paddingVertical: 14,
   },
   ownerInfo: {
     flex: 1,
   },
   ownerName: {
-    color: '#F9FAFB',
-    fontSize: 14,
+    color: '#EBECF1',
+    fontSize: 16,
     fontWeight: '600',
   },
-  ownerDate: {
-    color: '#6B7280',
-    fontSize: 11,
+  ownerSub: {
+    color: '#999999',
+    fontSize: 12,
     marginTop: 2,
   },
-  ownerCells: {
-    alignItems: 'flex-end',
+  ownerDetail: {
+    color: '#666666',
+    fontSize: 12,
+    marginTop: 2,
   },
-  ownerCellCount: {
-    color: '#F9FAFB',
-    fontSize: 16,
-    fontWeight: '800',
+  mySectorBadge: {
+    borderWidth: 1,
+    borderColor: '#3C57E9',
+    borderRadius: 4,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
   },
-  ownerCellUnit: {
-    color: '#6B7280',
-    fontSize: 10,
-    marginTop: 1,
+  mySectorText: {
+    color: '#3C57E9',
+    fontSize: 12,
+    fontWeight: '500',
   },
 
-  /* ④ CTA */
+  /* CTA */
   ctaBtn: {
-    backgroundColor: '#374151',
-    borderRadius: 12,
-    paddingVertical: 18,
+    backgroundColor: '#3C57E9',
+    borderRadius: 5,
+    height: 56,
     alignItems: 'center',
     justifyContent: 'center',
   },
   ctaText: {
-    color: '#F9FAFB',
-    fontSize: 15,
-    fontWeight: '700',
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: '600',
   },
 });

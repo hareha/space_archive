@@ -17,7 +17,7 @@ export interface ScrapArea {
 }
 
 export interface ScrapContent {
-  newsId: string;
+  newsId: string | number;
   title: string;
   summary: string;
   savedAt: number;
@@ -57,17 +57,17 @@ export async function getScrapContents(): Promise<ScrapContent[]> {
 
 export async function addScrapContent(item: ScrapContent): Promise<void> {
   const list = await getScrapContents();
-  if (list.find(c => c.newsId === item.newsId)) return;
+  if (list.find(c => c.newsId.toString() === item.newsId.toString())) return;
   list.unshift(item);
   await AsyncStorage.setItem(CONTENT_KEY, JSON.stringify(list));
 }
 
-export async function removeScrapContent(newsId: string): Promise<void> {
+export async function removeScrapContent(newsId: string | number): Promise<void> {
   const list = await getScrapContents();
-  await AsyncStorage.setItem(CONTENT_KEY, JSON.stringify(list.filter(c => c.newsId !== newsId)));
+  await AsyncStorage.setItem(CONTENT_KEY, JSON.stringify(list.filter(c => c.newsId.toString() !== newsId.toString())));
 }
 
-export async function isContentScrapped(newsId: string): Promise<boolean> {
+export async function isContentScrapped(newsId: string | number): Promise<boolean> {
   const list = await getScrapContents();
-  return !!list.find(c => c.newsId === newsId);
+  return !!list.find(c => c.newsId.toString() === newsId.toString());
 }

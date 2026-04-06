@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useState, useCallback, useMemo, useEffect } from 'react';
-import AsyncStorage from '@react-native-async-storage/async-storage';
+import { supabase } from '@/services/supabase';
 
 // ═══ 타입 ═══
 export interface PurchasedTerritory {
@@ -22,13 +22,11 @@ interface EllContextType {
   totalArea: number;
   spendEll: (magCost: number, territories: Omit<PurchasedTerritory, 'id' | 'occupiedDate'>[]) => boolean;
   addDemoTerritory: (token: string, lat: number, lng: number) => void;
+  refreshBalance: () => Promise<void>;
 }
 
 const ELL_PER_MAG = 25;
 const INITIAL_ELL = 500;
-
-const STORAGE_KEY_ELL = '@plusultra_ell_balance';
-const STORAGE_KEY_TERRITORIES = '@plusultra_territories';
 
 const EllContext = createContext<EllContextType>({
   ellBalance: INITIAL_ELL,
@@ -39,6 +37,7 @@ const EllContext = createContext<EllContextType>({
   totalArea: 0,
   spendEll: () => false,
   addDemoTerritory: () => {},
+  refreshBalance: async () => {},
 });
 
 export function EllProvider({ children }: { children: React.ReactNode }) {
@@ -46,33 +45,78 @@ export function EllProvider({ children }: { children: React.ReactNode }) {
   const [purchasedTerritories, setPurchasedTerritories] = useState<PurchasedTerritory[]>([]);
   const [loaded, setLoaded] = useState(false);
 
-  // 앱 시작 시 AsyncStorage에서 로드
+  // ── DB에서 잔액 및 구매 내역 로드 ──
+  const refreshBalance = useCallback(async () => {
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session?.user) return;
+
+      const userId = session.user.id;
+
+      // users 테이블에서 ell_balance 가져오기
+      const { data: userData, error: userError } = await supabase
+        .from('users')
+        .select('ell_balance, total_occupied')
+        .eq('id', userId)
+        .single();
+
+      if (!userError && userData) {
+        setEllBalance(userData.ell_balance ?? INITIAL_ELL);
+      }
+
+      // owned_cells에서 구매 내역 가져오기
+      const { data: cellData, error: cellError } = await supabase
+        .from('owned_cells')
+        .select(`
+          l16,
+          lat,
+          lng,
+          created_at,
+          purchases!inner ( cost )
+        `)
+        .eq('user_id', userId)
+        .order('created_at', { ascending: false });
+
+      if (!cellError && cellData) {
+        const territories: PurchasedTerritory[] = (cellData as any[]).map((r, i) => ({
+          id: `DB_${r.l16}`,
+          token: r.l16,
+          level: 16,
+          lat: r.lat,
+          lng: r.lng,
+          area: '0.8',
+          magCost: r.purchases?.cost || 1,
+          occupiedDate: r.created_at?.split('T')[0] || '',
+        }));
+        setPurchasedTerritories(territories);
+      }
+    } catch (e) {
+      console.warn('[EllContext] DB load failed:', e);
+    }
+  }, []);
+
+  // 앱 시작 시 DB에서 로드
   useEffect(() => {
     (async () => {
-      try {
-        const [savedEll, savedTerr] = await Promise.all([
-          AsyncStorage.getItem(STORAGE_KEY_ELL),
-          AsyncStorage.getItem(STORAGE_KEY_TERRITORIES),
-        ]);
-        if (savedEll !== null) setEllBalance(JSON.parse(savedEll));
-        if (savedTerr !== null) setPurchasedTerritories(JSON.parse(savedTerr));
-      } catch (e) {
-        console.warn('[EllContext] AsyncStorage load failed:', e);
-      }
+      await refreshBalance();
       setLoaded(true);
     })();
   }, []);
 
-  // 변경 시 자동 저장
+  // Auth 상태 변화 시 잔액 새로고침
   useEffect(() => {
-    if (!loaded) return;
-    AsyncStorage.setItem(STORAGE_KEY_ELL, JSON.stringify(ellBalance)).catch(() => {});
-  }, [ellBalance, loaded]);
-
-  useEffect(() => {
-    if (!loaded) return;
-    AsyncStorage.setItem(STORAGE_KEY_TERRITORIES, JSON.stringify(purchasedTerritories)).catch(() => {});
-  }, [purchasedTerritories, loaded]);
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(
+      async (event) => {
+        if (event === 'SIGNED_IN') {
+          await refreshBalance();
+        } else if (event === 'SIGNED_OUT') {
+          setEllBalance(INITIAL_ELL);
+          setPurchasedTerritories([]);
+        }
+      }
+    );
+    return () => subscription.unsubscribe();
+  }, [refreshBalance]);
 
   const remainingMag = useMemo(() => Math.floor(ellBalance / ELL_PER_MAG), [ellBalance]);
   const totalOccupied = purchasedTerritories.length;
@@ -85,10 +129,12 @@ export function EllProvider({ children }: { children: React.ReactNode }) {
     [purchasedTerritories]
   );
 
+  // ── ELL 차감 (로컬 즉시 반영 — DB 차감은 CellService.occupyCell에서 수행) ──
   const spendEll = useCallback((magCost: number, territories: Omit<PurchasedTerritory, 'id' | 'occupiedDate'>[]) => {
     const ellCost = magCost * ELL_PER_MAG;
     if (ellCost > ellBalance) return false;
 
+    // 로컬 즉시 반영 (옵티미스틱 업데이트)
     setEllBalance(prev => prev - ellCost);
     const now = new Date();
     const dateStr = `${now.getFullYear()}.${String(now.getMonth() + 1).padStart(2, '0')}.${String(now.getDate()).padStart(2, '0')}`;
@@ -124,7 +170,7 @@ export function EllProvider({ children }: { children: React.ReactNode }) {
   return (
     <EllContext.Provider value={{
       ellBalance, purchasedTerritories, remainingMag,
-      totalOccupied, totalMagSpent, totalArea, spendEll, addDemoTerritory,
+      totalOccupied, totalMagSpent, totalArea, spendEll, addDemoTerritory, refreshBalance,
     }}>
       {children}
     </EllContext.Provider>

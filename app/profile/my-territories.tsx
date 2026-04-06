@@ -1,66 +1,25 @@
 import React, { useState, useMemo, useCallback } from 'react';
 import {
     StyleSheet, View, ScrollView, TouchableOpacity, StatusBar,
-    SafeAreaView, Dimensions,
+    SafeAreaView, DeviceEventEmitter,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { Text } from '@/components/Themed';
 import { Ionicons } from '@expo/vector-icons';
 import { useEll, type PurchasedTerritory } from '@/components/EllContext';
 
-const { width } = Dimensions.get('window');
-const GRID_COLS = 3;
-const GRID_GAP = 6;
-const CARD_SIZE = (width - 32 - GRID_GAP * (GRID_COLS - 1)) / GRID_COLS;
-const GRID_PAGE_SIZE = 30;
-
 // ═══════════════════════════════════════
-// 분류 체계 A: S2 Face (0~5)
+// 분류 체계: 위경도 사분면
 // ═══════════════════════════════════════
-interface GroupDef { key: string; label: string; emoji: string; color: string }
+interface GroupDef { key: string; label: string; color: string }
 
-const S2_FACES: GroupDef[] = [
-    { key: 'f0', label: 'Face 0', emoji: '🟦', color: '#4A90D9' },
-    { key: 'f1', label: 'Face 1', emoji: '🟩', color: '#66BB6A' },
-    { key: 'f2', label: 'Face 2', emoji: '🟨', color: '#FFD54F' },
-    { key: 'f3', label: 'Face 3', emoji: '🟧', color: '#FFA726' },
-    { key: 'f4', label: 'Face 4', emoji: '🟪', color: '#AB47BC' },
-    { key: 'f5', label: 'Face 5', emoji: '🟫', color: '#8D6E63' },
-];
-
-function getS2Face(token: string): number {
-    const h = parseInt(token[0], 16);
-    if (h <= 2) return 0;
-    if (h <= 5) return 1;
-    if (h <= 8) return 2;
-    if (h <= 11) return 3;
-    if (h <= 13) return 4;
-    return 5;
-}
-
-function getFaceGroupKey(t: Territory): string {
-    return 'f' + getS2Face(t.token);
-}
-
-// ═══════════════════════════════════════
-// 분류 체계 B: 위경도 사분면
-// ═══════════════════════════════════════
 const LAT_BANDS: GroupDef[] = [
-    { key: 'np', label: '북극 (60°~90°N)', emoji: '❄️', color: '#4A90D9' },
-    { key: 'nl', label: '북위 (0°~60°N)',  emoji: '🔵', color: '#66BB6A' },
-    { key: 'sl', label: '남위 (0°~60°S)',  emoji: '🟠', color: '#FFA726' },
-    { key: 'sp', label: '남극 (60°~90°S)', emoji: '🧊', color: '#AB47BC' },
+    { key: 'np', label: '북극 (60°~90°N)', color: '#4A90D9' },
+    { key: 'nl', label: '북위 (0°~60°N)', color: '#66BB6A' },
+    { key: 'sl', label: '남위 (0°~60°S)', color: '#FFA726' },
+    { key: 'sp', label: '남극 (60°~90°S)', color: '#AB47BC' },
 ];
 
-function getLatBandKey(t: Territory): string {
-    if (t.lat >= 60) return 'np';
-    if (t.lat >= 0) return 'nl';
-    if (t.lat >= -60) return 'sl';
-    return 'sp';
-}
-
-// 데이터
-// ═══════════════════════════════════════
 interface Territory {
     id: string;
     token: string;
@@ -74,9 +33,13 @@ interface Territory {
     score?: number;
 }
 
-// (하드코딩된 MY_TERRITORIES 제거 — EllContext에서 실제 구매 데이터 사용)
+function getLatBandKey(t: Territory): string {
+    if (t.lat >= 60) return 'np';
+    if (t.lat >= 0) return 'nl';
+    if (t.lat >= -60) return 'sl';
+    return 'sp';
+}
 
-// ─── 그룹 생성 ───
 interface GroupData {
     def: GroupDef;
     items: Territory[];
@@ -100,37 +63,26 @@ function buildGroups(
         return {
             def,
             items,
-            totalArea: items.reduce((s, i) => { const v = parseFloat(i.area); return s + (isNaN(v) ? 1740 : v); }, 0),
+            totalArea: items.length * 1740,
             owned: items.length > 0,
         };
     });
 }
 
-// ─── 통계 (동적) ───
-function scoreColor(score: number) {
-    if (score >= 80) return '#4A90D9';
-    if (score >= 60) return '#66BB6A';
-    if (score >= 40) return '#FFA726';
-    return '#EF5350';
-}
-
-// territory → 현재 분류의 색상
-function getGroupColor(t: Territory, classify: 'face' | 'quadrant'): string {
-    if (classify === 'face') return S2_FACES[getS2Face(t.token)].color;
-    const q = getLatBandKey(t);
-    return LAT_BANDS.find((x: GroupDef) => x.key === q)?.color || '#999';
+// 면적 표시: 0.1km² 미만이면 m², 이상이면 km²
+function formatArea(areaM2: number): string {
+    const km2 = areaM2 / 1000000;
+    if (km2 >= 0.1) return km2.toFixed(1) + ' km²';
+    return areaM2.toLocaleString() + ' m²';
 }
 
 // ═══════════════════════════════════════
-// 메인 컴포넌트
+// 메인
 // ═══════════════════════════════════════
-type ClassifyMode = 'face' | 'quadrant';
-
 export default function MyTerritoriesScreen() {
     const router = useRouter();
     const { purchasedTerritories, totalOccupied, totalMagSpent, totalArea } = useEll();
 
-    // PurchasedTerritory → Territory 변환
     const MY_TERRITORIES: Territory[] = useMemo(() => purchasedTerritories.map(pt => ({
         ...pt,
         minerals: [],
@@ -138,20 +90,13 @@ export default function MyTerritoriesScreen() {
     })), [purchasedTerritories]);
 
     const TOTAL_COUNT = MY_TERRITORIES.length;
-    const TOTAL_MAG = totalMagSpent;
     const TOTAL_AREA_VAL = totalArea;
 
-    const [viewMode, setViewMode] = useState<'list' | 'grid'>('list');
-    const [classify, setClassify] = useState<ClassifyMode>('quadrant');
     const [expandedKey, setExpandedKey] = useState<string | null>(null);
-    const [gridPage, setGridPage] = useState(1);
 
     const groups = useMemo(() => {
-        if (classify === 'face') return buildGroups(MY_TERRITORIES, S2_FACES, getFaceGroupKey);
         return buildGroups(MY_TERRITORIES, LAT_BANDS, getLatBandKey);
-    }, [classify]);
-
-    const gridVisible = MY_TERRITORIES.slice(0, gridPage * GRID_PAGE_SIZE);
+    }, [MY_TERRITORIES]);
 
     const navigateToDetail = useCallback((t: Territory) => {
         router.push({
@@ -170,15 +115,6 @@ export default function MyTerritoriesScreen() {
         });
     }, [router]);
 
-    const handleScroll = useCallback((e: any) => {
-        if (viewMode !== 'grid') return;
-        const { contentOffset, layoutMeasurement, contentSize } = e.nativeEvent;
-        const dist = contentSize.height - layoutMeasurement.height - contentOffset.y;
-        if (dist < 200 && gridVisible.length < MY_TERRITORIES.length) {
-            setGridPage(p => p + 1);
-        }
-    }, [viewMode, gridVisible.length]);
-
     return (
         <SafeAreaView style={styles.container}>
             <StatusBar barStyle="dark-content" />
@@ -186,97 +122,155 @@ export default function MyTerritoriesScreen() {
             {/* 헤더 */}
             <View style={styles.headerBar}>
                 <TouchableOpacity onPress={() => router.back()} style={styles.backBtn}>
-                    <Ionicons name="arrow-back" size={22} color="#1A1A1A" />
+                    <Ionicons name="arrow-back" size={24} color="#1A1A1A" />
                 </TouchableOpacity>
                 <Text style={styles.headerTitle}>내 구역 관리</Text>
-                <View style={{ width: 38 }} />
+                <View style={{ width: 40 }} />
             </View>
 
             <ScrollView
                 contentContainerStyle={styles.scrollContent}
                 showsVerticalScrollIndicator={false}
-                onScroll={handleScroll}
-                scrollEventThrottle={200}
             >
-                {/* ── 대시보드 ── */}
-                <View style={styles.dashboard}>
-                    <DashCell label="총 보유 구역" value={String(TOTAL_COUNT)} unit="구역" />
-                    <View style={styles.dashDivider} />
-                    <DashCell label="개척 Mag" value={String(TOTAL_MAG)} unit="Mag" />
-                    <View style={styles.dashDivider} />
-                    <DashCell label="총 면적" value={TOTAL_COUNT === 0 ? '-' : (isNaN(TOTAL_AREA_VAL) ? (TOTAL_COUNT * 1740).toLocaleString() : TOTAL_AREA_VAL.toLocaleString())} unit="m²" />
+                {/* ── Status 카드 ── */}
+                <View style={styles.statusRow}>
+                    <View style={styles.statusCard}>
+                        <Text style={styles.statusLabel}>총 개척</Text>
+                        <View style={styles.statusValRow}>
+                            <Text style={styles.statusValue}>{totalMagSpent}</Text>
+                            <Text style={styles.statusUnit}>Mag</Text>
+                        </View>
+                    </View>
+                    <View style={styles.statusCard}>
+                        <Text style={styles.statusLabel}>총 면적</Text>
+                        <View style={styles.statusValRow}>
+                            {TOTAL_COUNT === 0 ? (
+                                <Text style={styles.statusValue}>-</Text>
+                            ) : (() => {
+                                const areaM2 = TOTAL_COUNT * 1740;
+                                const km2 = areaM2 / 1000000;
+                                const isKm = km2 >= 0.1;
+                                return (
+                                    <>
+                                        <Text style={styles.statusValue}>
+                                            {isKm ? km2.toFixed(1) : areaM2.toLocaleString()}
+                                        </Text>
+                                        <Text style={styles.statusUnit}>{isKm ? 'km²' : 'm²'}</Text>
+                                    </>
+                                );
+                            })()}
+                        </View>
+                    </View>
                 </View>
 
-                {/* ── 분류 기준 (위경도만) ── */}
-                <View style={styles.controlRow}>
-                    <Text style={{ fontSize: 13, fontWeight: '600', color: '#9E9E9E' }}>위경도 기준 분류</Text>
+                {/* ── 섹션 헤더 ── */}
+                <View style={styles.sectionHeaderRow}>
+                    <Text style={styles.sectionHeader}>{TOTAL_COUNT}개 구역</Text>
                 </View>
 
-                {/* ═══ 리스트 (아코디언) 뷰 ═══ */}
-                {groups.map(group => {
-                    const isOwned = group.owned;
-                    const isExpanded = expandedKey === group.def.key;
-                    return (
-                        <View key={group.def.key} style={[styles.groupRow, !isOwned && styles.groupRowDim]}>
-                            <TouchableOpacity
-                                style={styles.groupHeader}
-                                onPress={() => isOwned && setExpandedKey(prev => prev === group.def.key ? null : group.def.key)}
-                                activeOpacity={isOwned ? 0.7 : 1}
-                            >
-                                {/* 색상 도트 */}
-                                <View style={[styles.groupDot, { backgroundColor: isOwned ? group.def.color : '#E0E0E0' }]} />
-                                <View style={{ flex: 1 }}>
-                                    <Text style={[styles.groupName, !isOwned && styles.groupNameDim]}>{group.def.label}</Text>
-                                    {isOwned ? (
-                                        <Text style={styles.groupMeta}>{group.items.length}구역 · {isNaN(group.totalArea) ? (group.items.length * 1740).toLocaleString() : group.totalArea.toLocaleString()} m²</Text>
-                                    ) : (
-                                        <Text style={styles.groupMetaDim}>미개척</Text>
+                {/* ── 그룹 리스트 (아코디언) ── */}
+                <View style={styles.groupContainer}>
+                    {groups.map((group, gi) => {
+                        const isOwned = group.owned;
+                        const isExpanded = expandedKey === group.def.key;
+                        return (
+                            <View key={group.def.key}>
+                                {/* 구분선 */}
+                                {gi > 0 && <View style={styles.groupDivider} />}
+
+                                {/* 그룹 헤더 */}
+                                <TouchableOpacity
+                                    style={styles.groupHeader}
+                                    onPress={() => isOwned && setExpandedKey(prev => prev === group.def.key ? null : group.def.key)}
+                                    activeOpacity={isOwned ? 0.7 : 1}
+                                >
+                                    <View style={styles.groupLeft}>
+                                        <Ionicons name="location-outline" size={20} color={isOwned ? '#1A1A1A' : '#B2B2B2'} />
+                                        <View style={styles.groupTextArea}>
+                                            <Text style={[styles.groupName, !isOwned && styles.groupNameDim]}>{group.def.label}</Text>
+                                            {isOwned ? (
+                                                <Text style={styles.groupMeta}>
+                                                    {group.items.length}개 구역 · {formatArea(group.totalArea)}
+                                                </Text>
+                                            ) : (
+                                                <Text style={styles.groupMetaDim}>미개척</Text>
+                                            )}
+                                        </View>
+                                    </View>
+                                    {isOwned && (
+                                        <View style={styles.expanderBtn}>
+                                            <Ionicons name={isExpanded ? 'chevron-up' : 'chevron-down'} size={12} color="#808080" />
+                                        </View>
                                     )}
-                                </View>
-                                {isOwned && (
-                                    <View style={[styles.groupCountBadge, { backgroundColor: group.def.color + '20' }]}>
-                                        <Text style={[styles.groupCountText, { color: group.def.color }]}>{group.items.length}</Text>
+                                </TouchableOpacity>
+
+                                {/* 확장된 구역 상세 */}
+                                {isOwned && isExpanded && (
+                                    <View>
+                                        {/* 헤더 다음 구분선 */}
+                                        <View style={styles.groupDivider} />
+                                        <View style={styles.sectorList}>
+                                            {group.items.map((t: Territory, ti: number) => (
+                                                <TouchableOpacity
+                                                    key={t.id}
+                                                    style={[styles.sectorDetailRow, ti > 0 && { marginTop: 19 }]}
+                                                    onPress={() => navigateToDetail(t)}
+                                                    activeOpacity={0.6}
+                                                >
+                                                    <View style={styles.sectorContent}>
+                                                        {/* 타이틀 행: 파란 바 + MAG ID */}
+                                                        <View style={styles.sectorTitleRow}>
+                                                            <View style={styles.sectorLeftBar} />
+                                                            <Text style={styles.sectorTitle}>
+                                                                MAG-L{t.level}-{t.token.slice(0, 9)}
+                                                            </Text>
+                                                            <Ionicons name="chevron-forward" size={20} color="#B2B2B2" />
+                                                        </View>
+                                                        {/* 메타 정보: 파란 바 없이 paddingLeft으로 정렬 */}
+                                                        <View style={styles.sectorMeta}>
+                                                            <Text style={styles.sectorCoord}>
+                                                                {Math.abs(t.lat).toFixed(2)}°{t.lat >= 0 ? 'N' : 'S'} {Math.abs(t.lng).toFixed(2)}°{t.lng >= 0 ? 'E' : 'W'}
+                                                            </Text>
+                                                            <View style={styles.sectorMetaBottom}>
+                                                                <Text style={styles.sectorMinerals}>
+                                                                    {(t.minerals && t.minerals.length > 0) ? t.minerals.join(' ') : 'He-3 H2O'}
+                                                                </Text>
+                                                                <View style={styles.sectorDot} />
+                                                                <Text style={styles.sectorArea}>
+                                                                    {formatArea(1740)}
+                                                                </Text>
+                                                            </View>
+                                                        </View>
+                                                    </View>
+                                                </TouchableOpacity>
+                                            ))}
+                                        </View>
+                                        {/* 확장 섹션 하단 구분선 */}
+                                        <View style={styles.groupDivider} />
                                     </View>
                                 )}
-                                {isOwned && <Ionicons name={isExpanded ? 'chevron-up' : 'chevron-down'} size={16} color="#BDBDBD" />}
-                            </TouchableOpacity>
-
-                            {isOwned && isExpanded && (
-                                <View style={styles.groupBody}>
-                                    {group.items.map((t: Territory) => (
-                                        <TouchableOpacity key={t.id} style={styles.compactRow} onPress={() => navigateToDetail(t)} activeOpacity={0.6}>
-                                            <View style={[styles.compactColorBar, { backgroundColor: group.def.color }]} />
-                                            <Text style={styles.rowToken}>{t.token}</Text>
-                                            <Text style={styles.rowCoord}>
-                                                {Math.abs(t.lat).toFixed(2)}°{t.lat >= 0 ? 'N' : 'S'} {Math.abs(t.lng).toFixed(2)}°{t.lng >= 0 ? 'E' : 'W'}
-                                            </Text>
-                                        </TouchableOpacity>
-                                    ))}
-                                </View>
-                            )}
-                        </View>
-                    );
-                })}
-
+                            </View>
+                        );
+                    })}
+                </View>
             </ScrollView>
 
-            </SafeAreaView>
-    );
-}
-
-// ─── 서브 컴포넌트 ───
-function DashCell({ label, value, unit }: { label: string; value: string; unit: string }) {
-    return (
-        <View style={styles.dashCell}>
-            <Text style={styles.dashLabel}>{label}</Text>
-            <View style={styles.dashValueRow}>
-                <Text style={styles.dashValue}>{value}</Text>
-                <Text style={styles.dashUnit}>{unit}</Text>
+            {/* 하단 버튼 */}
+            <View style={styles.bottomBar}>
+                <TouchableOpacity
+                    style={styles.claimBtn}
+                    onPress={() => {
+                        router.back();
+                        DeviceEventEmitter.emit('switchToPioneer');
+                    }}
+                    activeOpacity={0.7}
+                >
+                    <Text style={styles.claimBtnText}>추가 구역 개척</Text>
+                </TouchableOpacity>
             </View>
-        </View>
+        </SafeAreaView>
     );
 }
-
 
 const styles = StyleSheet.create({
     container: { flex: 1, backgroundColor: '#FFFFFF' },
@@ -284,97 +278,84 @@ const styles = StyleSheet.create({
     headerBar: {
         flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
         paddingHorizontal: 16, paddingVertical: 12,
-        borderBottomWidth: 1, borderBottomColor: '#F0F0F0',
     },
     backBtn: { padding: 8 },
-    headerTitle: { fontSize: 17, fontWeight: '700', color: '#1A1A1A' },
-    scrollContent: { paddingBottom: 40 },
+    headerTitle: { fontSize: 18, fontWeight: '600', color: '#1A1A1A' },
+    scrollContent: { paddingBottom: 120 },
 
-    // ── 대시보드 ──
-    dashboard: {
-        flexDirection: 'row', alignItems: 'center',
-        marginHorizontal: 16, marginTop: 16, marginBottom: 4,
-        backgroundColor: '#F7F7FA', borderRadius: 14,
-        paddingVertical: 18, paddingHorizontal: 6,
+    // ── Status 카드 ──
+    statusRow: {
+        flexDirection: 'row', gap: 7, paddingHorizontal: 16, paddingTop: 20,
     },
-    dashCell: { flex: 1, alignItems: 'center' },
-    dashDivider: { width: 1, height: 36, backgroundColor: '#E8E8E8' },
-    dashLabel: { fontSize: 11, fontWeight: '600', color: '#9E9E9E', marginBottom: 6 },
-    dashValueRow: { flexDirection: 'row', alignItems: 'baseline', gap: 3 },
-    dashValue: { fontSize: 24, fontWeight: '800', color: '#1A1A1A' },
-    dashUnit: { fontSize: 12, fontWeight: '600', color: '#BDBDBD' },
-
-    // ── 컨트롤 행 (분류+뷰) ──
-    controlRow: {
-        flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
-        paddingHorizontal: 16, paddingVertical: 12,
+    statusCard: {
+        flex: 1, backgroundColor: '#EAECF6', borderRadius: 6,
+        padding: 14, justifyContent: 'space-between', minHeight: 90,
     },
-    classifyToggle: { flexDirection: 'row', backgroundColor: '#F0F0F0', borderRadius: 8, padding: 2 },
-    classifyBtn: { paddingVertical: 6, paddingHorizontal: 12, borderRadius: 6 },
-    classifyBtnActive: { backgroundColor: '#1A1A1A' },
-    classifyText: { fontSize: 12, fontWeight: '600', color: '#999' },
-    classifyTextActive: { color: '#fff' },
-    viewToggle: { flexDirection: 'row', backgroundColor: '#F0F0F0', borderRadius: 8, padding: 2 },
-    viewToggleBtn: { paddingVertical: 6, paddingHorizontal: 10, borderRadius: 6 },
-    viewToggleBtnActive: { backgroundColor: '#1A1A1A' },
+    statusLabel: { fontSize: 13, fontWeight: '400', color: '#707070' },
+    statusValRow: { flexDirection: 'row', alignItems: 'baseline', justifyContent: 'flex-end', gap: 4 },
+    statusValue: { fontSize: 28, fontWeight: '600', color: '#1A1A1A' },
+    statusUnit: { fontSize: 12, fontWeight: '500', color: '#999', paddingBottom: 1 },
 
-    // ── 아코디언 그룹 ──
-    groupRow: { marginHorizontal: 16, borderBottomWidth: 1, borderBottomColor: '#F0F0F0' },
-    groupRowDim: { opacity: 0.4 },
-    groupHeader: { flexDirection: 'row', alignItems: 'center', paddingVertical: 13, gap: 10 },
-    groupDot: { width: 14, height: 14, borderRadius: 4 },
-    groupName: { fontSize: 15, fontWeight: '700', color: '#1A1A1A', marginBottom: 1 },
-    groupNameDim: { color: '#BDBDBD' },
-    groupMeta: { fontSize: 12, color: '#9E9E9E' },
-    groupMetaDim: { fontSize: 12, color: '#D0D0D0' },
-    groupCountBadge: {
-        borderRadius: 10, minWidth: 24, height: 24,
-        alignItems: 'center', justifyContent: 'center', paddingHorizontal: 6, marginRight: 6,
-    },
-    groupCountText: { fontSize: 11, fontWeight: '700' },
-    groupBody: { paddingBottom: 8 },
+    // ── 섹션 헤더 ──
+    sectionHeaderRow: { paddingHorizontal: 16, paddingTop: 40 },
+    sectionHeader: { fontSize: 14, fontWeight: '500', color: '#3C57E9' },
 
-    // ── 컴팩트 행 ──
-    compactRow: {
+    // ── 그룹 컨테이너 ──
+    groupContainer: { paddingHorizontal: 16 },
+    groupDivider: { height: 1, backgroundColor: '#EBECF1' },
+
+    // ── 그룹 헤더 ──
+    groupHeader: {
         flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-        paddingVertical: 11, paddingLeft: 0, paddingRight: 12,
-        borderTopWidth: 1, borderTopColor: '#F7F7F7',
+        paddingVertical: 7,
     },
-    compactColorBar: { width: 3, height: 32, borderRadius: 2, marginRight: 10 },
-    rowLeft: { width: 106 },
-    rowToken: { fontSize: 13, fontWeight: '700', color: '#333', flex: 1, fontFamily: 'monospace' },
-    rowCoord: { fontSize: 12, color: '#BDBDBD' },
-    rowMid: { flex: 1, flexDirection: 'row', gap: 6 },
-    rowMineral: { fontSize: 11, color: '#9E9E9E', fontWeight: '500' },
-    rowRight: { alignItems: 'flex-end', marginRight: 8 },
-    rowScore: { fontSize: 12, fontWeight: '700', marginBottom: 2 },
-    rowArea: { fontSize: 10, color: '#BDBDBD' },
-
-    // ── 그리드 ──
-    gridContainer: { flexDirection: 'row', flexWrap: 'wrap', gap: GRID_GAP, paddingHorizontal: 16 },
-    gridTile: {
-        width: CARD_SIZE, backgroundColor: '#F7F7FA', borderRadius: 10,
-        paddingVertical: 10, paddingHorizontal: 8, overflow: 'hidden',
+    groupLeft: {
+        flex: 1, flexDirection: 'row', gap: 10, alignItems: 'flex-start',
+        paddingVertical: 14,
     },
-    gridTileBar: { position: 'absolute', top: 0, left: 0, right: 0, height: 3, borderTopLeftRadius: 10, borderTopRightRadius: 10 },
-    gridTileToken: { fontSize: 11, fontWeight: '800', color: '#1A1A1A', marginBottom: 1, fontFamily: 'monospace' },
-    gridTileCoord: { fontSize: 9, color: '#BDBDBD', marginBottom: 3 },
-    gridTileArea: { fontSize: 10, color: '#666', fontWeight: '500' },
-    gridTileScore: { fontSize: 10, fontWeight: '700', marginTop: 2 },
-
-    // ── 범례 ──
-    legendRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 10, paddingHorizontal: 20, paddingTop: 12 },
-    legendItem: { flexDirection: 'row', alignItems: 'center', gap: 4 },
-    legendDot: { width: 8, height: 8, borderRadius: 4 },
-    legendLabel: { fontSize: 10, color: '#9E9E9E' },
-
-    gridCounter: { textAlign: 'center', fontSize: 12, color: '#BDBDBD', paddingVertical: 10 },
-
-    // ── 추가 ──
-    addCard: {
-        flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
-        marginHorizontal: 16, marginTop: 4, paddingVertical: 14,
-        borderRadius: 10, borderWidth: 1.5, borderColor: '#E0E0E0', borderStyle: 'dashed', gap: 6,
+    groupTextArea: { flex: 1, gap: 5 },
+    groupName: { fontSize: 16, fontWeight: '500', color: '#1A1A1A' },
+    groupNameDim: { color: '#B2B2B2' },
+    groupMeta: { fontSize: 14, fontWeight: '400', color: '#3B4576' },
+    groupMetaDim: { fontSize: 14, fontWeight: '400', color: '#B2B2B2' },
+    expanderBtn: {
+        width: 24, height: 24, borderRadius: 15,
+        backgroundColor: '#EBECF1',
+        justifyContent: 'center', alignItems: 'center',
     },
-    addCardText: { fontSize: 13, fontWeight: '600', color: '#4A90D9' },
+
+    // ── 구역 상세 (확장) ──
+    sectorList: {
+        paddingLeft: 30, paddingVertical: 22,
+    },
+    sectorDetailRow: {
+    },
+    sectorContent: { gap: 3 },
+    sectorTitleRow: {
+        flexDirection: 'row', alignItems: 'center',
+    },
+    sectorLeftBar: {
+        width: 4, backgroundColor: '#3C57E9', alignSelf: 'stretch', marginRight: 14,
+    },
+    sectorTitle: { flex: 1, fontSize: 16, fontWeight: '500', color: '#1A1A1A' },
+    sectorMeta: { paddingLeft: 18, gap: 2 },
+    sectorCoord: { fontSize: 14, fontWeight: '400', color: '#999999', lineHeight: 21 },
+    sectorMetaBottom: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+    sectorMinerals: { fontSize: 12, fontWeight: '400', color: '#3B4576', lineHeight: 17 },
+    sectorDot: { width: 3, height: 3, borderRadius: 1.5, backgroundColor: '#999999' },
+    sectorArea: { fontSize: 12, fontWeight: '400', color: '#999999', lineHeight: 17 },
+
+    // ── 하단 버튼 ──
+    bottomBar: {
+        position: 'absolute', bottom: 0, left: 0, right: 0,
+        paddingHorizontal: 16, paddingTop: 10, paddingBottom: 36,
+        backgroundColor: '#fff',
+        shadowColor: '#000', shadowOffset: { width: 0, height: -1 }, shadowOpacity: 0.06, shadowRadius: 4,
+        elevation: 4,
+    },
+    claimBtn: {
+        backgroundColor: '#3C57E9', borderRadius: 5,
+        height: 56, alignItems: 'center', justifyContent: 'center',
+    },
+    claimBtnText: { color: '#FFFFFF', fontSize: 16, fontWeight: '600' },
 });

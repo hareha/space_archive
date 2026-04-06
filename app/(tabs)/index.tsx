@@ -1,9 +1,10 @@
 import React, { useRef, useState, useEffect, useMemo } from 'react';
-import { StyleSheet, View, Text, TouchableOpacity, Platform, Dimensions, ActivityIndicator, ScrollView, Switch, TextInput, Modal, Animated, PanResponder, Share, Alert, Image } from 'react-native';
+import { StyleSheet, View, Text, TouchableOpacity, Platform, Dimensions, ActivityIndicator, ScrollView, Switch, TextInput, Modal, Animated, PanResponder, Share, Alert, Image, AppState, DeviceEventEmitter } from 'react-native';
 import { WebView } from 'react-native-webview';
-import { StatusBar } from 'expo-status-bar';
+
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
+import Svg, { Path } from 'react-native-svg';
 import { BlurView } from 'expo-blur';
 import { useLocalSearchParams, router } from 'expo-router';
 import { createCesiumHtml } from '@/constants/cesium/CesiumHtml';
@@ -22,14 +23,15 @@ import { LIVE_MISSIONS, Spacecraft } from '@/constants/SpacecraftData';
 import { fetchSpacecraftPosition, fetchSpacecraftTrajectory } from '@/services/HorizonsApi';
 import { LANDING_SITES, LandingSite, sortByYear, sortByCountry, findNearbySites, getContactColor, COUNTRY_NAMES } from '@/constants/LandingSiteData';
 import { LUNAR_FEATURES, LunarFeature, sortByType, sortBySize, getFeatureTypeColor, getFeatureTypeEmoji, formatArea, isFarSide, findNearbyFeatures } from '@/constants/LunarFeatureData';
+import { LANDING_SITE_IMAGES, LUNAR_FEATURE_IMAGES } from '@/constants/LunarImages';
 import { addScrapArea, removeScrapArea, isAreaScrapped } from '@/constants/scrapStore';
-import { getAllOccupiedTokens, getUserOccupiedCells, getCellOwnerFromDB, occupyCell } from '@/services/database';
+import { getAllOccupiedTokens, getUserOccupiedCells, getCellOwnerFromDB, occupyCell } from '@/services/CellService';
 import { useAuth } from '@/components/AuthContext';
 import * as Linking from 'expo-linking';
 import { onJumpRequest, consumeJumpRequest } from '@/constants/jumpToCellStore';
 
 export default function MoonScreen() {
-  const { isLoggedIn } = useAuth();
+  const { isLoggedIn, user, refreshUser } = useAuth();
   const webviewRef = useRef<WebView>(null);
   const skipCameraResetRef = useRef(false);
   const [loading, setLoading] = useState(true);
@@ -41,6 +43,8 @@ export default function MoonScreen() {
   const pendingJumpCellRef = useRef<string | null>(null); // TILESET_READY 후 JUMP_TO_CELL 대기
   const [webviewReady, setWebviewReady] = useState(false); // WebView JS 초기화 완료
   const [modeTransitioning, setModeTransitioning] = useState(false); // 모드 전환 중 잠금
+  const [webviewKey, setWebviewKey] = useState(0); // WebView 크래시 복구용 키
+  const appStateRef = useRef(AppState.currentState);
 
   // 스플래시 오버레이
   const [showSplash, setShowSplash] = useState(true);
@@ -63,9 +67,10 @@ export default function MoonScreen() {
   const [cellExpanded, setCellExpanded] = useState(false);
   const [showCellDetail, setShowCellDetail] = useState(false);
   const [showOccupyConfirm, setShowOccupyConfirm] = useState(false);
-  const [cellPanelMode, setCellPanelMode] = useState<'A' | 'B'>('A');
+  const [purchasing, setPurchasing] = useState(false);
+
   const [occupySelectLevel, setOccupySelectLevel] = useState(16);
-  const { ellBalance, remainingMag, spendEll, purchasedTerritories, addDemoTerritory } = useEll();
+  const { ellBalance, remainingMag, spendEll, purchasedTerritories, addDemoTerritory, refreshBalance } = useEll();
   const magBalance = remainingMag; // WebView 동기화 및 하위 호환용
   const [magCost, setMagCost] = useState(0);
 
@@ -90,7 +95,13 @@ export default function MoonScreen() {
       },
       onPanResponderRelease: (_, g) => {
         const cur = sheetOffset.current + g.dy;
-        const target = cur > SHEET_COLLAPSE / 2 ? SHEET_COLLAPSE : 0;
+        const vy = g.vy;
+        let target;
+        if (Math.abs(vy) > 0.5) {
+          target = vy > 0 ? SHEET_COLLAPSE : 0;
+        } else {
+          target = cur > SHEET_COLLAPSE / 2 ? SHEET_COLLAPSE : 0;
+        }
         Animated.spring(sheetTranslateY, { toValue: target, useNativeDriver: true, bounciness: 4, speed: 14 }).start();
         sheetOffset.current = target;
       },
@@ -121,7 +132,13 @@ export default function MoonScreen() {
       onPanResponderRelease: (_, g) => {
         const collapse = sheetBCollapseRef.current;
         const cur = sheetBOffset.current + g.dy;
-        const target = cur > collapse / 2 ? collapse : 0;
+        const vy = g.vy;
+        let target;
+        if (Math.abs(vy) > 0.5) {
+          target = vy > 0 ? collapse : 0;
+        } else {
+          target = cur > collapse / 2 ? collapse : 0;
+        }
         Animated.spring(sheetBTranslateY, { toValue: target, useNativeDriver: true, bounciness: 4, speed: 14 }).start();
         sheetBOffset.current = target;
       },
@@ -145,8 +162,12 @@ export default function MoonScreen() {
       },
       onPanResponderRelease: (_, g) => {
         const cur = satPanelOffsetRef.current + g.dy;
+        const vy = g.vy;
         let target;
-        if (cur < SAT_PANEL_EXPANDED * 0.5) { target = SAFE_TOP; }
+        if (Math.abs(vy) > 0.5) {
+          if (vy < 0) { target = SAFE_TOP; }
+          else { target = SAT_PANEL_COLLAPSED; }
+        } else if (cur < SAT_PANEL_EXPANDED * 0.5) { target = SAFE_TOP; }
         else { const mid = (SAT_PANEL_COLLAPSED + SAT_PANEL_EXPANDED) / 2; target = cur > mid ? SAT_PANEL_COLLAPSED : SAT_PANEL_EXPANDED; }
         Animated.spring(satPanelAnim, { toValue: target, useNativeDriver: false, bounciness: 4, speed: 14 }).start();
         satPanelOffsetRef.current = target;
@@ -171,8 +192,12 @@ export default function MoonScreen() {
       },
       onPanResponderRelease: (_, g) => {
         const cur = landingPanelOffsetRef.current + g.dy;
+        const vy = g.vy;
         let target;
-        if (cur < SNAP_MAX * 0.5) { target = SAFE_TOP; }
+        if (Math.abs(vy) > 0.5) {
+          if (vy < 0) { target = SAFE_TOP; }
+          else { target = SNAP_MIN; }
+        } else if (cur < SNAP_MAX * 0.5) { target = SAFE_TOP; }
         else { const mid = (SNAP_MIN + SNAP_MAX) / 2; target = cur > mid ? SNAP_MIN : SNAP_MAX; }
         Animated.spring(landingPanelAnim, { toValue: target, useNativeDriver: false, bounciness: 4, speed: 14 }).start();
         landingPanelOffsetRef.current = target;
@@ -197,8 +222,12 @@ export default function MoonScreen() {
       },
       onPanResponderRelease: (_, g) => {
         const cur = featurePanelOffsetRef.current + g.dy;
+        const vy = g.vy;
         let target;
-        if (cur < SNAP_MAX * 0.5) { target = SAFE_TOP; }
+        if (Math.abs(vy) > 0.5) {
+          if (vy < 0) { target = SAFE_TOP; }
+          else { target = SNAP_MIN; }
+        } else if (cur < SNAP_MAX * 0.5) { target = SAFE_TOP; }
         else { const mid = (SNAP_MIN + SNAP_MAX) / 2; target = cur > mid ? SNAP_MIN : SNAP_MAX; }
         Animated.spring(featurePanelAnim, { toValue: target, useNativeDriver: false, bounciness: 4, speed: 14 }).start();
         featurePanelOffsetRef.current = target;
@@ -207,9 +236,57 @@ export default function MoonScreen() {
   ).current;
   const [selectedSatellite, setSelectedSatellite] = useState<any>(null);
   const satIsLookAt = useRef(false);
-  const landingIsFirstPerson = useRef(false);
+  const [satIsLookAtState, setSatIsLookAtState] = useState(false);
+   const landingIsFirstPerson = useRef(false);
   const featureIsFirstPerson = useRef(false);
+
+  // ── 통합 네비게이션 헬퍼 ──
+  const goToLandingSite = (site: LandingSite) => {
+    setSelectedLandingSite(site);
+    setLandingSiteDetailMode('detail');
+    webviewRef.current?.postMessage(JSON.stringify({
+      type: 'GO_TO_LOCATION',
+      payload: { lat: site.lat, lng: site.lng, orbit: landingIsFirstPerson.current }
+    }));
+  };
+
+  const goToFeature = (feat: LunarFeature) => {
+    setSelectedFeature(feat);
+    setFeatureDetailMode('detail');
+    webviewRef.current?.postMessage(JSON.stringify({
+      type: 'GO_TO_LOCATION',
+      payload: { lat: feat.lat, lng: feat.lng, orbit: featureIsFirstPerson.current }
+    }));
+    webviewRef.current?.postMessage(JSON.stringify({
+      type: 'SHOW_FEATURE_AREA',
+      payload: { lat: feat.lat, lng: feat.lng, diameterKm: feat.diameterKm, widthKm: (feat as any).widthKm, angle: (feat as any).angle, typeKr: feat.typeKr, typeEn: (feat as any).typeEn }
+    }));
+  };
+
+  const toggleLandingView = () => {
+    if (!selectedLandingSite) return;
+    if (landingIsFirstPerson.current) {
+      landingIsFirstPerson.current = false;
+      webviewRef.current?.postMessage(JSON.stringify({ type: 'GO_TO_LOCATION', payload: { lat: selectedLandingSite.lat, lng: selectedLandingSite.lng } }));
+    } else {
+      landingIsFirstPerson.current = true;
+      webviewRef.current?.postMessage(JSON.stringify({ type: 'GO_TO_LOCATION', payload: { lat: selectedLandingSite.lat, lng: selectedLandingSite.lng, orbit: true } }));
+    }
+  };
+
+  const toggleFeatureView = () => {
+    if (!selectedFeature) return;
+    if (featureIsFirstPerson.current) {
+      featureIsFirstPerson.current = false;
+      webviewRef.current?.postMessage(JSON.stringify({ type: 'GO_TO_LOCATION', payload: { lat: selectedFeature.lat, lng: selectedFeature.lng } }));
+    } else {
+      featureIsFirstPerson.current = true;
+      webviewRef.current?.postMessage(JSON.stringify({ type: 'GO_TO_LOCATION', payload: { lat: selectedFeature.lat, lng: selectedFeature.lng, orbit: true } }));
+    }
+  };
+
   const [showAR2Viewer, setShowAR2Viewer] = useState(false);
+
   const [showTempMap, setShowTempMap] = useState(false);
   const [showThermalGrid, setShowThermalGrid] = useState(false);
   const [showGravityMap, setShowGravityMap] = useState(false);
@@ -290,12 +367,70 @@ export default function MoonScreen() {
   }, [landingSiteDetailMode, featureDetailMode]);
 
 
+  // ═══ WebView 크래시 / 백그라운드 복귀 자동 복구 ═══
+  const reloadWebView = () => {
+    console.warn('[WebView] Reloading — saving current mode:', mainMode);
+    // 현재 모드 저장 → WebView 재생성 후 INIT_COMPLETE 시 자동 복원
+    if (mainMode === 'test2' || mainMode === 'test1' || mainMode === 'test3') {
+      pendingModeRef.current = mainMode;
+    }
+    setLoading(true);
+    setWebviewReady(false);
+    setWebviewKey(prev => prev + 1);
+  };
+
+  useEffect(() => {
+    const subscription = AppState.addEventListener('change', (nextAppState) => {
+      // 백그라운드→포그라운드 전환 시 WebView 리로드
+      if (
+        appStateRef.current.match(/inactive|background/) &&
+        nextAppState === 'active'
+      ) {
+        console.log('[AppState] Foreground restored — checking WebView health');
+        // WebView가 아직 메시지를 보낼 수 있는지 핑 체크
+        const healthTimeout = setTimeout(() => {
+          // 2초 안에 PONG 안 오면 WebView 죽은 것으로 판단
+          console.warn('[AppState] WebView health check timeout — reloading');
+          reloadWebView();
+        }, 2000);
+        // PING 보내기
+        try {
+          webviewRef.current?.injectJavaScript(`
+            try {
+              window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'PONG' }));
+            } catch(e) {}
+            true;
+          `);
+        } catch (e) {
+          // injectJavaScript 자체가 실패하면 즉시 리로드
+          clearTimeout(healthTimeout);
+          reloadWebView();
+        }
+        // PONG 수신 시 타이머 해제는 handleWebViewMessage에서 처리
+        (globalThis as any).__webviewHealthTimeout = healthTimeout;
+      }
+      appStateRef.current = nextAppState;
+    });
+    return () => subscription.remove();
+  }, [mainMode]);
 
   // ═══ Phase 1.5: Cesium HTML을 파일로 저장 (file:// URI로 WebView 로드) ═══
   useEffect(() => {
     (async () => {
       try {
-        const htmlContent = createCesiumHtml('', '');
+        // 지구 텍스처 base64 로드
+        let earthBase64 = '';
+        try {
+          const earthAsset = Asset.fromModule(require('../../assets/images/earth.jpg'));
+          await earthAsset.downloadAsync();
+          if (earthAsset.localUri) {
+            const b64 = await FileSystem.readAsStringAsync(earthAsset.localUri, { encoding: 'base64' });
+            earthBase64 = `data:image/jpeg;base64,${b64}`;
+            console.log('[Phase 1.5] Earth texture loaded, length:', earthBase64.length);
+          }
+        } catch (e) { console.warn('Earth texture load error:', e); }
+
+        const htmlContent = createCesiumHtml('', '', earthBase64);
         const htmlPath = FileSystem.documentDirectory + 'cesium_viewer.html';
         await FileSystem.writeAsStringAsync(htmlPath, htmlContent, { encoding: FileSystem.EncodingType.UTF8 });
         setCesiumHtmlUri(htmlPath);
@@ -322,10 +457,12 @@ export default function MoonScreen() {
 
             // documentDirectory에 복사 (WebView와 같은 디렉토리 → file:// 접근 가능)
             const destPath = FileSystem.documentDirectory + modelName + '.glb';
+            // 항상 최신 파일로 덮어쓰기 (캐시된 구버전 방지)
             const fileInfo = await FileSystem.getInfoAsync(destPath);
-            if (!fileInfo.exists) {
-              await FileSystem.copyAsync({ from: asset.localUri, to: destPath });
+            if (fileInfo.exists) {
+              await FileSystem.deleteAsync(destPath, { idempotent: true });
             }
+            await FileSystem.copyAsync({ from: asset.localUri, to: destPath });
             const uri = destPath;
             const msg: any = { type: 'SET_MODEL_URI', model: modelName, uri };
             // apollo 모델의 경우 공유 사이트 데이터 첨부
@@ -340,9 +477,14 @@ export default function MoonScreen() {
 
         await injectGlb(require('../../assets/3d/apollo_11_lunar_module.glb'), 'apollo');
         await injectGlb(require('../../assets/3d/danuri.glb'), 'danuri');
-        await injectGlb(require('../../assets/3d/chandrayaan.glb'), 'chandrayaan');
+
         await injectGlb(require('../../assets/3d/capstone.glb'), 'capstone');
         await injectGlb(require('../../assets/3d/lro.glb'), 'lro');
+        await injectGlb(require('../../assets/3d/artemis_ii.glb'), 'artemis_ii');
+        await injectGlb(require('../../assets/3d/themis.glb'), 'themis');
+        await injectGlb(require('../../assets/3d/chandrayaan-2.glb'), 'chandrayaan2');
+        await injectGlb(require('../../assets/3d/flag.glb'), 'flag');
+
         console.log('[Phase 2] GLB model loading completed');
       })();
     }, 2000);
@@ -563,29 +705,12 @@ export default function MoonScreen() {
     if (mainMode === 'occupation' || mainMode === 'test1' || mainMode === 'test2' || mainMode === 'test3') {
       (async () => {
         try {
-          // 1) 즉시 DB에서 현재 점유 토큰 로드 → WebView 전달
+          // DB에서 현재 점유 토큰 로드 → WebView 전달
           const tokens = await getAllOccupiedTokens();
-          const myCells = await getUserOccupiedCells('hero');
+          const myCells = user?.id ? await getUserOccupiedCells(user.id) : [];
           const myTokens = myCells.map(c => c.cellId);
           console.log(`[Mode→${mainMode}] Loaded ${tokens.length} occupied, ${myTokens.length} mine`);
           webviewRef.current?.postMessage(JSON.stringify({ type: 'SET_OCCUPIED_TOKENS', payload: { tokens, myTokens } }));
-
-          // 2) 백그라운드: EllContext purchasedTerritories → DB 동기화 (아직 DB에 없는 것만)
-          if (purchasedTerritories.length > 0) {
-            let synced = 0;
-            for (const t of purchasedTerritories) {
-              const ok = await occupyCell('hero', t.token, t.lat, t.lng, t.magCost).catch(() => false);
-              if (ok) synced++;
-            }
-            if (synced > 0) {
-              // 새로 동기화된 게 있으면 재전달
-              const tokens2 = await getAllOccupiedTokens();
-              const myCells2 = await getUserOccupiedCells('hero');
-              const myTokens2 = myCells2.map(c => c.cellId);
-              webviewRef.current?.postMessage(JSON.stringify({ type: 'SET_OCCUPIED_TOKENS', payload: { tokens: tokens2, myTokens: myTokens2 } }));
-              console.log(`[Mode→${mainMode}] Synced ${synced} from context`);
-            }
-          }
         } catch (e) {
           console.log('[Mode] Failed to auto-load occupied tokens', e);
         }
@@ -707,6 +832,67 @@ export default function MoonScreen() {
     }
   }, [loading, params.lat, params.lng]);
 
+  // 내 구역 관리 → 추가 구역 개척 → 개척 모드 자동 전환
+  useEffect(() => {
+    if (!loading && params.mode === 'pioneer') {
+      setMainMode('test2');
+    }
+  }, [loading, params.mode]);
+
+  useEffect(() => {
+    const sub = DeviceEventEmitter.addListener('switchToPioneer', () => {
+      setMainMode('test2');
+    });
+    return () => sub.remove();
+  }, []);
+
+  // 인사이트 기사 하이퍼링크 → 탐사모드에서 착륙지/지형 선택
+  useEffect(() => {
+    const sub = DeviceEventEmitter.addListener('navigateToExploration', (data: { lat: number; lng: number; name: string; type: 'landing' | 'feature' }) => {
+      if (loading) return;
+      console.log('[NewsLink] navigateToExploration:', data.type, data.name, data.lat, data.lng);
+
+      // 탐사모드로 전환 (개척모드였을 수 있음)
+      setMainMode('exploration');
+
+      // 기존에 열려있던 목록 패널 + 선택 상태 모두 초기화
+      setShowFeaturePanel(false);
+      setShowFeaturePanelB(false);
+      setShowFeaturePanelC(false);
+      setSelectedLandingSite(null);
+      setSelectedFeature(null);
+      setSelectedSatellite(null);
+
+      setTimeout(() => {
+        if (data.type === 'landing') {
+          setShowLandingSites(true);
+          webviewRef.current?.postMessage(JSON.stringify({ type: 'TOGGLE_LANDING_SITES', enabled: true }));
+          const site = LANDING_SITES.find(s => s.nameKr === data.name || s.officialName === data.name);
+          if (site) {
+            setSelectedLandingSite(site);
+            setLandingSiteDetailMode('detail');
+            webviewRef.current?.postMessage(JSON.stringify({ type: 'GO_TO_LOCATION', payload: { lat: site.lat, lng: site.lng } }));
+          } else {
+            webviewRef.current?.postMessage(JSON.stringify({ type: 'GO_TO_LOCATION', payload: { lat: data.lat, lng: data.lng } }));
+          }
+        } else if (data.type === 'feature') {
+          setShowTerrain(true);
+          webviewRef.current?.postMessage(JSON.stringify({ type: 'TOGGLE_TERRAIN', enabled: true }));
+          const feat = LUNAR_FEATURES.find(f => f.nameKr === data.name || f.nameEn === data.name);
+          if (feat) {
+            setSelectedFeature(feat);
+            setFeatureDetailMode('detail');
+            webviewRef.current?.postMessage(JSON.stringify({ type: 'GO_TO_LOCATION', payload: { lat: feat.lat, lng: feat.lng } }));
+            webviewRef.current?.postMessage(JSON.stringify({ type: 'SHOW_FEATURE_AREA', payload: { lat: feat.lat, lng: feat.lng, diameterKm: feat.diameterKm, widthKm: feat.widthKm, angle: feat.angle, typeKr: feat.typeKr } }));
+          } else {
+            webviewRef.current?.postMessage(JSON.stringify({ type: 'GO_TO_LOCATION', payload: { lat: data.lat, lng: data.lng } }));
+          }
+        }
+      }, 500);
+    });
+    return () => sub.remove();
+  }, [loading]);
+
   // 스크랩북 관심영역 → 탐사모드에서 패널 열기 + 지점 선택
   useEffect(() => {
     if (!loading && params.highlightLat && params.highlightLng) {
@@ -773,10 +959,14 @@ export default function MoonScreen() {
   mainModeRef.current = mainMode;
 
   useEffect(() => {
-    // 마운트 시 이미 대기 중인 요청 확인
-    const pending = consumeJumpRequest();
-    if (pending && !loading) {
-      handleJumpToCell(pending.token);
+    // 마운트 또는 loading 변경 시: 스토어 + ref 양쪽 확인
+    if (!loading) {
+      const pending = consumeJumpRequest();
+      const pendingToken = pending?.token || pendingJumpCellRef.current;
+      if (pendingToken) {
+        pendingJumpCellRef.current = null;
+        handleJumpToCell(pendingToken);
+      }
     }
 
     const unsub = onJumpRequest((req) => {
@@ -785,6 +975,7 @@ export default function MoonScreen() {
       if (!loading) {
         handleJumpToCell(req.token);
       } else {
+        // loading 중이면 ref에 저장 → loading=false 될 때 위에서 처리
         pendingJumpCellRef.current = req.token;
       }
     });
@@ -792,15 +983,17 @@ export default function MoonScreen() {
   }, [loading]);
 
   function handleJumpToCell(token: string) {
-    console.log('[CellView] Jump to cell:', token, 'currentMode:', mainModeRef.current);
+    console.log('[CellView] handleJumpToCell called:', token, 'currentMode:', mainModeRef.current, 'loading:', loading);
     pendingJumpCellRef.current = token;
 
-    // 현재 탭이 index가 아닐 수 있으므로 (mypage에서 올 수 있음) index 탭으로 전환
-    router.navigate('/(tabs)');
+    // mypage에서 올 수 있으므로 확실하게 index(moon) 탭으로 전환
+    router.navigate('/(tabs)' as any);
 
     if (mainModeRef.current !== 'test2') {
+      console.log('[CellView] switching to test2 mode');
       setMainMode('test2');
     } else {
+      console.log('[CellView] already test2, re-sending ENTER_TEST2_MODE');
       // 이미 test2 모드: ENTER_TEST2_MODE 재전송 → TILESET_READY 트리거
       webviewRef.current?.postMessage(JSON.stringify({ type: 'REMOVE_ALL_3D_MODELS' }));
       webviewRef.current?.postMessage(JSON.stringify({ type: 'ENTER_TEST2_MODE' }));
@@ -829,6 +1022,14 @@ export default function MoonScreen() {
       }
 
       switch (message.type) {
+        // WebView 헬스체크 응답 — 타이머 해제
+        case 'PONG':
+          if ((globalThis as any).__webviewHealthTimeout) {
+            clearTimeout((globalThis as any).__webviewHealthTimeout);
+            (globalThis as any).__webviewHealthTimeout = null;
+            console.log('[AppState] WebView is alive — skip reload');
+          }
+          break;
         // case 'DEBUG_LOG' removed as requested
         case 'DEBUG_LOG':
           console.log('[Cesium]', message.payload);
@@ -884,19 +1085,21 @@ export default function MoonScreen() {
           setTilesetLoading(true);
           break;
         case 'TILESET_READY':
+          console.log('[CellView] TILESET_READY received, pendingJump:', pendingJumpCellRef.current);
           setTilesetLoading(false);
           setModeTransitioning(false);
           // pending jump가 있으면 tileset 준비 후 실행
           if (pendingJumpCellRef.current) {
             const jumpToken = pendingJumpCellRef.current;
             pendingJumpCellRef.current = null;
-            console.log('[CellView] TILESET_READY → executing pending JUMP_TO_CELL:', jumpToken);
+            console.log('[CellView] TILESET_READY → executing JUMP_TO_CELL:', jumpToken);
             setTimeout(() => {
+              console.log('[CellView] Sending JUMP_TO_CELL to WebView');
               webviewRef.current?.postMessage(JSON.stringify({
                 type: 'JUMP_TO_CELL',
                 token: jumpToken,
               }));
-            }, 500); // L0 그리드 렌더 완료를 위한 최소 딜레이
+            }, 1000); // L0 그리드 렌더 완료를 위한 딜레이
           }
           break;
         case 'INIT_COMPLETE':
@@ -914,15 +1117,7 @@ export default function MoonScreen() {
               message.payload.lat ?? 30.0,
               message.payload.lng ?? 15.0
             );
-            // DB에만 등록 (SET_OCCUPIED_TOKENS는 모드 진입 useEffect에서 처리)
-            occupyCell(
-              'hero',
-              message.payload.token,
-              message.payload.lat ?? 30.0,
-              message.payload.lng ?? 15.0,
-              1
-            ).catch(e => console.warn('[Index] Demo DB register failed:', e));
-            console.log('[Index] Demo territory added:', message.payload.token);
+            console.log('[Index] Demo territory added (local only):', message.payload.token);
           }
           break;
         case 'QUERY_CELL_OWNER':
@@ -1020,6 +1215,11 @@ export default function MoonScreen() {
     // 개척모드 셀 선택 즉시 해제
     setSelectedCell(null);
     setCellExpanded(false);
+    // 위성 선택 해제 (토글 상태는 유지)
+    setSelectedSatellite(null);
+    // 착륙지/지형 선택 해제
+    setSelectedLandingSite(null);
+    setSelectedFeature(null);
     // 하이라이트 정리
     if (featureHighlight) {
       setFeatureHighlight(null);
@@ -1473,7 +1673,7 @@ export default function MoonScreen() {
           const stepMin = trajHours <= 4 ? 3 : trajHours <= 48 ? 15 : 30;
           const [position, trajectory] = await Promise.all([
             fetchSpacecraftPosition(mission.id),
-            fetchSpacecraftTrajectory(mission.id, trajHours, stepMin)
+            fetchSpacecraftTrajectory(mission.id, trajHours, stepMin, mission.launchDate)
           ]);
 
           results.push({
@@ -1481,6 +1681,11 @@ export default function MoonScreen() {
             position: position || undefined,
             trajectory: trajectory || undefined,
           });
+          // 디버그: 궤적 데이터 확인
+          console.log(`[SAT] ${mission.name}: pos=${position ? 'OK' : 'NONE'}, traj=${trajectory ? trajectory.length + ' points' : 'NONE'}`);
+          if (trajectory && trajectory.length > 0) {
+            console.log(`[SAT] ${mission.name} traj[0]:`, JSON.stringify(trajectory[0]).substring(0, 120));
+          }
         } catch (error) {
           console.error(`Failed to fetch ${mission.name}:`, error);
           results.push({ ...mission });
@@ -1494,7 +1699,6 @@ export default function MoonScreen() {
 
     setSatelliteData(results);
     setIsLoadingSatellite(false);
-    // WebView 전송은 토글 ON 시에만 수행 (여기서는 데이터만 저장)
   };
 
   // 위성 데이터 로드 완료 감지: 토글 ON인데 데이터가 방금 로드되면 자동 전송
@@ -1559,7 +1763,7 @@ export default function MoonScreen() {
 
   return (
     <View style={styles.container}>
-      <StatusBar style="light" />
+      {/* StatusBar는 _layout.tsx에서 탭별로 관리 */}
 
 
       {/* 상단 헤더 영역 (모드 토글 및 점유모드 기능) */}
@@ -1570,9 +1774,9 @@ export default function MoonScreen() {
           <View style={styles.modeToggleInner}>
             <TouchableOpacity
               style={[styles.modeTab, mainMode === 'exploration' && styles.modeTabActive]}
-              disabled={tilesetLoading || modeTransitioning}
+              disabled={mainMode === 'exploration' || tilesetLoading || modeTransitioning}
               onPress={() => {
-                if (tilesetLoading || modeTransitioning) return;
+                if (mainMode === 'exploration' || tilesetLoading || modeTransitioning) return;
                 setModeTransitioning(true);
                 setMainMode('exploration');
                 if (featureHighlight) {
@@ -1581,7 +1785,7 @@ export default function MoonScreen() {
                 }
               }}
             >
-              <Text style={[styles.modeTabText, mainMode === 'exploration' && styles.modeTabTextActive, (tilesetLoading || modeTransitioning) && { opacity: 0.4 }]}>탐사 모드</Text>
+              <Text style={[styles.modeTabText, mainMode === 'exploration' && styles.modeTabTextActive, (mainMode !== 'exploration' && (tilesetLoading || modeTransitioning)) && { opacity: 0.4 }]}>탐사 모드</Text>
             </TouchableOpacity>
             {/* 구버전 개척모드(classification) — 숨김 처리
             <TouchableOpacity
@@ -1601,14 +1805,14 @@ export default function MoonScreen() {
             */}
             <TouchableOpacity
               style={[styles.modeTab, mainMode === 'test2' && styles.modeTabActive]}
-              disabled={tilesetLoading || modeTransitioning}
+              disabled={mainMode === 'test2' || tilesetLoading || modeTransitioning}
               onPress={() => {
-                if (tilesetLoading || modeTransitioning) return;
+                if (mainMode === 'test2' || tilesetLoading || modeTransitioning) return;
                 setModeTransitioning(true);
                 setMainMode('test2');
               }}
             >
-              <Text style={[styles.modeTabText, mainMode === 'test2' && styles.modeTabTextActive, (tilesetLoading || modeTransitioning) && { opacity: 0.4 }]}>개척 모드</Text>
+              <Text style={[styles.modeTabText, mainMode === 'test2' && styles.modeTabTextActive, (mainMode !== 'test2' && (tilesetLoading || modeTransitioning)) && { opacity: 0.4 }]}>개척 모드</Text>
             </TouchableOpacity>
 
 
@@ -1623,6 +1827,7 @@ export default function MoonScreen() {
       <View style={styles.canvasSection}>
         {/* Cesium WebView */}
         <WebView
+          key={webviewKey}
           ref={webviewRef}
           originWhitelist={['*']}
           source={cesiumHtmlUri ? { uri: cesiumHtmlUri } : { html: '<html><body style="background:#000"></body></html>' }}
@@ -1641,6 +1846,15 @@ export default function MoonScreen() {
           onError={(syntheticEvent) => {
             const { nativeEvent } = syntheticEvent;
             console.warn('WebView error: ', nativeEvent);
+          }}
+          onContentProcessDidTerminate={() => {
+            console.warn('[WebView] Content process terminated — reloading');
+            reloadWebView();
+          }}
+          onRenderProcessGone={(syntheticEvent) => {
+            const { nativeEvent } = syntheticEvent;
+            console.warn('[WebView] Render process gone:', nativeEvent);
+            reloadWebView();
           }}
         />
 
@@ -1695,7 +1909,7 @@ export default function MoonScreen() {
             {mainMode === 'exploration' && (
               <View style={{ gap: 8 }}>
                 <TouchableOpacity
-                  style={[styles.layerBtn, (showFeaturePanel || showFeaturePanelB || showFeaturePanelC || selectedSatellite || selectedLandingSite || selectedFeature) && { backgroundColor: 'rgba(59,130,246,0.8)' }]}
+                  style={[styles.layerBtn, (showFeaturePanel || showFeaturePanelB || showFeaturePanelC || selectedSatellite || selectedLandingSite || selectedFeature) && { backgroundColor: 'rgba(60,87,233,0.8)' }]}
                   onPress={() => {
                     const anyOpen = showFeaturePanel || showFeaturePanelB || showFeaturePanelC || selectedSatellite || selectedLandingSite || selectedFeature;
                     if (anyOpen) {
@@ -1712,7 +1926,11 @@ export default function MoonScreen() {
                   }}
                   activeOpacity={0.7}
                 >
-                  <Ionicons name="layers-outline" size={20} color="#fff" />
+                  <Svg width={20} height={20} viewBox="0 0 22 22" fill="none">
+                    <Path d="M18.4028 14.4245L20.5335 15.4894L11.0001 20.256L1.4668 15.4894L3.5975 14.4245L11.0001 18.1264L18.4028 14.4245ZM11.0001 10.7227L12.0097 11.228L11.0001 11.7331L9.99053 11.228L11.0001 10.7227Z" fill="#666666" />
+                    <Path d="M18.4037 10.1626L20.5335 11.2283L11.0001 15.9949L1.4668 11.2283L3.59656 10.1626L11.0001 13.8653L18.4037 10.1626Z" fill="#999999" />
+                    <Path d="M11.0001 2.20001L20.5335 6.96669L11.0001 11.7333L1.4668 6.96669L11.0001 2.20001Z" fill="white" />
+                  </Svg>
                 </TouchableOpacity>
               </View>
             )}
@@ -1737,7 +1955,10 @@ export default function MoonScreen() {
                 onPress={handleReset}
                 activeOpacity={0.7}
               >
-                <Ionicons name="reload" size={20} color="#fff" />
+                <Svg width={20} height={20} viewBox="0 0 24 24" fill="none">
+                  <Path d="M8.687 5.396C8.687 5.396 10.321 5.339 11.919 5.339C13.517 5.339 15.08 5.813 16.409 6.701C17.738 7.588 18.773 8.85 19.385 10.327C19.997 11.804 20.157 13.428 19.845 14.996C19.533 16.563 18.763 18.003 17.633 19.133C16.503 20.263 15.063 21.033 13.496 21.345C11.928 21.657 10.303 21.497 8.827 20.885C7.35 20.273 6.088 19.238 5.2 17.909C4.312 16.58 3.838 15.018 3.838 13.419" stroke="#FFFFFF" strokeWidth={1.5} strokeMiterlimit={10} />
+                  <Path d="M11.919 1.5L7.879 5.54L11.919 9.581" stroke="#FFFFFF" strokeWidth={1.5} strokeLinecap="square" />
+                </Svg>
               </TouchableOpacity>
 
               <View style={styles.controlSep} />
@@ -1758,7 +1979,7 @@ export default function MoonScreen() {
               style={[
                 styles.controlGroup,
                 { paddingHorizontal: 12, paddingVertical: 8, flexDirection: 'row', alignItems: 'center', gap: 6 },
-                showAd && { backgroundColor: 'rgba(59,130,246,0.8)' },
+                showAd && { backgroundColor: 'rgba(60,87,233,0.8)' },
               ]}
               onPress={async () => {
                 const next = !showAd;
@@ -1789,11 +2010,12 @@ export default function MoonScreen() {
         {isOccupation && (
           <View style={styles.aiRecommendContainer}>
             <TouchableOpacity
-              style={styles.layerBtn}
+              style={styles.aiPicksBtn}
               onPress={() => { setShowAIModal(true); }}
               activeOpacity={0.7}
             >
-              <Ionicons name="sparkles" size={22} color="#fff" />
+              <Ionicons name="sparkles" size={18} color="#fff" />
+              <Text style={styles.aiPicksBtnText}>AI 추천</Text>
             </TouchableOpacity>
           </View>
         )}
@@ -2281,418 +2503,169 @@ export default function MoonScreen() {
 
           return (
             <>
-              {/* A/B 전환 토글 */}
-              <Animated.View style={{ position: 'absolute', bottom: cellPanelMode === 'A' ? SHEET_MAX_HEIGHT : SHEET_B_MAX, alignSelf: 'center', zIndex: 30, flexDirection: 'row', backgroundColor: 'rgba(21,23,28,0.95)', borderRadius: 8, padding: 2, transform: [{ translateY: cellPanelMode === 'A' ? sheetTranslateY : sheetBTranslateY }] }}>
-                <TouchableOpacity
-                  onPress={() => setCellPanelMode('A')}
-                  style={{ paddingHorizontal: 14, paddingVertical: 6, borderRadius: 6, backgroundColor: cellPanelMode === 'A' ? '#2175FA' : 'transparent' }}
-                >
-                  <Text style={{ color: cellPanelMode === 'A' ? '#fff' : '#6B7280', fontSize: 12, fontWeight: '700' }}>A</Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  onPress={() => setCellPanelMode('B')}
-                  style={{ paddingHorizontal: 14, paddingVertical: 6, borderRadius: 6, backgroundColor: cellPanelMode === 'B' ? '#2175FA' : 'transparent' }}
-                >
-                  <Text style={{ color: cellPanelMode === 'B' ? '#fff' : '#6B7280', fontSize: 12, fontWeight: '700' }}>B</Text>
-                </TouchableOpacity>
-              </Animated.View>
-
-              {/* ═══ A모드: 기존 패널 ═══ */}
-              {cellPanelMode === 'A' && (
-            <Animated.View style={[styles.bottomCardContainer, { transform: [{ translateY: sheetTranslateY }] }]}>
-              <View style={[styles.bottomCard2, { height: SHEET_MAX_HEIGHT }]}>
-                {/* 드래그 핸들 */}
-                <View {...sheetPanResponder.panHandlers} style={styles.dragHandleArea}>
-                  <View style={styles.dragHandle} />
-                </View>
-
-                <ScrollView style={{ flex: 1 }} showsVerticalScrollIndicator={false} scrollEnabled={true}>
-                  {/* 헤더: MAG ID + 크기 */}
-                  <View style={styles.cellHeaderRow}>
-                    <View style={{ flex: 1 }}>
-                      <Text style={styles.cellMagId} numberOfLines={1}>
-                        {'MAG-L' + (selectedCell.level || 16) + '-' + (selectedCell.token || selectedCell.cellId)}
-                        {selectedCell.isMultiSelect && cellCount > 1 ? <Text style={{ color: '#60A5FA', fontSize: 14 }}>{' +' + (cellCount - 1)}</Text> : null}
-                      </Text>
-                    </View>
-                    <View style={{ alignItems: 'flex-end' }}>
-                      <Text style={styles.cellMagSize}>{totalMag + ' Mag'}</Text>
-                    </View>
+              {/* ═══ 셀 정보 패널 ═══ */}
+              <Animated.View style={[styles.bottomCardContainer, { transform: [{ translateY: sheetBTranslateY }] }]}>
+                <View style={[styles.bottomCard2, { height: SHEET_B_MAX }]}>
+                  {/* 드래그 핸들 */}
+                  <View {...sheetBPanResponder.panHandlers} style={styles.dragHandleArea}>
+                    <View style={styles.dragHandle} />
                   </View>
 
-                  <Text style={styles.cellSubInfo}>
-                    {'면적: ' + (selectedCell.area || '1,740 m²') + '  ·  ' + Math.abs(selectedCell.lat || 0).toFixed(2) + '°' + ((selectedCell.lat || 0) >= 0 ? 'N' : 'S') + ' ' + Math.abs(selectedCell.lng || 0).toFixed(2) + '°' + ((selectedCell.lng || 0) >= 0 ? 'E' : 'W')}
-                  </Text>
-
-                  {/* URN (단일선택만) */}
-                  {!selectedCell.isMultiSelect && (
-                    <Text style={styles.cellUrn}>{'urn:  301:' + (selectedCell.level || 16) + ':' + (selectedCell.token || selectedCell.cellId)}</Text>
-                  )}
-
-                  {/* 구역 상세 (접기/펼치기) */}
-                  <TouchableOpacity
-                    style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 14, borderTopWidth: 1, borderTopColor: 'rgba(255,255,255,0.08)', marginTop: 8 }}
-                    onPress={() => setShowCellDetail(!showCellDetail)}
-                    activeOpacity={0.7}
-                  >
-                    <Text style={{ fontSize: 16, fontWeight: '700', color: '#F9FAFB' }}>구역 상세</Text>
-                    <Ionicons name={showCellDetail ? 'chevron-up' : 'chevron-down'} size={20} color="#6B7280" />
-                  </TouchableOpacity>
-
-                  {showCellDetail && (
-                    <View style={{ marginBottom: 12 }}>
-                      {selectedCell.isMultiSelect && selectedCell.multiTokens ? (
-                        /* 다중선택: 토큰별 위경도 리스트 */
-                        selectedCell.multiTokens.map((token: string, idx: number) => (
-                          <View key={idx} style={{ flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: 'rgba(255,255,255,0.06)' }}>
-                            <Text style={{ fontSize: 13, color: '#D1D5DB', fontFamily: 'monospace' }}>{token}</Text>
-                            <Text style={{ fontSize: 12, color: '#6B7280' }}>
-                              {'LAT: ' + (selectedCell.multiLats?.[idx]?.toFixed(3) || '-') + ' | LON: ' + (selectedCell.multiLngs?.[idx]?.toFixed(3) || '-')}
-                            </Text>
-                          </View>
-                        ))
+                  <ScrollView style={{ flex: 1 }} showsVerticalScrollIndicator={false} scrollEnabled={true}>
+                    {/* 헤더: 좌측 정보 + 우측 개척하기 버튼 */}
+                    <View style={{ flexDirection: 'row', paddingTop: 4, paddingBottom: 20, gap: 14 }}>
+                      {/* 좌측: MAG ID + 면적 + URN */}
+                      <View style={{ flex: 1 }}>
+                        <Text style={styles.cellMagId} numberOfLines={1}>
+                          {'MAG-L' + (selectedCell.level || 16) + '-' + (selectedCell.token || selectedCell.cellId)}
+                          {selectedCell.isMultiSelect && cellCount > 1 ? <Text style={{ color: '#60A5FA', fontSize: 14 }}>{' +' + (cellCount - 1)}</Text> : null}
+                        </Text>
+                        <Text style={{ fontSize: 14, color: '#666666', marginTop: 8 }}>
+                          {(selectedCell.area || '1,740 m²') + '  ·  ' + Math.abs(selectedCell.lat || 0).toFixed(2) + '°' + ((selectedCell.lat || 0) >= 0 ? 'N' : 'S') + ' ' + Math.abs(selectedCell.lng || 0).toFixed(2) + '°' + ((selectedCell.lng || 0) >= 0 ? 'E' : 'W')}
+                        </Text>
+                        <Text style={{ fontSize: 10, color: '#4B5563', fontFamily: 'monospace', marginTop: 8 }}>{'urn: 301:' + (selectedCell.level || 16) + ':' + (selectedCell.token || selectedCell.cellId)}</Text>
+                      </View>
+                      {/* 우측: 개척하기 버튼 또는 상태 */}
+                      {!selectedCell?.isOccupied ? (
+                        <TouchableOpacity
+                          style={{ backgroundColor: '#2175FA', borderRadius: 10, paddingHorizontal: 22, justifyContent: 'center', alignItems: 'center', height: 56, minWidth: 90 }}
+                          activeOpacity={0.8}
+                          onPress={() => {
+                            if (!isLoggedIn) { router.push('/auth/login'); return; }
+                            setShowOccupyConfirm(true);
+                          }}
+                        >
+                          <Text style={{ color: '#fff', fontSize: 15, fontWeight: '700' }}>개척하기</Text>
+                          <Text style={{ color: 'rgba(255,255,255,0.7)', fontSize: 11, marginTop: 3 }}>{totalPrice + ' ELL'}</Text>
+                        </TouchableOpacity>
+                      ) : selectedCell?.isMyTerritory ? (
+                        <View style={{ backgroundColor: 'rgba(34,197,94,0.12)', borderRadius: 10, paddingHorizontal: 16, justifyContent: 'center', alignItems: 'center', height: 56, borderWidth: 1, borderColor: 'rgba(34,197,94,0.25)' }}>
+                          <Text style={{ color: '#4ADE80', fontSize: 13, fontWeight: '700' }}>✓ 소유 중</Text>
+                        </View>
                       ) : (
-                        /* 단일선택: 기본 정보 */
-                        <View>
-                          <View style={{ flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 6 }}>
-                            <Text style={{ fontSize: 13, color: '#6B7280' }}>토큰</Text>
-                            <Text style={{ fontSize: 13, color: '#D1D5DB', fontFamily: 'monospace' }}>{selectedCell.token || selectedCell.cellId}</Text>
-                          </View>
-                          <View style={{ flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 6 }}>
-                            <Text style={{ fontSize: 13, color: '#6B7280' }}>레벨</Text>
-                            <Text style={{ fontSize: 13, color: '#D1D5DB' }}>{selectedCell.level || 16}</Text>
-                          </View>
-                          <View style={{ flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 6 }}>
-                            <Text style={{ fontSize: 13, color: '#6B7280' }}>위도</Text>
-                            <Text style={{ fontSize: 13, color: '#D1D5DB' }}>{(selectedCell.lat || 0).toFixed(4)}°</Text>
-                          </View>
-                          <View style={{ flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 6 }}>
-                            <Text style={{ fontSize: 13, color: '#6B7280' }}>경도</Text>
-                            <Text style={{ fontSize: 13, color: '#D1D5DB' }}>{(selectedCell.lng || 0).toFixed(4)}°</Text>
-                          </View>
+                        <View style={{ backgroundColor: 'rgba(255,255,255,0.04)', borderRadius: 10, paddingHorizontal: 16, justifyContent: 'center', alignItems: 'center', height: 56, borderWidth: 1, borderColor: 'rgba(255,255,255,0.08)' }}>
+                          <Text style={{ color: '#6B7280', fontSize: 13, fontWeight: '600' }}>점유됨</Text>
                         </View>
                       )}
                     </View>
-                  )}
 
-                  {/* 구분선 */}
-                  <View style={styles.cellDivider} />
+                    {/* 구역 상세 (접기/펼치기) — 토글 중앙 */}
+                    <TouchableOpacity
+                      style={{ alignItems: 'center', paddingVertical: 10, marginTop: 4 }}
+                      onPress={() => setShowCellDetail(!showCellDetail)}
+                      activeOpacity={0.7}
+                    >
+                      <Ionicons name={showCellDetail ? 'chevron-up' : 'chevron-down'} size={18} color="#666" />
+                    </TouchableOpacity>
 
-                  {/* 점유 상태별 CTA */}
-                  {selectedCell?.isOccupied ? (
-                    selectedCell?.isMyTerritory ? (
-                      <View style={{ backgroundColor: 'rgba(34,197,94,0.12)', borderRadius: 12, paddingVertical: 16, paddingHorizontal: 16, marginTop: 12, alignItems: 'center', borderWidth: 1, borderColor: 'rgba(34,197,94,0.25)' }}>
-                        <Text style={{ fontSize: 15, fontWeight: '700', color: '#4ADE80' }}>{'✓ 내가 소유한 구역'}</Text>
-                        <Text style={{ fontSize: 12, color: '#9CA3AF', marginTop: 4 }}>{'이 구역은 내가 개척한 영역입니다'}</Text>
-                      </View>
-                    ) : (
-                      <View style={{ backgroundColor: 'rgba(255,255,255,0.04)', borderRadius: 12, paddingVertical: 16, paddingHorizontal: 16, marginTop: 12, alignItems: 'center', borderWidth: 1, borderColor: 'rgba(255,255,255,0.08)' }}>
-                        <Text style={{ fontSize: 15, fontWeight: '700', color: '#6B7280' }}>{'이미 개척된 구역'}</Text>
-                        <Text style={{ fontSize: 12, color: '#6B7280', marginTop: 4 }}>{'다른 탐사자가 소유 중입니다'}</Text>
-                      </View>
-                    )
-                  ) : (
-                    <View style={styles.claimCard}>
-                      <View style={{ flexDirection: 'row', alignItems: 'baseline', gap: 10 }}>
-                        <Text style={styles.cellPriceLabel}>개척 비용</Text>
-                        <Text style={{ fontSize: 12, color: '#6B7280' }}>({pricePerMag + ' ELL / Mag'})</Text>
-                      </View>
-                      <Text style={styles.cellPriceValue}>{totalPrice + ' ELL'}</Text>
-                      <TouchableOpacity
-                        style={styles.occupyButton}
-                        activeOpacity={0.8}
-                        onPress={() => {
-                          if (!isLoggedIn) { router.push('/auth/login'); return; }
-                          setShowOccupyConfirm(true);
-                        }}
-                      >
-                        <Text style={styles.occupyButtonText}>{'이 구역 개척하기  \u2192'}</Text>
-                      </TouchableOpacity>
-                    </View>
-                  )}
-
-                  {/* 구분선 */}
-                  <View style={styles.cellDivider} />
-
-                  {/* 착륙 지점 - 실제 데이터 연동 */}
-                  <Text style={styles.sectionLabel}>인근 착륙 지점</Text>
-                  {(() => {
-                    const cellLat = selectedCell.lat || 0;
-                    const cellLng = selectedCell.lng || 0;
-                    const nearest = LANDING_SITES
-                      .map(s => ({ site: s, dist: Math.sqrt(Math.pow(s.lat - cellLat, 2) + Math.pow(s.lng - cellLng, 2)) }))
-                      .sort((a, b) => a.dist - b.dist)
-                      .slice(0, 2);
-                    return nearest.map((item, idx) => {
-                      const distKm = Math.round(item.dist * 30);
-                      return (
-                        <TouchableOpacity key={idx} style={[styles.poiRow, { marginBottom: 10 }]} activeOpacity={0.6} onPress={() => {
-                            setSelectedCell(null);
-                            setFeatureHighlight({ name: item.site.nameKr, lat: item.site.lat, lng: item.site.lng, radiusKm: 5 });
-                            webviewRef.current?.postMessage(JSON.stringify({ type: 'RESET_GRID_ONLY' }));
-                            webviewRef.current?.postMessage(JSON.stringify({ type: 'ROTATE_TO_LOCATION', payload: { lat: item.site.lat, lng: item.site.lng } }));
-                            webviewRef.current?.postMessage(JSON.stringify({ type: 'SET_FEATURE_HIGHLIGHT', payload: { name: item.site.nameKr, lat: item.site.lat, lng: item.site.lng, radiusKm: 5 } }));
-                          }}>
-                          <View style={[styles.poiThumb, { backgroundColor: getContactColor(item.site.contactType) + '22' }]}>
-                            <Ionicons name="location" size={18} color={getContactColor(item.site.contactType)} />
+                    {showCellDetail && (
+                      <View style={{ marginBottom: 16, backgroundColor: '#2C3245', borderRadius: 10, overflow: 'hidden', paddingVertical: 16, paddingHorizontal: 16 }}>
+                        <Text style={{ fontSize: 14, fontWeight: '500', color: '#7295FE', marginBottom: 16 }}>구역 상세</Text>
+                        {selectedCell.isMultiSelect && selectedCell.multiTokens ? (
+                          selectedCell.multiTokens.map((token: string, idx: number) => (
+                            <View key={idx} style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 10 }}>
+                              <Text style={{ fontSize: 14, color: '#EBECF1', fontFamily: 'monospace' }}>{token}</Text>
+                              <Text style={{ fontSize: 13, color: '#808080' }}>
+                                {'LAT: ' + (selectedCell.multiLats?.[idx]?.toFixed(3) || '-') + ' | LON: ' + (selectedCell.multiLngs?.[idx]?.toFixed(3) || '-')}
+                              </Text>
+                            </View>
+                          ))
+                        ) : (
+                          <View>
+                            {[
+                              { label: selectedCell.token || selectedCell.cellId, value: 'LAT: ' + (selectedCell.lat || 0).toFixed(3) + ' | LON: ' + (selectedCell.lng || 0).toFixed(3) },
+                            ].map((row, i) => (
+                              <View key={i} style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 10 }}>
+                                <Text style={{ fontSize: 14, color: '#EBECF1', fontFamily: 'monospace' }}>{row.label}</Text>
+                                <Text style={{ fontSize: 13, color: '#808080' }}>{row.value}</Text>
+                              </View>
+                            ))}
                           </View>
-                          <View style={{ flex: 1 }}>
-                            <Text style={styles.poiName}>{item.site.nameKr}</Text>
-                            <Text style={styles.poiDetail}>{item.site.year + ' · ' + item.site.agency + ' · ' + item.site.missionType}</Text>
-                            <Text style={styles.poiDistance}>{'인근 ' + distKm + 'km'}</Text>
-                          </View>
-                          <Ionicons name="chevron-forward" size={18} color="#6B7280" />
-                        </TouchableOpacity>
-                      );
-                    });
-                  })()}
-
-                  {/* 구분선 */}
-                  <View style={styles.cellDivider} />
-
-                  {/* 주요 지형 - 실제 데이터 연동 */}
-                  <Text style={styles.sectionLabel}>인근 주요 지형</Text>
-                  {(() => {
-                    const cellLat = selectedCell.lat || 0;
-                    const cellLng = selectedCell.lng || 0;
-                    const nearest = LUNAR_FEATURES
-                      .map(f => ({ feat: f, dist: Math.sqrt(Math.pow(f.lat - cellLat, 2) + Math.pow(f.lng - cellLng, 2)) }))
-                      .sort((a, b) => a.dist - b.dist)
-                      .slice(0, 2);
-                    return nearest.map((item, idx) => {
-                      const distKm = Math.round(item.dist * 30);
-                      return (
-                        <TouchableOpacity key={idx} style={[styles.poiRow, { marginBottom: 10 }]} activeOpacity={0.6} onPress={() => {
-                            const radiusKm = (item.feat.diameterKm || 10) / 2;
-                            setSelectedCell(null);
-                            setFeatureHighlight({ name: item.feat.nameKr, lat: item.feat.lat, lng: item.feat.lng, radiusKm });
-                            webviewRef.current?.postMessage(JSON.stringify({ type: 'RESET_GRID_ONLY' }));
-                            webviewRef.current?.postMessage(JSON.stringify({ type: 'ROTATE_TO_LOCATION', payload: { lat: item.feat.lat, lng: item.feat.lng } }));
-                            webviewRef.current?.postMessage(JSON.stringify({ type: 'SET_FEATURE_HIGHLIGHT', payload: { name: item.feat.nameKr, lat: item.feat.lat, lng: item.feat.lng, radiusKm } }));
-                          }}>
-                          <View style={[styles.poiThumb, { backgroundColor: getFeatureTypeColor(item.feat.typeKr) + '22' }]}>
-                            <Text style={{ fontSize: 18 }}>{getFeatureTypeEmoji(item.feat.typeKr)}</Text>
-                          </View>
-                          <View style={{ flex: 1 }}>
-                            <Text style={styles.poiName}>{item.feat.nameKr}</Text>
-                            <Text style={styles.poiDetail}>{item.feat.typeKr + ' · 지름 ' + item.feat.diameterKm + 'km'}</Text>
-                            <Text style={styles.poiDistance}>{'인근 ' + distKm + 'km'}</Text>
-                          </View>
-                          <Ionicons name="chevron-forward" size={18} color="#6B7280" />
-                        </TouchableOpacity>
-                      );
-                    });
-                  })()}
-                  <View style={{ height: 40 }} />
-                </ScrollView>
-              </View>
-            </Animated.View>
-              )}
-
-              {/* ═══ B모드: 컴팩트 패널 (기본높이 절반, 풀스크린 가능) ═══ */}
-              {cellPanelMode === 'B' && (
-            <Animated.View style={[styles.bottomCardContainer, { transform: [{ translateY: sheetBTranslateY }] }]}>
-              <View style={[styles.bottomCard2, { height: SHEET_B_MAX }]}>
-                {/* 드래그 핸들 */}
-                <View {...sheetBPanResponder.panHandlers} style={styles.dragHandleArea}>
-                  <View style={styles.dragHandle} />
-                </View>
-
-                <ScrollView style={{ flex: 1 }} showsVerticalScrollIndicator={false} scrollEnabled={true}>
-                  {/* 헤더: 좌측 정보 + 우측 개척하기 버튼 */}
-                  <View style={{ flexDirection: 'row', paddingTop: 4, paddingBottom: 20, gap: 14 }}>
-                    {/* 좌측: MAG ID + 면적 + URN */}
-                    <View style={{ flex: 1 }}>
-                      <Text style={styles.cellMagId} numberOfLines={1}>
-                        {'MAG-L' + (selectedCell.level || 16) + '-' + (selectedCell.token || selectedCell.cellId)}
-                        {selectedCell.isMultiSelect && cellCount > 1 ? <Text style={{ color: '#60A5FA', fontSize: 14 }}>{' +' + (cellCount - 1)}</Text> : null}
-                      </Text>
-                      <Text style={{ fontSize: 13, color: '#9CA3AF', marginTop: 8 }}>
-                        {totalMag + ' Mag  ·  ' + (selectedCell.area || '1,740 m²')}
-                      </Text>
-                      <Text style={{ fontSize: 12, color: '#6B7280', marginTop: 6 }}>
-                        {Math.abs(selectedCell.lat || 0).toFixed(2) + '°' + ((selectedCell.lat || 0) >= 0 ? 'N' : 'S') + '  ' + Math.abs(selectedCell.lng || 0).toFixed(2) + '°' + ((selectedCell.lng || 0) >= 0 ? 'E' : 'W')}
-                      </Text>
-                      {!selectedCell.isMultiSelect && (
-                        <Text style={{ fontSize: 10, color: '#4B5563', fontFamily: 'monospace', marginTop: 8 }}>{'urn: 301:' + (selectedCell.level || 16) + ':' + (selectedCell.token || selectedCell.cellId)}</Text>
-                      )}
-                    </View>
-                    {/* 우측: 개척하기 버튼 또는 상태 */}
-                    {!selectedCell?.isOccupied ? (
-                      <TouchableOpacity
-                        style={{ backgroundColor: '#2175FA', borderRadius: 10, paddingHorizontal: 22, justifyContent: 'center', alignItems: 'center', alignSelf: 'stretch', minWidth: 90 }}
-                        activeOpacity={0.8}
-                        onPress={() => {
-                          if (!isLoggedIn) { router.push('/auth/login'); return; }
-                          setShowOccupyConfirm(true);
-                        }}
-                      >
-                        <Text style={{ color: '#fff', fontSize: 15, fontWeight: '700' }}>개척하기</Text>
-                        <Text style={{ color: 'rgba(255,255,255,0.7)', fontSize: 11, marginTop: 3 }}>{totalPrice + ' ELL'}</Text>
-                      </TouchableOpacity>
-                    ) : selectedCell?.isMyTerritory ? (
-                      <View style={{ backgroundColor: 'rgba(34,197,94,0.12)', borderRadius: 10, paddingHorizontal: 16, justifyContent: 'center', alignItems: 'center', alignSelf: 'stretch', borderWidth: 1, borderColor: 'rgba(34,197,94,0.25)' }}>
-                        <Text style={{ color: '#4ADE80', fontSize: 13, fontWeight: '700' }}>✓ 소유 중</Text>
-                      </View>
-                    ) : (
-                      <View style={{ backgroundColor: 'rgba(255,255,255,0.04)', borderRadius: 10, paddingHorizontal: 16, justifyContent: 'center', alignItems: 'center', alignSelf: 'stretch', borderWidth: 1, borderColor: 'rgba(255,255,255,0.08)' }}>
-                        <Text style={{ color: '#6B7280', fontSize: 13, fontWeight: '600' }}>점유됨</Text>
+                        )}
                       </View>
                     )}
-                  </View>
 
-                  {/* 구역 상세 (접기/펼치기) */}
-                  <TouchableOpacity
-                    style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 14, borderTopWidth: 1, borderTopColor: 'rgba(255,255,255,0.08)', marginTop: 4 }}
-                    onPress={() => setShowCellDetail(!showCellDetail)}
-                    activeOpacity={0.7}
-                  >
-                    <Text style={{ fontSize: 16, fontWeight: '700', color: '#F9FAFB' }}>구역 상세</Text>
-                    <Ionicons name={showCellDetail ? 'chevron-up' : 'chevron-down'} size={20} color="#6B7280" />
-                  </TouchableOpacity>
 
-                  {showCellDetail && (
-                    <View style={{ marginBottom: 16 }}>
-                      {selectedCell.isMultiSelect && selectedCell.multiTokens ? (
-                        selectedCell.multiTokens.map((token: string, idx: number) => (
-                          <View key={idx} style={{ flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: 'rgba(255,255,255,0.06)' }}>
-                            <Text style={{ fontSize: 13, color: '#D1D5DB', fontFamily: 'monospace' }}>{token}</Text>
-                            <Text style={{ fontSize: 12, color: '#6B7280' }}>
-                              {'LAT: ' + (selectedCell.multiLats?.[idx]?.toFixed(3) || '-') + ' | LON: ' + (selectedCell.multiLngs?.[idx]?.toFixed(3) || '-')}
-                            </Text>
-                          </View>
-                        ))
-                      ) : (
-                        <View>
-                          <View style={{ flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 8 }}>
-                            <Text style={{ fontSize: 13, color: '#6B7280' }}>토큰</Text>
-                            <Text style={{ fontSize: 13, color: '#D1D5DB', fontFamily: 'monospace' }}>{selectedCell.token || selectedCell.cellId}</Text>
-                          </View>
-                          <View style={{ flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 8 }}>
-                            <Text style={{ fontSize: 13, color: '#6B7280' }}>레벨</Text>
-                            <Text style={{ fontSize: 13, color: '#D1D5DB' }}>{selectedCell.level || 16}</Text>
-                          </View>
-                          <View style={{ flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 8 }}>
-                            <Text style={{ fontSize: 13, color: '#6B7280' }}>위도</Text>
-                            <Text style={{ fontSize: 13, color: '#D1D5DB' }}>{(selectedCell.lat || 0).toFixed(4)}°</Text>
-                          </View>
-                          <View style={{ flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 8 }}>
-                            <Text style={{ fontSize: 13, color: '#6B7280' }}>경도</Text>
-                            <Text style={{ fontSize: 13, color: '#D1D5DB' }}>{(selectedCell.lng || 0).toFixed(4)}°</Text>
-                          </View>
-                        </View>
-                      )}
+                    {/* 인근 착륙 지점 */}
+                    <View>
+                      <Text style={{ color: '#3C57E9', fontSize: 14, fontWeight: '500', marginBottom: 12 }}>인근 착륙 지점</Text>
+                      {(() => {
+                        const cellLat = selectedCell.lat || 0;
+                        const cellLng = selectedCell.lng || 0;
+                        const nearest = LANDING_SITES
+                          .map(s => ({ site: s, dist: Math.sqrt(Math.pow(s.lat - cellLat, 2) + Math.pow(s.lng - cellLng, 2)) }))
+                          .sort((a, b) => a.dist - b.dist)
+                          .slice(0, 2);
+                        return nearest.map((item, idx) => {
+                          const distKm = Math.round(item.dist * 30);
+                          return (
+                            <TouchableOpacity key={idx} style={{ flexDirection: 'row', alignItems: 'center', gap: 14, paddingVertical: 10, borderBottomWidth: idx < 1 ? 1 : 0, borderBottomColor: 'rgba(255,255,255,0.07)' }} activeOpacity={0.7} onPress={() => {
+                              setSelectedCell(null);
+                              setFeatureHighlight({ name: item.site.nameKr, lat: item.site.lat, lng: item.site.lng, radiusKm: 5 });
+                              webviewRef.current?.postMessage(JSON.stringify({ type: 'RESET_GRID_ONLY' }));
+                              webviewRef.current?.postMessage(JSON.stringify({ type: 'ROTATE_TO_LOCATION', payload: { lat: item.site.lat, lng: item.site.lng } }));
+                              webviewRef.current?.postMessage(JSON.stringify({ type: 'SET_FEATURE_HIGHLIGHT', payload: { name: item.site.nameKr, lat: item.site.lat, lng: item.site.lng, radiusKm: 5 } }));
+                            }}>
+                              <View style={{ width: 68, height: 68, borderRadius: 4, overflow: 'hidden', backgroundColor: 'rgba(255,255,255,0.04)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.07)', justifyContent: 'center', alignItems: 'center' }}>
+                                {LANDING_SITE_IMAGES[item.site.officialName] ? (
+                                  <Image source={LANDING_SITE_IMAGES[item.site.officialName]} style={{ width: 68, height: 68 }} resizeMode="cover" />
+                                ) : (
+                                  <Ionicons name="location" size={22} color={getContactColor(item.site.contactType)} />
+                                )}
+                              </View>
+                              <View style={{ flex: 1, justifyContent: 'center' }}>
+                                <Text style={{ color: '#EBECF1', fontSize: 16, fontWeight: '500' }} numberOfLines={1}>{item.site.nameKr}</Text>
+                                <Text style={{ color: '#666666', fontSize: 12, marginTop: 2 }}>{item.site.year} · {item.site.agency} · {item.site.missionType}</Text>
+                                <Text style={{ color: '#666666', fontSize: 12, marginTop: 3 }}>인근 {distKm}km</Text>
+                              </View>
+                            </TouchableOpacity>
+                          );
+                        });
+                      })()}
+
+
+                      {/* 인근 주요 지형 */}
+                      <Text style={{ color: '#3C57E9', fontSize: 14, fontWeight: '500', marginBottom: 12 }}>인근 주요 지형</Text>
+                      {(() => {
+                        const cellLat = selectedCell.lat || 0;
+                        const cellLng = selectedCell.lng || 0;
+                        const nearest = LUNAR_FEATURES
+                          .map(f => ({ feat: f, dist: Math.sqrt(Math.pow(f.lat - cellLat, 2) + Math.pow(f.lng - cellLng, 2)) }))
+                          .sort((a, b) => a.dist - b.dist)
+                          .slice(0, 2);
+                        return nearest.map((item, idx) => {
+                          const distKm = Math.round(item.dist * 30);
+                          return (
+                            <TouchableOpacity key={idx} style={{ flexDirection: 'row', alignItems: 'center', gap: 14, paddingVertical: 10, borderBottomWidth: idx < 1 ? 1 : 0, borderBottomColor: 'rgba(255,255,255,0.07)' }} activeOpacity={0.7} onPress={() => {
+                              const radiusKm = (item.feat.diameterKm || 10) / 2;
+                              setSelectedCell(null);
+                              setFeatureHighlight({ name: item.feat.nameKr, lat: item.feat.lat, lng: item.feat.lng, radiusKm });
+                              webviewRef.current?.postMessage(JSON.stringify({ type: 'RESET_GRID_ONLY' }));
+                              webviewRef.current?.postMessage(JSON.stringify({ type: 'ROTATE_TO_LOCATION', payload: { lat: item.feat.lat, lng: item.feat.lng } }));
+                              webviewRef.current?.postMessage(JSON.stringify({ type: 'SET_FEATURE_HIGHLIGHT', payload: { name: item.feat.nameKr, lat: item.feat.lat, lng: item.feat.lng, radiusKm } }));
+                            }}>
+                              <View style={{ width: 68, height: 68, borderRadius: 4, overflow: 'hidden', backgroundColor: 'rgba(255,255,255,0.04)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.07)', justifyContent: 'center', alignItems: 'center' }}>
+                                {LUNAR_FEATURE_IMAGES[item.feat.id] ? (
+                                  <Image source={LUNAR_FEATURE_IMAGES[item.feat.id]} style={{ width: 68, height: 68 }} resizeMode="cover" />
+                                ) : (
+                                  <Text style={{ fontSize: 22 }}>{getFeatureTypeEmoji(item.feat.typeKr)}</Text>
+                                )}
+                              </View>
+                              <View style={{ flex: 1, justifyContent: 'center' }}>
+                                <Text style={{ color: '#EBECF1', fontSize: 16, fontWeight: '500' }} numberOfLines={1}>{item.feat.nameKr}</Text>
+                                <Text style={{ color: '#666666', fontSize: 12, marginTop: 2 }}>{item.feat.typeKr} · 지름 {item.feat.diameterKm}km</Text>
+                                <Text style={{ color: '#666666', fontSize: 12, marginTop: 3 }}>인근 {distKm}km</Text>
+                              </View>
+                            </TouchableOpacity>
+                          );
+                        });
+                      })()}
+
+                      <View style={{ height: 40 }} />
                     </View>
-                  )}
-
-                  {/* 구분선 */}
-                  <View style={{ height: 1, backgroundColor: 'rgba(255,255,255,0.08)', marginVertical: 20 }} />
-
-                  {/* 점유 상태별 CTA */}
-                  <View>
-                  {selectedCell?.isOccupied ? (
-                    selectedCell?.isMyTerritory ? (
-                      <View style={{ backgroundColor: 'rgba(34,197,94,0.12)', borderRadius: 12, paddingVertical: 18, paddingHorizontal: 16, alignItems: 'center', borderWidth: 1, borderColor: 'rgba(34,197,94,0.25)' }}>
-                        <Text style={{ fontSize: 15, fontWeight: '700', color: '#4ADE80' }}>{'✓ 내가 소유한 구역'}</Text>
-                        <Text style={{ fontSize: 12, color: '#9CA3AF', marginTop: 4 }}>{'이 구역은 내가 개척한 영역입니다'}</Text>
-                      </View>
-                    ) : (
-                      <View style={{ backgroundColor: 'rgba(255,255,255,0.04)', borderRadius: 12, paddingVertical: 18, paddingHorizontal: 16, alignItems: 'center', borderWidth: 1, borderColor: 'rgba(255,255,255,0.08)' }}>
-                        <Text style={{ fontSize: 15, fontWeight: '700', color: '#6B7280' }}>{'이미 개척된 구역'}</Text>
-                        <Text style={{ fontSize: 12, color: '#6B7280', marginTop: 4 }}>{'다른 탐사자가 소유 중입니다'}</Text>
-                      </View>
-                    )
-                  ) : (
-                    <View style={[styles.claimCard, { marginTop: 0, marginBottom: 4 }]}>
-                      <View style={{ flexDirection: 'row', alignItems: 'baseline', gap: 10 }}>
-                        <Text style={styles.cellPriceLabel}>개척 비용</Text>
-                        <Text style={{ fontSize: 12, color: '#6B7280' }}>({pricePerMag + ' ELL / Mag'})</Text>
-                      </View>
-                      <Text style={styles.cellPriceValue}>{totalPrice + ' ELL'}</Text>
-                    </View>
-                  )}
-                  </View>
-
-                  {/* 구분선 */}
-                  <View style={{ height: 1, backgroundColor: 'rgba(255,255,255,0.08)', marginVertical: 20 }} />
-
-                  {/* 착륙 지점 */}
-                  <View>
-                  <Text style={[styles.sectionLabel, { marginBottom: 12 }]}>인근 착륙 지점</Text>
-                  {(() => {
-                    const cellLat = selectedCell.lat || 0;
-                    const cellLng = selectedCell.lng || 0;
-                    const nearest = LANDING_SITES
-                      .map(s => ({ site: s, dist: Math.sqrt(Math.pow(s.lat - cellLat, 2) + Math.pow(s.lng - cellLng, 2)) }))
-                      .sort((a, b) => a.dist - b.dist)
-                      .slice(0, 2);
-                    return nearest.map((item, idx) => {
-                      const distKm = Math.round(item.dist * 30);
-                      return (
-                        <TouchableOpacity key={idx} style={[styles.poiRow, { marginBottom: 10 }]} activeOpacity={0.6} onPress={() => {
-                            setSelectedCell(null);
-                            setFeatureHighlight({ name: item.site.nameKr, lat: item.site.lat, lng: item.site.lng, radiusKm: 5 });
-                            webviewRef.current?.postMessage(JSON.stringify({ type: 'RESET_GRID_ONLY' }));
-                            webviewRef.current?.postMessage(JSON.stringify({ type: 'ROTATE_TO_LOCATION', payload: { lat: item.site.lat, lng: item.site.lng } }));
-                            webviewRef.current?.postMessage(JSON.stringify({ type: 'SET_FEATURE_HIGHLIGHT', payload: { name: item.site.nameKr, lat: item.site.lat, lng: item.site.lng, radiusKm: 5 } }));
-                          }}>
-                          <View style={[styles.poiThumb, { backgroundColor: getContactColor(item.site.contactType) + '22' }]}>
-                            <Ionicons name="location" size={18} color={getContactColor(item.site.contactType)} />
-                          </View>
-                          <View style={{ flex: 1 }}>
-                            <Text style={styles.poiName}>{item.site.nameKr}</Text>
-                            <Text style={styles.poiDetail}>{item.site.year + ' · ' + item.site.agency + ' · ' + item.site.missionType}</Text>
-                            <Text style={styles.poiDistance}>{'인근 ' + distKm + 'km'}</Text>
-                          </View>
-                          <Ionicons name="chevron-forward" size={18} color="#6B7280" />
-                        </TouchableOpacity>
-                      );
-                    });
-                  })()}
-
-                  {/* 구분선 */}
-                  <View style={{ height: 1, backgroundColor: 'rgba(255,255,255,0.08)', marginVertical: 20 }} />
-
-                  {/* 주요 지형 */}
-                  <Text style={[styles.sectionLabel, { marginBottom: 12 }]}>인근 주요 지형</Text>
-                  {(() => {
-                    const cellLat = selectedCell.lat || 0;
-                    const cellLng = selectedCell.lng || 0;
-                    const nearest = LUNAR_FEATURES
-                      .map(f => ({ feat: f, dist: Math.sqrt(Math.pow(f.lat - cellLat, 2) + Math.pow(f.lng - cellLng, 2)) }))
-                      .sort((a, b) => a.dist - b.dist)
-                      .slice(0, 2);
-                    return nearest.map((item, idx) => {
-                      const distKm = Math.round(item.dist * 30);
-                      return (
-                        <TouchableOpacity key={idx} style={[styles.poiRow, { marginBottom: 10 }]} activeOpacity={0.6} onPress={() => {
-                            const radiusKm = (item.feat.diameterKm || 10) / 2;
-                            setSelectedCell(null);
-                            setFeatureHighlight({ name: item.feat.nameKr, lat: item.feat.lat, lng: item.feat.lng, radiusKm });
-                            webviewRef.current?.postMessage(JSON.stringify({ type: 'RESET_GRID_ONLY' }));
-                            webviewRef.current?.postMessage(JSON.stringify({ type: 'ROTATE_TO_LOCATION', payload: { lat: item.feat.lat, lng: item.feat.lng } }));
-                            webviewRef.current?.postMessage(JSON.stringify({ type: 'SET_FEATURE_HIGHLIGHT', payload: { name: item.feat.nameKr, lat: item.feat.lat, lng: item.feat.lng, radiusKm } }));
-                          }}>
-                          <View style={[styles.poiThumb, { backgroundColor: getFeatureTypeColor(item.feat.typeKr) + '22' }]}>
-                            <Text style={{ fontSize: 18 }}>{getFeatureTypeEmoji(item.feat.typeKr)}</Text>
-                          </View>
-                          <View style={{ flex: 1 }}>
-                            <Text style={styles.poiName}>{item.feat.nameKr}</Text>
-                            <Text style={styles.poiDetail}>{item.feat.typeKr + ' · 지름 ' + item.feat.diameterKm + 'km'}</Text>
-                            <Text style={styles.poiDistance}>{'인근 ' + distKm + 'km'}</Text>
-                          </View>
-                          <Ionicons name="chevron-forward" size={18} color="#6B7280" />
-                        </TouchableOpacity>
-                      );
-                    });
-                  })()}
-
-                  <View style={{ height: 40 }} />
-                  </View>
-                </ScrollView>
-              </View>
-            </Animated.View>
-              )}
+                  </ScrollView>
+                </View>
+              </Animated.View>
             </>
           );
         })()}
@@ -2751,6 +2724,7 @@ export default function MoonScreen() {
           satPanelAnim.setValue(SAT_PANEL_COLLAPSED);
           satPanelOffsetRef.current = SAT_PANEL_COLLAPSED;
           satIsLookAt.current = false;
+          setSatIsLookAtState(false);
           setSelectedSatellite(sat);
           webviewRef.current?.postMessage(JSON.stringify({
             type: 'FOCUS_SATELLITE',
@@ -2767,9 +2741,7 @@ export default function MoonScreen() {
           landingPanelAnim.setValue(SNAP_MIN);
           landingPanelOffsetRef.current = SNAP_MIN;
           landingIsFirstPerson.current = false;
-          setSelectedLandingSite(site);
-          setLandingSiteDetailMode('detail');
-          webviewRef.current?.postMessage(JSON.stringify({ type: 'GO_TO_LOCATION', payload: { lat: site.lat, lng: site.lng } }));
+          goToLandingSite(site);
         }}
         onSelectFeature={(feat) => {
           setShowFeaturePanel(false);
@@ -2817,6 +2789,7 @@ export default function MoonScreen() {
           satPanelAnim.setValue(SAT_PANEL_COLLAPSED);
           satPanelOffsetRef.current = SAT_PANEL_COLLAPSED;
           satIsLookAt.current = false;
+          setSatIsLookAtState(false);
           setSelectedSatellite(sat);
           webviewRef.current?.postMessage(JSON.stringify({ type: 'FOCUS_SATELLITE', payload: { name: sat.name, id: sat.id } }));
         }}
@@ -2824,20 +2797,13 @@ export default function MoonScreen() {
           setShowFeaturePanelB(false);
           landingPanelAnim.setValue(SNAP_MIN);
           landingPanelOffsetRef.current = SNAP_MIN;
-          landingIsFirstPerson.current = false;
-          setSelectedLandingSite(site);
-          setLandingSiteDetailMode('detail');
-          webviewRef.current?.postMessage(JSON.stringify({ type: 'GO_TO_LOCATION', payload: { lat: site.lat, lng: site.lng } }));
+          goToLandingSite(site);
         }}
         onSelectFeature={(feat) => {
           setShowFeaturePanelB(false);
           featurePanelAnim.setValue(SNAP_MIN);
           featurePanelOffsetRef.current = SNAP_MIN;
-          featureIsFirstPerson.current = false;
-          setSelectedFeature(feat);
-          setFeatureDetailMode('detail');
-          webviewRef.current?.postMessage(JSON.stringify({ type: 'GO_TO_LOCATION', payload: { lat: feat.lat, lng: feat.lng } }));
-          webviewRef.current?.postMessage(JSON.stringify({ type: 'SHOW_FEATURE_AREA', payload: { lat: feat.lat, lng: feat.lng, diameterKm: feat.diameterKm, widthKm: feat.widthKm, angle: feat.angle, typeKr: feat.typeKr } }));
+          goToFeature(feat);
         }}
       />
 
@@ -2874,6 +2840,7 @@ export default function MoonScreen() {
           satPanelAnim.setValue(SAT_PANEL_COLLAPSED);
           satPanelOffsetRef.current = SAT_PANEL_COLLAPSED;
           satIsLookAt.current = false;
+          setSatIsLookAtState(false);
           setSelectedSatellite(sat);
           webviewRef.current?.postMessage(JSON.stringify({ type: 'FOCUS_SATELLITE', payload: { name: sat.name, id: sat.id } }));
         }}
@@ -2881,22 +2848,25 @@ export default function MoonScreen() {
           setShowFeaturePanelC(false);
           landingPanelAnim.setValue(SNAP_MIN);
           landingPanelOffsetRef.current = SNAP_MIN;
-          landingIsFirstPerson.current = false;
-          setSelectedLandingSite(site);
-          setLandingSiteDetailMode('detail');
-          webviewRef.current?.postMessage(JSON.stringify({ type: 'GO_TO_LOCATION', payload: { lat: site.lat, lng: site.lng } }));
+          goToLandingSite(site);
         }}
         onSelectFeature={(feat) => {
           setShowFeaturePanelC(false);
           featurePanelAnim.setValue(SNAP_MIN);
           featurePanelOffsetRef.current = SNAP_MIN;
-          featureIsFirstPerson.current = false;
-          setSelectedFeature(feat);
-          setFeatureDetailMode('detail');
-          webviewRef.current?.postMessage(JSON.stringify({ type: 'GO_TO_LOCATION', payload: { lat: feat.lat, lng: feat.lng } }));
-          webviewRef.current?.postMessage(JSON.stringify({ type: 'SHOW_FEATURE_AREA', payload: { lat: feat.lat, lng: feat.lng, diameterKm: feat.diameterKm, widthKm: feat.widthKm, angle: feat.angle, typeKr: feat.typeKr } }));
+          goToFeature(feat);
         }}
       />
+
+      {/* 위성 Live 라벨 — lookAt(뷰 전환) 모드에서만 표시 */}
+      {selectedSatellite && mainMode === 'exploration' && selectedSatellite.missionStatus === 'Active' && satIsLookAtState && (
+        <View style={{ position: 'absolute', top: 140, left: 0, right: 0, alignItems: 'center', zIndex: 1001 }} pointerEvents="none">
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: 'rgba(255,255,255,0.12)', paddingHorizontal: 14, paddingVertical: 6, borderRadius: 20 }}>
+            <View style={{ width: 7, height: 7, borderRadius: 3.5, backgroundColor: '#4ADE80' }} />
+            <Text style={{ color: '#4ADE80', fontSize: 14, fontWeight: '600', letterSpacing: 0.5 }}>Live</Text>
+          </View>
+        </View>
+      )}
 
       {/* 위성 상세 정보 패널 */}
       {selectedSatellite && mainMode === 'exploration' && (
@@ -2917,176 +2887,147 @@ export default function MoonScreen() {
           {/* 드래그 가능 영역: 핸들 + 제목행 */}
           <View {...satPanelPanResponder.panHandlers}>
             {/* 드래그 핸들 */}
-            <View style={{ alignItems: 'center', paddingTop: 8, paddingBottom: 6 }}>
-              <View style={{ width: 48, height: 4, backgroundColor: 'rgba(255,255,255,0.2)', borderRadius: 1 }} />
+            <View style={{ alignItems: 'center', paddingTop: 8, paddingBottom: 8 }}>
+              <View style={{ width: 49, height: 4, backgroundColor: 'rgba(255,255,255,0.2)', borderRadius: 2 }} />
             </View>
             {/* 헤더: ← + 제목 + 뷰전환 */}
             <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingBottom: 10 }}>
               <TouchableOpacity
                 onPress={() => {
                   setSelectedSatellite(null);
+                  setSatIsLookAtState(false);
+                  satIsLookAt.current = false;
                   webviewRef.current?.postMessage(JSON.stringify({ type: 'RESET_VIEW' }));
                   setShowFeaturePanel(true);
                 }}
                 hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
                 style={{ paddingRight: 8, paddingVertical: 4 }}
               >
-                <Ionicons name="chevron-back" size={24} color="#9CA3AF" />
+                <Ionicons name="chevron-back" size={24} color="#666666" />
               </TouchableOpacity>
-              <Text style={{ color: '#F9FAFB', fontSize: 20, fontWeight: '800', flex: 1 }} numberOfLines={1}>
+              <Text style={{ color: '#EBECF1', fontSize: 20, fontWeight: '600', flex: 1 }} numberOfLines={1}>
                 {selectedSatellite.nameKo !== selectedSatellite.name ? selectedSatellite.nameKo : selectedSatellite.name}
               </Text>
               <TouchableOpacity
                 onPress={() => {
                   if (satIsLookAt.current) {
                     satIsLookAt.current = false;
+                    setSatIsLookAtState(false);
                     webviewRef.current?.postMessage(JSON.stringify({
                       type: 'FOCUS_SATELLITE',
                       payload: { name: selectedSatellite.name, id: selectedSatellite.id }
                     }));
                   } else {
                     satIsLookAt.current = true;
+                    setSatIsLookAtState(true);
                     webviewRef.current?.postMessage(JSON.stringify({
                       type: 'FOCUS_SATELLITE',
                       payload: { name: selectedSatellite.name, id: selectedSatellite.id, lookAt: true }
                     }));
                   }
                 }}
-                style={{ flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: 'rgba(96,165,250,0.15)', paddingHorizontal: 14, paddingVertical: 7, borderRadius: 2 }}
+                style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: '#3C57E9', paddingHorizontal: 24, paddingVertical: 9, borderRadius: 8 }}
               >
-                <Ionicons name="eye-outline" size={16} color="#60A5FA" />
-                <Text style={{ color: '#60A5FA', fontSize: 13, fontWeight: '700' }}>뷰 전환</Text>
+                <Text style={{ color: '#fff', fontSize: 14, fontWeight: '500' }}>뷰 전환</Text>
               </TouchableOpacity>
             </View>
           </View>
 
           {/* 구분선 */}
-          <View style={{ height: 1, backgroundColor: 'rgba(255,255,255,0.06)', marginHorizontal: 16 }} />
+          <View style={{ height: 1, backgroundColor: 'rgba(255,255,255,0.07)', marginHorizontal: 16 }} />
 
           <ScrollView style={{ paddingHorizontal: 20, paddingTop: 12 }} showsVerticalScrollIndicator={false}>
             {/* 영문 정식명칭 */}
             {selectedSatellite.fullName && (
-              <Text style={{ color: '#9CA3AF', fontSize: 12, marginBottom: 4, lineHeight: 17 }}>{selectedSatellite.fullName}</Text>
+              <Text style={{ color: '#666666', fontSize: 12, marginBottom: 4, lineHeight: 17 }}>{selectedSatellite.fullName}</Text>
             )}
-            {/* 기관 + 기관코드 + 발사일 */}
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 6 }}>
+            {/* 기관 */}
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 2 }}>
               {selectedSatellite.nameKo !== selectedSatellite.name && (
-                <Text style={{ color: '#6B7280', fontSize: 12, fontWeight: '500' }}>{selectedSatellite.name}</Text>
+                <Text style={{ color: '#999999', fontSize: 14 }}>{selectedSatellite.name}</Text>
               )}
-              <Text style={{ color: '#6B7280', fontSize: 3 }}>●</Text>
-              <Text style={{ color: '#9CA3AF', fontSize: 12 }}>{selectedSatellite.agency || selectedSatellite.country}</Text>
             </View>
+            <Text style={{ color: '#999999', fontSize: 14, marginBottom: 2 }}>{selectedSatellite.agency || selectedSatellite.country}</Text>
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 12 }}>
               {selectedSatellite.launchDate && (
                 <>
-                  <Text style={{ color: '#6B7280', fontSize: 11 }}>발사 시점:</Text>
-                  <Text style={{ color: '#9CA3AF', fontSize: 12, fontWeight: '600' }}>{selectedSatellite.launchDate}</Text>
+                  <Text style={{ color: '#3B4576', fontSize: 12 }}>발사 시점:</Text>
+                  <Text style={{ color: '#3B4576', fontSize: 12 }}>{selectedSatellite.launchDate}</Text>
                 </>
               )}
-              {selectedSatellite.missionStatus && (
-                <>
-                  <Text style={{ color: '#6B7280', fontSize: 3 }}>●</Text>
-                  <View style={{ backgroundColor: selectedSatellite.missionStatus === 'Active' ? '#065F46' : '#374151', paddingHorizontal: 8, paddingVertical: 2, borderRadius: 2 }}>
-                    <Text style={{ color: selectedSatellite.missionStatus === 'Active' ? '#34D399' : '#9CA3AF', fontSize: 10, fontWeight: '600' }}>
-                      {selectedSatellite.missionStatus === 'Active' ? '운영 중' : '종료'}
-                    </Text>
-                  </View>
-                </>
-              )}
+
             </View>
 
-            {/* 한줄 미션 설명 */}
+            {/* 한줄 미션 설명 — Figma에서는 별도 박스 없이 본문으로 표시하지만, 시각적 구분을 위해 유지 */}
             {selectedSatellite.missionObjective && (
-              <View style={{ backgroundColor: '#1F2937', borderRadius: 2, padding: 12, marginBottom: 16, borderLeftWidth: 3, borderLeftColor: '#3B82F6' }}>
-                <Text style={{ color: '#D1D5DB', fontSize: 13, lineHeight: 20 }}>{selectedSatellite.missionObjective}</Text>
-              </View>
+              <View style={{ marginBottom: 4 }} />
             )}
 
             {/* 실시간 궤도 정보 */}
-            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
-              <Text style={{ fontSize: 15, fontWeight: '700', color: '#D1D5DB' }}>실시간 궤도 정보</Text>
-              <View style={{ backgroundColor: '#065F46', paddingHorizontal: 12, paddingVertical: 4, borderRadius: 14, flexDirection: 'row', alignItems: 'center' }}>
-                <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: '#34D399', marginRight: 5 }} />
-                <Text style={{ color: '#34D399', fontSize: 11, fontWeight: '600' }}>Live</Text>
+            <View style={{ marginBottom: 20 }}>
+              <View style={{ backgroundColor: 'rgba(255,255,255,0.07)', borderRadius: 6, paddingTop: 16, paddingBottom: 18, paddingHorizontal: 16 }}>
+                <Text style={{ color: '#7295FE', fontSize: 14, fontWeight: '500', marginBottom: 14 }}>실시간 궤도 정보</Text>
+                {(() => {
+                  const MOON_R = 1737.4;
+                  const pos = selectedSatellite.position;
+                  let latStr = '-', lonStr = '-';
+                  if (pos) {
+                    const dist = Math.sqrt(pos.x * pos.x + pos.y * pos.y + pos.z * pos.z);
+                    if (dist > 0) {
+                      const lat = Math.asin(pos.z / dist) * (180 / Math.PI);
+                      const lon = Math.atan2(pos.y, pos.x) * (180 / Math.PI);
+                      latStr = `${Math.abs(lat).toFixed(2)}° ${lat >= 0 ? 'N' : 'S'}`;
+                      lonStr = `${Math.abs(lon).toFixed(2)}° ${lon >= 0 ? 'E' : 'W'}`;
+                    }
+                  }
+                  const speed = pos && pos.vx !== undefined
+                    ? Math.sqrt(pos.vx * pos.vx + pos.vy * pos.vy + pos.vz * pos.vz).toFixed(2)
+                    : null;
+                  const periodMin = selectedSatellite.orbitHours
+                    ? (selectedSatellite.orbitHours * 60).toFixed(0)
+                    : null;
+
+                  const rows = [
+                    { label: '현재 위도', value: latStr },
+                    { label: '현재 경도', value: lonStr },
+                    { label: '현재 고도', value: pos?.altitude ? `${pos.altitude.toFixed(1)} km` : '-' },
+                    { label: '공전 속도', value: speed ? `${speed} km/s` : '-' },
+                    { label: '공전 주기', value: periodMin ? `${periodMin} min` : '-' },
+                    { label: '궤도 경사각', value: selectedSatellite.orbitInclination != null ? `${selectedSatellite.orbitInclination.toFixed(1)}°` : '-' },
+                  ];
+
+                  return rows.map((r, i) => (
+                    <View key={i} style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: i < rows.length - 1 ? 6 : 0 }}>
+                      <Text style={{ color: '#999999', fontSize: 14, fontWeight: '200', letterSpacing: 0.28 }}>{r.label}</Text>
+                      <Text style={{ color: '#EBECF1', fontSize: 14, fontWeight: '500' }}>{r.value}</Text>
+                    </View>
+                  ));
+                })()}
               </View>
             </View>
 
-            {/* 2x3 정보 카드 그리드 */}
-            {(() => {
-              const MOON_R = 1737.4;
-              const pos = selectedSatellite.position;
-              let latStr = '-', lonStr = '-';
-              if (pos) {
-                const dist = Math.sqrt(pos.x * pos.x + pos.y * pos.y + pos.z * pos.z);
-                if (dist > 0) {
-                  const lat = Math.asin(pos.z / dist) * (180 / Math.PI);
-                  const lon = Math.atan2(pos.y, pos.x) * (180 / Math.PI);
-                  latStr = `${Math.abs(lat).toFixed(2)}° ${lat >= 0 ? 'N' : 'S'}`;
-                  lonStr = `${Math.abs(lon).toFixed(2)}° ${lon >= 0 ? 'E' : 'W'}`;
-                }
-              }
-              const speed = pos && pos.vx !== undefined
-                ? Math.sqrt(pos.vx * pos.vx + pos.vy * pos.vy + pos.vz * pos.vz).toFixed(2)
-                : null;
-              const periodMin = selectedSatellite.orbitHours
-                ? (selectedSatellite.orbitHours * 60).toFixed(1)
-                : null;
-              const cardStyle = { flex: 1, minWidth: '47%', backgroundColor: '#1F2937', borderRadius: 2, padding: 14, borderWidth: 1, borderColor: 'rgba(255,255,255,0.08)' } as any;
-              const labelStyle = { color: '#6B7280', fontSize: 11, marginBottom: 4 };
-              const valStyle = { color: 'white', fontSize: 18, fontWeight: '700' as const };
-
-              return (
-                <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 20 }}>
-                  <View style={cardStyle}>
-                    <Text style={labelStyle}>현재 위도</Text>
-                    <Text style={valStyle}>{latStr}</Text>
-                  </View>
-                  <View style={cardStyle}>
-                    <Text style={labelStyle}>현재 경도</Text>
-                    <Text style={valStyle}>{lonStr}</Text>
-                  </View>
-                  <View style={cardStyle}>
-                    <Text style={labelStyle}>현재 고도</Text>
-                    <Text style={valStyle}>{pos?.altitude ? `${pos.altitude.toFixed(1)} km` : '-'}</Text>
-                  </View>
-                  <View style={cardStyle}>
-                    <Text style={labelStyle}>공전 속도</Text>
-                    <Text style={valStyle}>{speed ? `${speed} km/s` : '-'}</Text>
-                  </View>
-                  <View style={cardStyle}>
-                    <Text style={labelStyle}>공전 주기</Text>
-                    <Text style={valStyle}>{periodMin ? `${periodMin} 분` : '-'}</Text>
-                  </View>
-                  <View style={cardStyle}>
-                    <Text style={labelStyle}>궤도 경사각</Text>
-                    <Text style={valStyle}>{selectedSatellite.orbitInclination != null ? `${selectedSatellite.orbitInclination.toFixed(1)}°` : '-'}</Text>
-                  </View>
-                </View>
-              );
-            })()}
-
-            {/* 임무 목적 */}
+            {/* Mission Objectives */}
             {selectedSatellite.missionObjective && (
-              <View style={{ marginBottom: 20, borderTopWidth: 1, borderTopColor: 'rgba(255,255,255,0.06)', paddingTop: 16 }}>
-                <Text style={{ color: '#D1D5DB', fontSize: 15, fontWeight: '700', marginBottom: 8 }}>임무 목적</Text>
-                <Text style={{ color: '#9CA3AF', fontSize: 13, lineHeight: 20 }}>
+              <View style={{ marginBottom: 20, paddingTop: 10 }}>
+                <Text style={{ color: '#7295FE', fontSize: 12, fontWeight: '400', letterSpacing: -0.24, marginBottom: 10 }}>임무 목적</Text>
+                <Text style={{ color: '#999999', fontSize: 14, lineHeight: 21 }}>
                   {selectedSatellite.missionObjective}
                 </Text>
               </View>
             )}
 
-            {/* 탑재 장비 — 이름 + 상세 설명 */}
+            {/* 구분선 */}
+            <View style={{ height: 1, backgroundColor: 'rgba(255,255,255,0.07)', marginBottom: 20 }} />
+
+            {/* Scientific Payloads — border-left 스타일 */}
             {selectedSatellite.instruments && selectedSatellite.instruments.length > 0 && (
-              <View style={{ marginBottom: 20, borderTopWidth: 1, borderTopColor: 'rgba(255,255,255,0.06)', paddingTop: 16 }}>
-                <Text style={{ color: '#D1D5DB', fontSize: 15, fontWeight: '700', marginBottom: 10 }}>탑재 장비</Text>
+              <View style={{ marginBottom: 20 }}>
+                <Text style={{ color: '#7295FE', fontSize: 12, fontWeight: '400', letterSpacing: -0.24, marginBottom: 10 }}>탑재 장비</Text>
                 {selectedSatellite.instruments.map((inst: string, idx: number) => (
-                  <View key={idx} style={{ marginBottom: 10 }}>
-                    <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                      <View style={{ width: 6, height: 6, borderRadius: 1, backgroundColor: '#3B82F6', marginRight: 10 }} />
-                      <Text style={{ color: '#E5E7EB', fontSize: 13, fontWeight: '600' }}>{inst}</Text>
-                    </View>
+                  <View key={idx} style={{ borderLeftWidth: 2, borderLeftColor: '#333333', paddingLeft: 10, marginBottom: 13 }}>
+                    <Text style={{ color: '#EBECF1', fontSize: 14, fontWeight: '500', lineHeight: 21 }}>{inst}</Text>
                     {selectedSatellite.instrumentDetails?.[inst] && (
-                      <Text style={{ color: '#6B7280', fontSize: 12, marginLeft: 16, marginTop: 3, lineHeight: 17 }}>
+                      <Text style={{ color: '#666666', fontSize: 12, lineHeight: 16.8 }}>
                         {selectedSatellite.instrumentDetails[inst]}
                       </Text>
                     )}
@@ -3119,8 +3060,8 @@ export default function MoonScreen() {
             {/* 드래그 가능 영역: 핸들 + 제목행 */}
             <View {...landingPanelPanResponder.panHandlers}>
               {/* 드래그 핸들 */}
-              <View style={{ alignItems: 'center', paddingTop: 8, paddingBottom: 6 }}>
-                <View style={{ width: 48, height: 4, backgroundColor: 'rgba(255,255,255,0.2)', borderRadius: 1 }} />
+              <View style={{ alignItems: 'center', paddingTop: 8, paddingBottom: 8 }}>
+                <View style={{ width: 49, height: 4, backgroundColor: 'rgba(255,255,255,0.2)', borderRadius: 2 }} />
               </View>
               {/* 헤더: ← + 제목 + 뷰전환 */}
               <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingBottom: 10 }}>
@@ -3133,51 +3074,56 @@ export default function MoonScreen() {
                   hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
                   style={{ paddingRight: 8, paddingVertical: 4 }}
                 >
-                  <Ionicons name="chevron-back" size={24} color="#9CA3AF" />
+                  <Ionicons name="chevron-back" size={24} color="#666666" />
                 </TouchableOpacity>
-                <Text style={{ color: '#F9FAFB', fontSize: 20, fontWeight: '800', flex: 1 }} numberOfLines={1}>
-                  {selectedLandingSite.nameKr}
-                </Text>
+                <View style={{ flex: 1 }}>
+                  <Text style={{ color: '#EBECF1', fontSize: 20, fontWeight: '500' }} numberOfLines={1}>
+                    {selectedLandingSite.nameKr}
+                  </Text>
+                  <Text style={{ color: '#666666', fontSize: 12, lineHeight: 16.8 }} numberOfLines={1}>
+                    {selectedLandingSite.country} {selectedLandingSite.agency}
+                  </Text>
+                </View>
                 <TouchableOpacity
-                  onPress={() => {
-                    if (landingIsFirstPerson.current) {
-                      // 상세보기 → 전체보기로
-                      landingIsFirstPerson.current = false;
-                      webviewRef.current?.postMessage(JSON.stringify({ type: 'GO_TO_LOCATION', payload: { lat: selectedLandingSite.lat, lng: selectedLandingSite.lng } }));
-                    } else {
-                      // 전체보기 → 상세보기(회전)로
-                      landingIsFirstPerson.current = true;
-                      webviewRef.current?.postMessage(JSON.stringify({ type: 'GO_TO_LOCATION', payload: { lat: selectedLandingSite.lat, lng: selectedLandingSite.lng, orbit: true } }));
-                    }
-                  }}
-                  style={{ flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: 'rgba(96,165,250,0.15)', paddingHorizontal: 14, paddingVertical: 7, borderRadius: 2 }}
+                  onPress={toggleLandingView}
+                  style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: '#3C57E9', paddingHorizontal: 24, paddingVertical: 9, borderRadius: 8 }}
                 >
-                  <Ionicons name="eye-outline" size={16} color="#60A5FA" />
-                  <Text style={{ color: '#60A5FA', fontSize: 13, fontWeight: '700' }}>뷰 전환</Text>
+                  <Text style={{ color: '#fff', fontSize: 14, fontWeight: '500' }}>뷰 전환</Text>
                 </TouchableOpacity>
               </View>
             </View>
 
             {/* 구분선 */}
-            <View style={{ height: 1, backgroundColor: 'rgba(255,255,255,0.06)', marginHorizontal: 16 }} />
+            <View style={{ height: 1, backgroundColor: 'rgba(255,255,255,0.07)', marginHorizontal: 16 }} />
 
             <ScrollView style={{ paddingHorizontal: 20, paddingTop: 12 }} showsVerticalScrollIndicator={false}>
-              {/* 서브 정보 + 스크랩/내보내기 */}
-              <View style={{ flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between' }}>
-                <View style={{ flex: 1 }}>
-                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 4 }}>
-                    <Text style={{ color: '#6B7280', fontSize: 12, fontWeight: '500' }}>{selectedLandingSite.officialName}</Text>
-                    <Text style={{ color: '#6B7280', fontSize: 3 }}>●</Text>
-                    <Text style={{ color: '#9CA3AF', fontSize: 12 }}>{selectedLandingSite.country} {selectedLandingSite.agency}</Text>
-                  </View>
-                  <Text style={{ color: '#6B7280', fontSize: 12, marginBottom: 8 }}>
-                    {selectedLandingSite.lat.toFixed(3)}°{selectedLandingSite.lat >= 0 ? 'N' : 'S'}, {Math.abs(selectedLandingSite.lng).toFixed(3)}°{selectedLandingSite.lng >= 0 ? 'E' : 'W'}
+              {/* Figma 기반 레이아웃: Title+Subtitle / 뷰전환 버튼 */}
+              {/* 서브 정보: 타입 + 좌표 | share/bookmark 아이콘 */}
+              <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+                <View style={{ flex: 1, gap: 2 }}>
+                  <Text style={{ color: '#999999', fontSize: 14, lineHeight: 21 }}>{selectedLandingSite.missionType || 'Lander'}</Text>
+                  <Text style={{ color: '#3B4576', fontSize: 12, lineHeight: 16.8 }}>
+                    {Math.abs(selectedLandingSite.lat).toFixed(3)}°{selectedLandingSite.lat >= 0 ? 'N' : 'S'}  {Math.abs(selectedLandingSite.lng).toFixed(3)}°{selectedLandingSite.lng >= 0 ? 'E' : 'W'}
                   </Text>
                 </View>
-                {/* 스크랩 / 내보내기 */}
-                <View style={{ flexDirection: 'row', gap: 12, alignItems: 'center', marginTop: 2 }}>
+                {/* 스크랩 / 내보내기 — 38px 원형 */}
+                <View style={{ flexDirection: 'row', gap: 16, alignItems: 'center' }}>
                   <TouchableOpacity
-                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                    style={{ width: 38, height: 38, borderRadius: 20, borderWidth: 0.8, borderColor: '#808080', justifyContent: 'center', alignItems: 'center' }}
+                    onPress={async () => {
+                      if (!selectedLandingSite) return;
+                      try {
+                        const deepLink = Linking.createURL('/explore', { queryParams: { lat: String(selectedLandingSite.lat), lng: String(selectedLandingSite.lng), name: selectedLandingSite.nameKr, type: 'landing' } });
+                        await Share.share({
+                          message: `🌙 ${selectedLandingSite.nameKr} (${selectedLandingSite.officialName})\n📍 ${selectedLandingSite.lat.toFixed(3)}°, ${selectedLandingSite.lng.toFixed(3)}°\n🚀 ${selectedLandingSite.country} ${selectedLandingSite.agency} · ${selectedLandingSite.landingDate}\n\n${selectedLandingSite.description}\n\n👉 Plus Ultra에서 직접 탐사하기:\n${deepLink}`,
+                        });
+                      } catch (e) { }
+                    }}
+                  >
+                    <Svg width={16} height={13} viewBox="0 0 16 13" fill="none"><Path d="M16 6.06667L9.77778 0V3.46667C3.55556 4.33333 0.888889 8.66667 0 13C2.22222 9.96667 5.33333 8.58 9.77778 8.58V12.1333L16 6.06667Z" fill="#808080" /></Svg>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={{ width: 38, height: 38, borderRadius: 20, borderWidth: 0.8, borderColor: '#808080', justifyContent: 'center', alignItems: 'center' }}
                     onPress={async () => {
                       if (!selectedLandingSite) return;
                       if (!isLoggedIn) { router.push('/auth/login'); return; }
@@ -3199,103 +3145,86 @@ export default function MoonScreen() {
                       }
                     }}
                   >
-                    <Ionicons name={isLandingScrapped ? 'bookmark' : 'bookmark-outline'} size={22} color={isLandingScrapped ? '#60A5FA' : '#9CA3AF'} />
+                    <Svg width={10} height={14} viewBox="0 0 10 14" fill="none"><Path d="M9.5 0.5V13.2305L5.20312 11.3242L5 11.2344L4.79688 11.3242L0.5 13.2305V0.5H9.5Z" stroke={isLandingScrapped ? '#E9BE3C' : '#808080'} fill={isLandingScrapped ? '#E9BE3C' : 'none'} /></Svg>
                   </TouchableOpacity>
-                  <TouchableOpacity
-                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                    onPress={async () => {
-                      if (!selectedLandingSite) return;
-                      try {
-                        const deepLink = Linking.createURL('/explore', { queryParams: { lat: String(selectedLandingSite.lat), lng: String(selectedLandingSite.lng), name: selectedLandingSite.nameKr, type: 'landing' } });
-                        await Share.share({
-                          message: `🌙 ${selectedLandingSite.nameKr} (${selectedLandingSite.officialName})\n📍 ${selectedLandingSite.lat.toFixed(3)}°, ${selectedLandingSite.lng.toFixed(3)}°\n🚀 ${selectedLandingSite.country} ${selectedLandingSite.agency} · ${selectedLandingSite.landingDate}\n\n${selectedLandingSite.description}\n\n👉 Plus Ultra에서 직접 탐사하기:\n${deepLink}`,
-                        });
-                      } catch (e) { }
-                    }}
-                  >
-                    <Ionicons name="share-outline" size={22} color="#9CA3AF" />
-                  </TouchableOpacity>
-                </View>
-              </View>
-
-              {/* 상태 배지 */}
-              <View style={{ flexDirection: 'row', gap: 8, marginBottom: 16 }}>
-                <View style={{ paddingHorizontal: 10, paddingVertical: 4, borderRadius: 2, backgroundColor: getContactColor(selectedLandingSite.contactType) + '20' }}>
-                  <Text style={{ color: getContactColor(selectedLandingSite.contactType), fontSize: 12, fontWeight: '600' }}>{selectedLandingSite.contactType}</Text>
-                </View>
-                {selectedLandingSite.mode === 'Manned' && (
-                  <View style={{ paddingHorizontal: 10, paddingVertical: 4, borderRadius: 2, backgroundColor: 'rgba(252,211,77,0.2)' }}>
-                    <Text style={{ color: '#FCD34D', fontSize: 12, fontWeight: '600' }}>유인 미션</Text>
-                  </View>
-                )}
-              </View>
-
-              {/* 정보 카드 */}
-              <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 16 }}>
-                <View style={{ flex: 1, minWidth: '45%', backgroundColor: '#2A2C30', borderRadius: 10, padding: 14, borderWidth: 1, borderColor: 'rgba(255,255,255,0.08)' }}>
-                  <Text style={{ color: '#6B7280', fontSize: 11, marginBottom: 4 }}>착륙 시점</Text>
-                  <Text style={{ color: 'white', fontSize: 16, fontWeight: '700' }}>{selectedLandingSite.landingDate}</Text>
-                </View>
-                <View style={{ flex: 1, minWidth: '45%', backgroundColor: '#2A2C30', borderRadius: 10, padding: 14, borderWidth: 1, borderColor: 'rgba(255,255,255,0.08)' }}>
-                  <Text style={{ color: '#6B7280', fontSize: 11, marginBottom: 4 }}>착륙 지역</Text>
-                  <Text style={{ color: 'white', fontSize: 16, fontWeight: '700' }}>{selectedLandingSite.regionName}</Text>
-                </View>
-                <View style={{ flex: 1, minWidth: '45%', backgroundColor: '#2A2C30', borderRadius: 10, padding: 14, borderWidth: 1, borderColor: 'rgba(255,255,255,0.08)' }}>
-                  <Text style={{ color: '#6B7280', fontSize: 11, marginBottom: 4 }}>미션 유형</Text>
-                  <Text style={{ color: 'white', fontSize: 16, fontWeight: '700' }}>{selectedLandingSite.missionType}</Text>
-                </View>
-                <View style={{ flex: 1, minWidth: '45%', backgroundColor: '#2A2C30', borderRadius: 10, padding: 14, borderWidth: 1, borderColor: 'rgba(255,255,255,0.08)' }}>
-                  <Text style={{ color: '#6B7280', fontSize: 11, marginBottom: 4 }}>운용 방식</Text>
-                  <Text style={{ color: 'white', fontSize: 16, fontWeight: '700' }}>{selectedLandingSite.mode === 'Manned' ? '유인' : '무인'}</Text>
                 </View>
               </View>
 
               {/* 설명 */}
-              <View style={{ marginBottom: 20, borderTopWidth: 1, borderTopColor: 'rgba(255,255,255,0.06)', paddingTop: 16 }}>
-                <Text style={{ color: '#D1D5DB', fontSize: 15, fontWeight: '700', marginBottom: 8 }}>설명</Text>
-                <Text style={{ color: '#9CA3AF', fontSize: 13, lineHeight: 20 }}>{selectedLandingSite.description}</Text>
+              {selectedLandingSite.description && (
+                <Text style={{ color: '#999999', fontSize: 14, lineHeight: 21, marginBottom: 20 }}>{selectedLandingSite.description}</Text>
+              )}
+
+              {/* Mission Details 박스 */}
+              <View style={{ backgroundColor: 'rgba(255,255,255,0.07)', borderRadius: 6, paddingTop: 16, paddingBottom: 18, paddingHorizontal: 16, marginBottom: 20 }}>
+                <Text style={{ color: '#7295FE', fontSize: 14, fontWeight: '500', marginBottom: 14 }}>미션 상세</Text>
+                {[
+                  { label: '착륙 시점', value: selectedLandingSite.landingDate || selectedLandingSite.year },
+                  { label: '착륙 지역', value: selectedLandingSite.regionName || (selectedLandingSite.lat > 90 ? '후면' : '전면') },
+                  { label: '미션 유형', value: selectedLandingSite.missionType || (selectedLandingSite.mode === 'Manned' ? '유인 착륙선' : '무인 착륙선') },
+                  { label: '상태', value: selectedLandingSite.contactType || '알 수 없음' },
+                ].map((r, i) => (
+                  <View key={i} style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: i < 3 ? 6 : 0 }}>
+                    <Text style={{ color: '#999999', fontSize: 14, fontWeight: '200', letterSpacing: 0.28 }}>{r.label}</Text>
+                    <Text style={{ color: '#EBECF1', fontSize: 14, fontWeight: '500' }}>{r.value}</Text>
+                  </View>
+                ))}
               </View>
 
-              {/* 관련 뉴스 + 점유 현황 버튼 */}
-              <View style={{ flexDirection: 'row', gap: 10, marginBottom: 20 }}>
+              {/* Mission Objectives */}
+              {selectedLandingSite.description && (
+                <View style={{ marginBottom: 10 }}>
+                  <Text style={{ color: '#7295FE', fontSize: 12, fontWeight: '400', letterSpacing: -0.24, marginBottom: 10 }}>임무 목적</Text>
+                  <Text style={{ color: '#999999', fontSize: 14, lineHeight: 21 }}>{selectedLandingSite.description}</Text>
+                </View>
+              )}
+
+              {/* 구분선 */}
+              <View style={{ height: 1, backgroundColor: 'rgba(255,255,255,0.07)', marginVertical: 10 }} />
+
+              {/* Nearby Missions — 68x68 썸네일 리스트 */}
+              <View style={{ marginBottom: 20 }}>
+                <Text style={{ color: '#7295FE', fontSize: 12, fontWeight: '400', letterSpacing: -0.24, marginBottom: 10 }}>인근 탐사 지점</Text>
+                {findNearbySites(selectedLandingSite, 2).map((nearby, idx) => (
+                  <TouchableOpacity
+                    key={idx}
+                    style={{ flexDirection: 'row', alignItems: 'center', gap: 14, paddingVertical: 10, borderBottomWidth: idx < 1 ? 1 : 0, borderBottomColor: 'rgba(255,255,255,0.07)' }}
+                    onPress={() => {
+                      goToLandingSite(nearby);
+                    }}
+                    activeOpacity={0.7}
+                  >
+                    <View style={{ width: 68, height: 68, borderRadius: 3, borderWidth: 1, borderColor: 'rgba(255,255,255,0.07)', backgroundColor: 'rgba(255,255,255,0.04)', justifyContent: 'center', alignItems: 'center', overflow: 'hidden' }}>
+                      {LANDING_SITE_IMAGES[nearby.officialName] ? (
+                        <Image source={LANDING_SITE_IMAGES[nearby.officialName]} style={{ width: 68, height: 68, borderRadius: 3 }} resizeMode="cover" />
+                      ) : (
+                        <Ionicons name="location" size={24} color="#3C57E9" />
+                      )}
+                    </View>
+                    <View style={{ flex: 1, justifyContent: 'center' }}>
+                      <Text style={{ color: '#EBECF1', fontSize: 18, fontWeight: '500' }} numberOfLines={1}>{nearby.nameKr}</Text>
+                      <Text style={{ color: '#666666', fontSize: 12, lineHeight: 16.8 }}>{nearby.year} · {nearby.country}</Text>
+                    </View>
+                  </TouchableOpacity>
+                ))}
+              </View>
+
+              {/* 하단 버튼 — Related News + Claim Status */}
+              <View style={{ flexDirection: 'row', gap: 10, marginBottom: 20, paddingTop: 10 }}>
                 <TouchableOpacity
-                  style={{ flex: 1, backgroundColor: '#2A2C30', borderRadius: 10, paddingVertical: 14, alignItems: 'center', borderWidth: 1, borderColor: 'rgba(255,255,255,0.08)' }}
+                  style={{ flex: 1, backgroundColor: '#EAECF6', borderRadius: 5, height: 56, justifyContent: 'center', alignItems: 'center' }}
                   onPress={() => router.push(`/(tabs)/moon?search=${encodeURIComponent(selectedLandingSite.nameKr)}`)}
                   activeOpacity={0.7}
                 >
-                  <Ionicons name="newspaper-outline" size={18} color="#60A5FA" style={{ marginBottom: 4 }} />
-                  <Text style={{ color: '#D1D5DB', fontSize: 13, fontWeight: '600' }}>관련 뉴스 →</Text>
+                  <Text style={{ color: '#1A1A1A', fontSize: 16, fontWeight: '600' }}>관련 뉴스</Text>
                 </TouchableOpacity>
                 <TouchableOpacity
-                  style={{ flex: 1, backgroundColor: '#2A2C30', borderRadius: 10, paddingVertical: 14, alignItems: 'center', borderWidth: 1, borderColor: 'rgba(255,255,255,0.08)' }}
+                  style={{ flex: 1, backgroundColor: '#3C57E9', borderRadius: 5, height: 56, justifyContent: 'center', alignItems: 'center' }}
                   onPress={() => setLandingSiteDetailMode('occupation')}
                   activeOpacity={0.7}
                 >
-                  <Ionicons name="grid-outline" size={18} color="#34D399" style={{ marginBottom: 4 }} />
-                  <Text style={{ color: '#D1D5DB', fontSize: 13, fontWeight: '600' }}>개척 현황 →</Text>
+                  <Text style={{ color: '#fff', fontSize: 16, fontWeight: '600' }}>개척 현황</Text>
                 </TouchableOpacity>
-              </View>
-
-              {/* 인근 탐사 지점 */}
-              <View style={{ marginBottom: 20, borderTopWidth: 1, borderTopColor: 'rgba(255,255,255,0.06)', paddingTop: 16 }}>
-                <Text style={{ color: '#D1D5DB', fontSize: 15, fontWeight: '700', marginBottom: 10 }}>인근 탐사 지점</Text>
-                <View style={{ flexDirection: 'row', gap: 10 }}>
-                  {findNearbySites(selectedLandingSite, 2).map((nearby, idx) => (
-                    <TouchableOpacity
-                      key={idx}
-                      style={{ flex: 1, backgroundColor: '#2A2C30', borderRadius: 10, padding: 12, borderWidth: 1, borderColor: 'rgba(255,255,255,0.06)' }}
-                      onPress={() => {
-                        setSelectedLandingSite(nearby);
-                        setLandingSiteDetailMode('detail');
-                        webviewRef.current?.postMessage(JSON.stringify({ type: 'GO_TO_LOCATION', payload: { lat: nearby.lat, lng: nearby.lng } }));
-                      }}
-                      activeOpacity={0.7}
-                    >
-                      <Text style={{ color: '#F9FAFB', fontSize: 13, fontWeight: '600' }}>{nearby.nameKr}</Text>
-                      <Text style={{ color: '#6B7280', fontSize: 11, marginTop: 2 }}>{nearby.country} · {nearby.year}</Text>
-                    </TouchableOpacity>
-                  ))}
-                </View>
               </View>
 
               <View style={{ height: 40 }} />
@@ -3325,7 +3254,7 @@ export default function MoonScreen() {
               // DB에서 점유 토큰 로드 → WebView에 전달
               try {
                 const tokens = await getAllOccupiedTokens();
-                const myCells = await getUserOccupiedCells('hero');
+                const myCells = user?.id ? await getUserOccupiedCells(user.id) : [];
                 const myTokens = myCells.map(c => c.cellId);
                 webviewRef.current?.postMessage(JSON.stringify({ type: 'SET_OCCUPIED_TOKENS', payload: { tokens, myTokens } }));
               } catch (e) { console.log('[Index] Failed to load occupied tokens', e); }
@@ -3364,12 +3293,12 @@ export default function MoonScreen() {
               }}
               style={{ padding: 4 }}
             >
-              <Ionicons name="chevron-back" size={22} color="#9CA3AF" />
+              <Ionicons name="chevron-back" size={22} color="#666666" />
             </TouchableOpacity>
             <View style={{ flex: 1, marginLeft: 10 }}>
               <View style={{ flexDirection: 'row', alignItems: 'baseline', gap: 8 }}>
-                <Text style={{ color: 'white', fontSize: 17, fontWeight: '800' }}>{selectedLandingSite.nameKr}</Text>
-                <Text style={{ color: '#6B7280', fontSize: 13 }}>{selectedLandingSite.officialName}</Text>
+                <Text style={{ color: '#EBECF1', fontSize: 17, fontWeight: '600' }}>{selectedLandingSite.nameKr}</Text>
+                <Text style={{ color: '#666666', fontSize: 13 }}>{selectedLandingSite.officialName}</Text>
               </View>
             </View>
             <TouchableOpacity
@@ -3379,7 +3308,7 @@ export default function MoonScreen() {
               }}
               style={{ padding: 4 }}
             >
-              <Ionicons name="close" size={20} color="#6B7280" />
+              <Ionicons name="close" size={20} color="#666666" />
             </TouchableOpacity>
           </View>
         </View>
@@ -3403,8 +3332,8 @@ export default function MoonScreen() {
           {/* 드래그 가능 영역: 핸들 + 제목행 */}
           <View {...featurePanelPanResponder.panHandlers}>
             {/* 드래그 핸들 */}
-            <View style={{ alignItems: 'center', paddingTop: 8, paddingBottom: 6 }}>
-              <View style={{ width: 48, height: 4, backgroundColor: 'rgba(255,255,255,0.2)', borderRadius: 1 }} />
+            <View style={{ alignItems: 'center', paddingTop: 8, paddingBottom: 8 }}>
+              <View style={{ width: 49, height: 4, backgroundColor: 'rgba(255,255,255,0.2)', borderRadius: 2 }} />
             </View>
             {/* 헤더: ← + 제목 + 뷰전환 */}
             <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingBottom: 10 }}>
@@ -3418,47 +3347,49 @@ export default function MoonScreen() {
                 hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
                 style={{ paddingRight: 8, paddingVertical: 4 }}
               >
-                <Ionicons name="chevron-back" size={24} color="#9CA3AF" />
+                <Ionicons name="chevron-back" size={24} color="#666666" />
               </TouchableOpacity>
-              <Text style={{ color: '#F9FAFB', fontSize: 20, fontWeight: '800', flex: 1 }} numberOfLines={1}>
+              <Text style={{ color: '#EBECF1', fontSize: 20, fontWeight: '600', flex: 1 }} numberOfLines={1}>
                 {selectedFeature.nameKr}
               </Text>
               <TouchableOpacity
-                onPress={() => {
-                  if (featureIsFirstPerson.current) {
-                    // 상세보기 → 전체보기로
-                    featureIsFirstPerson.current = false;
-                    webviewRef.current?.postMessage(JSON.stringify({ type: 'GO_TO_LOCATION', payload: { lat: selectedFeature.lat, lng: selectedFeature.lng } }));
-                  } else {
-                    // 전체보기 → 상세보기(회전)로
-                    featureIsFirstPerson.current = true;
-                    webviewRef.current?.postMessage(JSON.stringify({ type: 'GO_TO_LOCATION', payload: { lat: selectedFeature.lat, lng: selectedFeature.lng, orbit: true } }));
-                  }
-                }}
-                style={{ flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: 'rgba(96,165,250,0.15)', paddingHorizontal: 14, paddingVertical: 7, borderRadius: 2 }}
+                onPress={toggleFeatureView}
+                style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: '#3C57E9', paddingHorizontal: 24, paddingVertical: 9, borderRadius: 8 }}
               >
-                <Ionicons name="eye-outline" size={16} color="#60A5FA" />
-                <Text style={{ color: '#60A5FA', fontSize: 13, fontWeight: '700' }}>뷰 전환</Text>
+                <Text style={{ color: '#fff', fontSize: 14, fontWeight: '500' }}>뷰 전환</Text>
               </TouchableOpacity>
             </View>
           </View>
 
           {/* 구분선 */}
-          <View style={{ height: 1, backgroundColor: 'rgba(255,255,255,0.06)', marginHorizontal: 16 }} />
+          <View style={{ height: 1, backgroundColor: 'rgba(255,255,255,0.07)', marginHorizontal: 16 }} />
 
           <ScrollView style={{ flex: 1, paddingHorizontal: 20, paddingTop: 12 }} showsVerticalScrollIndicator={false}>
-            {/* 영문명 · 좌표 */}
-            <View style={{ flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between' }}>
-              <View style={{ flex: 1 }}>
-                <Text style={{ color: '#6B7280', fontSize: 13, marginBottom: 2 }}>{selectedFeature.nameEn}</Text>
-                <Text style={{ color: '#9CA3AF', fontSize: 12 }}>
-                  {selectedFeature.lat.toFixed(3)}°{selectedFeature.lat >= 0 ? 'N' : 'S'}  {Math.abs(selectedFeature.lng).toFixed(3)}°{selectedFeature.lng >= 0 ? 'E' : 'W'}
+            {/* 서브 정보: 유형 + 좌표 | share/book 아이콘 38px */}
+            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+              <View style={{ flex: 1, gap: 2 }}>
+                <Text style={{ color: '#999999', fontSize: 14, lineHeight: 21 }}>{selectedFeature.typeKr}</Text>
+                <Text style={{ color: '#3B4576', fontSize: 12, lineHeight: 16.8 }}>
+                  {Math.abs(selectedFeature.lat).toFixed(2)}°{selectedFeature.lat >= 0 ? 'N' : 'S'}  {Math.abs(selectedFeature.lng).toFixed(2)}°{selectedFeature.lng >= 0 ? 'E' : 'W'}
                 </Text>
               </View>
-              {/* 스크랩 / 내보내기 */}
-              <View style={{ flexDirection: 'row', gap: 12, alignItems: 'center', marginTop: 2 }}>
+              <View style={{ flexDirection: 'row', gap: 16, alignItems: 'center' }}>
                 <TouchableOpacity
-                  hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                  style={{ width: 38, height: 38, borderRadius: 20, borderWidth: 0.8, borderColor: '#808080', justifyContent: 'center', alignItems: 'center' }}
+                  onPress={async () => {
+                    if (!selectedFeature) return;
+                    try {
+                      const deepLink = Linking.createURL('/explore', { queryParams: { lat: String(selectedFeature.lat), lng: String(selectedFeature.lng), name: selectedFeature.nameKr, type: 'feature' } });
+                      await Share.share({
+                        message: `🌙 ${selectedFeature.nameKr} (${selectedFeature.nameEn})\n📍 ${selectedFeature.lat.toFixed(3)}°, ${selectedFeature.lng.toFixed(3)}°\n🏔️ ${selectedFeature.typeKr} · 직경 ${selectedFeature.diameterKm}km\n\n${selectedFeature.description}\n\n👉 Plus Ultra에서 직접 탐사하기:\n${deepLink}`,
+                      });
+                    } catch (e) { }
+                  }}
+                >
+                  <Svg width={16} height={13} viewBox="0 0 16 13" fill="none"><Path d="M16 6.06667L9.77778 0V3.46667C3.55556 4.33333 0.888889 8.66667 0 13C2.22222 9.96667 5.33333 8.58 9.77778 8.58V12.1333L16 6.06667Z" fill="#808080" /></Svg>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={{ width: 38, height: 38, borderRadius: 20, borderWidth: 0.8, borderColor: '#808080', justifyContent: 'center', alignItems: 'center' }}
                   onPress={async () => {
                     if (!selectedFeature) return;
                     if (!isLoggedIn) { router.push('/auth/login'); return; }
@@ -3480,101 +3411,91 @@ export default function MoonScreen() {
                     }
                   }}
                 >
-                  <Ionicons name={isFeatureScrapped ? 'bookmark' : 'bookmark-outline'} size={22} color={isFeatureScrapped ? '#60A5FA' : '#9CA3AF'} />
+                  <Svg width={10} height={14} viewBox="0 0 10 14" fill="none"><Path d="M9.5 0.5V13.2305L5.20312 11.3242L5 11.2344L4.79688 11.3242L0.5 13.2305V0.5H9.5Z" stroke={isFeatureScrapped ? '#E9BE3C' : '#808080'} fill={isFeatureScrapped ? '#E9BE3C' : 'none'} /></Svg>
                 </TouchableOpacity>
+              </View>
+            </View>
+
+            {/* 3열 요약 Info — 균등 3등분 */}
+            <View style={{ flexDirection: 'row', alignItems: 'center', height: 44, borderRadius: 8, marginBottom: 12 }}>
+              <View style={{ flex: 1, alignItems: 'center', gap: 6 }}>
+                <Text style={{ color: '#999999', fontSize: 14, fontWeight: '500' }}>직경</Text>
+                <Text style={{ color: '#EBECF1', fontSize: 14, fontWeight: '500' }}>{selectedFeature.diameterKm} km</Text>
+              </View>
+              <View style={{ width: 1, height: 20, backgroundColor: 'rgba(255,255,255,0.1)' }} />
+              <View style={{ flex: 1, alignItems: 'center', gap: 6 }}>
+                <Text style={{ color: '#999999', fontSize: 14, fontWeight: '500' }}>깊이</Text>
+                <Text style={{ color: '#EBECF1', fontSize: 14, fontWeight: '500' }}>{selectedFeature.depthKm ? `${selectedFeature.depthKm} km` : '-'}</Text>
+              </View>
+              <View style={{ width: 1, height: 20, backgroundColor: 'rgba(255,255,255,0.1)' }} />
+              <View style={{ flex: 1, alignItems: 'center', gap: 6 }}>
+                <Text style={{ color: '#999999', fontSize: 14, fontWeight: '500' }}>면적</Text>
+                <Text style={{ color: '#EBECF1', fontSize: 14, fontWeight: '500' }}>{selectedFeature.areaKm2 ? formatArea(selectedFeature.areaKm2) : '-'}</Text>
+              </View>
+            </View>
+
+            {/* 설명 — #999 14px */}
+            <Text style={{ color: '#999999', fontSize: 14, lineHeight: 21, marginBottom: 20 }}>{selectedFeature.description}</Text>
+
+            {/* 지형 정보 — rgba(255,255,255,0.07) r6 박스 */}
+            <View style={{ backgroundColor: 'rgba(255,255,255,0.07)', borderRadius: 6, paddingTop: 16, paddingBottom: 18, paddingHorizontal: 16, marginBottom: 20 }}>
+              <Text style={{ color: '#7295FE', fontSize: 14, fontWeight: '500', marginBottom: 14 }}>지형 정보</Text>
+              {[
+                { label: '유형', value: selectedFeature.typeKr },
+                { label: '위치', value: isFarSide(selectedFeature) ? '달 뒷면' : '달 앞면' },
+              ].map((r, i) => (
+                <View key={i} style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+                  <Text style={{ color: '#999999', fontSize: 14, fontWeight: '200', letterSpacing: 0.28 }}>{r.label}</Text>
+                  <Text style={{ color: '#EBECF1', fontSize: 14, fontWeight: '500' }}>{r.value}</Text>
+                </View>
+              ))}
+            </View>
+
+            {/* 구분선 */}
+            <View style={{ height: 1, backgroundColor: 'rgba(255,255,255,0.07)', marginBottom: 10 }} />
+
+            {/* 인근 주요 지형 — 68x68 썸네일 리스트 */}
+            <View style={{ marginBottom: 20 }}>
+              <Text style={{ color: '#7295FE', fontSize: 12, fontWeight: '400', letterSpacing: -0.24, marginBottom: 10 }}>인근 주요 지형</Text>
+              {findNearbyFeatures(selectedFeature, 2).map((nearby, idx) => (
                 <TouchableOpacity
-                  hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                  onPress={async () => {
-                    if (!selectedFeature) return;
-                    try {
-                      const deepLink = Linking.createURL('/explore', { queryParams: { lat: String(selectedFeature.lat), lng: String(selectedFeature.lng), name: selectedFeature.nameKr, type: 'feature' } });
-                      await Share.share({
-                        message: `🌙 ${selectedFeature.nameKr} (${selectedFeature.nameEn})\n📍 ${selectedFeature.lat.toFixed(3)}°, ${selectedFeature.lng.toFixed(3)}°\n🏔️ ${selectedFeature.typeKr} · 직경 ${selectedFeature.diameterKm}km\n\n${selectedFeature.description}\n\n👉 Plus Ultra에서 직접 탐사하기:\n${deepLink}`,
-                      });
-                    } catch (e) { }
+                  key={idx}
+                  style={{ flexDirection: 'row', alignItems: 'center', gap: 14, paddingVertical: 10, borderBottomWidth: idx < 1 ? 1 : 0, borderBottomColor: 'rgba(255,255,255,0.07)' }}
+                  onPress={() => {
+                    goToFeature(nearby);
                   }}
+                  activeOpacity={0.7}
                 >
-                  <Ionicons name="share-outline" size={22} color="#9CA3AF" />
+                  <View style={{ width: 68, height: 68, borderRadius: 3, borderWidth: 1, borderColor: 'rgba(255,255,255,0.07)', backgroundColor: 'rgba(255,255,255,0.04)', justifyContent: 'center', alignItems: 'center', overflow: 'hidden' }}>
+                    {LUNAR_FEATURE_IMAGES[nearby.id] ? (
+                      <Image source={LUNAR_FEATURE_IMAGES[nearby.id]} style={{ width: 68, height: 68, borderRadius: 3 }} resizeMode="cover" />
+                    ) : (
+                      <Ionicons name="earth" size={24} color="#3C57E9" />
+                    )}
+                  </View>
+                  <View style={{ flex: 1, justifyContent: 'center' }}>
+                    <Text style={{ color: '#EBECF1', fontSize: 18, fontWeight: '500' }} numberOfLines={1}>{nearby.nameKr}</Text>
+                    <Text style={{ color: '#666666', fontSize: 12, lineHeight: 16.8 }}>{nearby.typeKr} · {nearby.diameterKm}km</Text>
+                  </View>
                 </TouchableOpacity>
-              </View>
+              ))}
             </View>
 
-            {/* 유형 태그 + 위치 */}
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 10 }}>
-              <View style={{ paddingHorizontal: 10, paddingVertical: 4, borderRadius: 2, backgroundColor: `${getFeatureTypeColor(selectedFeature.typeKr)}20` }}>
-                <Text style={{ color: getFeatureTypeColor(selectedFeature.typeKr), fontSize: 12, fontWeight: '600' }}>{selectedFeature.typeKr}</Text>
-              </View>
-              <Text style={{ color: '#6B7280', fontSize: 12 }}>{isFarSide(selectedFeature) ? '🔙 뒷면' : '🌕 앞면'}</Text>
-            </View>
-
-            {/* 짧은 설명 */}
-            <Text style={{ color: '#9CA3AF', fontSize: 13, lineHeight: 20, marginTop: 12 }}>{selectedFeature.description}</Text>
-
-            {/* ── 지형 정보 ── */}
-            <View style={{ marginTop: 20, paddingTop: 16, borderTopWidth: 1, borderTopColor: 'rgba(255,255,255,0.06)' }}>
-              <Text style={{ color: '#D1D5DB', fontSize: 15, fontWeight: '700', marginBottom: 12 }}>지형 정보</Text>
-              <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 10 }}>
-                <View style={{ flex: 1, minWidth: '45%', backgroundColor: '#2A2C30', borderRadius: 10, padding: 14, borderWidth: 1, borderColor: 'rgba(255,255,255,0.08)' }}>
-                  <Text style={{ color: '#6B7280', fontSize: 11, marginBottom: 4 }}>직경</Text>
-                  <Text style={{ color: 'white', fontSize: 16, fontWeight: '700' }}>{selectedFeature.diameterKm} km</Text>
-                </View>
-                <View style={{ flex: 1, minWidth: '45%', backgroundColor: '#2A2C30', borderRadius: 10, padding: 14, borderWidth: 1, borderColor: 'rgba(255,255,255,0.08)' }}>
-                  <Text style={{ color: '#6B7280', fontSize: 11, marginBottom: 4 }}>위치</Text>
-                  <Text style={{ color: 'white', fontSize: 16, fontWeight: '700' }}>{isFarSide(selectedFeature) ? '달 뒷면' : '달 앞면'}</Text>
-                </View>
-                {selectedFeature.depthKm && (
-                  <View style={{ flex: 1, minWidth: '45%', backgroundColor: '#2A2C30', borderRadius: 10, padding: 14, borderWidth: 1, borderColor: 'rgba(255,255,255,0.08)' }}>
-                    <Text style={{ color: '#6B7280', fontSize: 11, marginBottom: 4 }}>깊이</Text>
-                    <Text style={{ color: 'white', fontSize: 16, fontWeight: '700' }}>{selectedFeature.depthKm} km</Text>
-                  </View>
-                )}
-                {selectedFeature.areaKm2 && (
-                  <View style={{ flex: 1, minWidth: '45%', backgroundColor: '#2A2C30', borderRadius: 10, padding: 14, borderWidth: 1, borderColor: 'rgba(255,255,255,0.08)' }}>
-                    <Text style={{ color: '#6B7280', fontSize: 11, marginBottom: 4 }}>면적</Text>
-                    <Text style={{ color: 'white', fontSize: 16, fontWeight: '700' }}>{formatArea(selectedFeature.areaKm2)}</Text>
-                  </View>
-                )}
-              </View>
-            </View>
-
-            {/* ── 상세 설명 ── */}
-            <View style={{ marginTop: 20, paddingTop: 16, borderTopWidth: 1, borderTopColor: 'rgba(255,255,255,0.06)' }}>
-              <Text style={{ color: '#D1D5DB', fontSize: 15, fontWeight: '700', marginBottom: 8 }}>상세 설명</Text>
-              <Text style={{ color: '#9CA3AF', fontSize: 13, lineHeight: 20 }}>{selectedFeature.description}</Text>
-            </View>
-
-            {/* ── 인근 주요 지형 ── */}
-            <View style={{ marginTop: 20, paddingTop: 16, borderTopWidth: 1, borderTopColor: 'rgba(255,255,255,0.06)' }}>
-              <Text style={{ color: '#D1D5DB', fontSize: 15, fontWeight: '700', marginBottom: 10 }}>인근 주요 지형</Text>
-              <View style={{ flexDirection: 'row', gap: 10 }}>
-                {findNearbyFeatures(selectedFeature, 2).map((nearby, idx) => (
-                  <TouchableOpacity
-                    key={idx}
-                    style={{ flex: 1, backgroundColor: '#2A2C30', borderRadius: 10, padding: 12, borderWidth: 1, borderColor: 'rgba(255,255,255,0.06)' }}
-                    onPress={() => {
-                      setSelectedFeature(nearby);
-                      setFeatureDetailMode('detail');
-                      webviewRef.current?.postMessage(JSON.stringify({ type: 'GO_TO_LOCATION', payload: { lat: nearby.lat, lng: nearby.lng } }));
-                      webviewRef.current?.postMessage(JSON.stringify({ type: 'SHOW_FEATURE_AREA', payload: { lat: nearby.lat, lng: nearby.lng, diameterKm: nearby.diameterKm, widthKm: nearby.widthKm, angle: nearby.angle, typeEn: nearby.typeEn } }));
-                    }}
-                    activeOpacity={0.7}
-                  >
-                    <Text style={{ color: '#F9FAFB', fontSize: 13, fontWeight: '600' }}>{nearby.nameKr}</Text>
-                    <Text style={{ color: '#6B7280', fontSize: 11, marginTop: 2 }}>{nearby.typeKr} · {nearby.diameterKm}km</Text>
-                  </TouchableOpacity>
-                ))}
-              </View>
-            </View>
-
-            {/* 점유 현황 버튼 */}
-            <View style={{ marginTop: 20, marginBottom: 20 }}>
+            {/* 하단 2버튼 — 관련 뉴스 + 개척 현황 */}
+            <View style={{ flexDirection: 'row', gap: 10, marginBottom: 20, paddingTop: 10 }}>
               <TouchableOpacity
-                style={{ backgroundColor: '#2A2C30', borderRadius: 10, paddingVertical: 14, alignItems: 'center', borderWidth: 1, borderColor: 'rgba(255,255,255,0.08)' }}
+                style={{ flex: 1, backgroundColor: '#EAECF6', borderRadius: 5, height: 56, justifyContent: 'center', alignItems: 'center' }}
+                onPress={() => router.push(`/(tabs)/moon?search=${encodeURIComponent(selectedFeature.nameKr)}`)}
+                activeOpacity={0.7}
+              >
+                <Text style={{ color: '#1A1A1A', fontSize: 16, fontWeight: '600' }}>관련 뉴스</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={{ flex: 1, backgroundColor: '#3C57E9', borderRadius: 5, height: 56, justifyContent: 'center', alignItems: 'center' }}
                 onPress={() => setFeatureDetailMode('occupation')}
                 activeOpacity={0.7}
               >
-                <Ionicons name="grid-outline" size={18} color="#34D399" style={{ marginBottom: 4 }} />
-                <Text style={{ color: '#D1D5DB', fontSize: 13, fontWeight: '600' }}>개척 현황 →</Text>
+                <Text style={{ color: '#fff', fontSize: 16, fontWeight: '600' }}>개척 현황</Text>
               </TouchableOpacity>
             </View>
             <View style={{ height: 30 }} />
@@ -3614,7 +3535,7 @@ export default function MoonScreen() {
               setMainMode('test2');
               try {
                 const tokens = await getAllOccupiedTokens();
-                const myCells = await getUserOccupiedCells('hero');
+                const myCells = user?.id ? await getUserOccupiedCells(user.id) : [];
                 const myTokens = myCells.map(c => c.cellId);
                 webviewRef.current?.postMessage(JSON.stringify({ type: 'SET_OCCUPIED_TOKENS', payload: { tokens, myTokens } }));
               } catch (e) { console.log('[Index] Failed to load occupied tokens', e); }
@@ -3653,12 +3574,12 @@ export default function MoonScreen() {
               }}
               style={{ padding: 4 }}
             >
-              <Ionicons name="chevron-back" size={22} color="#9CA3AF" />
+              <Ionicons name="chevron-back" size={22} color="#666666" />
             </TouchableOpacity>
             <View style={{ flex: 1, marginLeft: 10 }}>
               <View style={{ flexDirection: 'row', alignItems: 'baseline', gap: 8 }}>
-                <Text style={{ color: 'white', fontSize: 17, fontWeight: '800' }}>{getFeatureTypeEmoji(selectedFeature.typeKr)} {selectedFeature.nameKr}</Text>
-                <Text style={{ color: '#6B7280', fontSize: 13 }}>{selectedFeature.nameEn}</Text>
+                <Text style={{ color: '#EBECF1', fontSize: 17, fontWeight: '600' }}>{getFeatureTypeEmoji(selectedFeature.typeKr)} {selectedFeature.nameKr}</Text>
+                <Text style={{ color: '#666666', fontSize: 13 }}>{selectedFeature.nameEn}</Text>
               </View>
             </View>
             <TouchableOpacity
@@ -3669,7 +3590,7 @@ export default function MoonScreen() {
               }}
               style={{ padding: 4 }}
             >
-              <Ionicons name="close" size={20} color="#6B7280" />
+              <Ionicons name="close" size={20} color="#666666" />
             </TouchableOpacity>
           </View>
         </View>
@@ -3697,36 +3618,36 @@ export default function MoonScreen() {
               borderTopColor: 'rgba(255,255,255,0.1)',
             }}>
               {/* 핸들 바 */}
-              <View style={{ width: 40, height: 4, backgroundColor: '#4B5563', borderRadius: 2, alignSelf: 'center', marginBottom: 16 }} />
+              <View style={{ width: 49, height: 4, backgroundColor: 'rgba(255,255,255,0.2)', borderRadius: 2, alignSelf: 'center', marginBottom: 16 }} />
 
               {selectedLandmark && (
                 <>
                   <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 12 }}>
                     <Text style={{ fontSize: 32, marginRight: 12 }}>{selectedLandmark.emoji}</Text>
                     <View style={{ flex: 1 }}>
-                      <Text style={{ color: '#F9FAFB', fontSize: 20, fontWeight: '700' }}>
+                      <Text style={{ color: '#EBECF1', fontSize: 20, fontWeight: '600' }}>
                         {selectedLandmark.name}
                       </Text>
                       {selectedLandmark.type === 'apollo' && (
-                        <Text style={{ color: '#60A5FA', fontSize: 13, fontWeight: '600', marginTop: 2 }}>
+                        <Text style={{ color: '#3C57E9', fontSize: 13, fontWeight: '600', marginTop: 2 }}>
                           🧑‍🚀 {selectedLandmark.crew}
                         </Text>
                       )}
                     </View>
                   </View>
 
-                  <Text style={{ color: '#D1D5DB', fontSize: 15, lineHeight: 24, marginBottom: 16 }}>
+                  <Text style={{ color: '#666666', fontSize: 15, lineHeight: 24, marginBottom: 16 }}>
                     {selectedLandmark.desc}
                   </Text>
 
                   <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
                     {selectedLandmark.date && (
-                      <View style={{ backgroundColor: 'rgba(59,130,246,0.15)', paddingHorizontal: 12, paddingVertical: 6, borderRadius: 2 }}>
-                        <Text style={{ color: '#93C5FD', fontSize: 12, fontWeight: '600' }}>📅 {selectedLandmark.date}</Text>
+                      <View style={{ backgroundColor: 'rgba(60,87,233,0.15)', paddingHorizontal: 12, paddingVertical: 6, borderRadius: 5 }}>
+                        <Text style={{ color: '#3C57E9', fontSize: 12, fontWeight: '600' }}>📅 {selectedLandmark.date}</Text>
                       </View>
                     )}
-                    <View style={{ backgroundColor: 'rgba(255,255,255,0.08)', paddingHorizontal: 12, paddingVertical: 6, borderRadius: 2 }}>
-                      <Text style={{ color: '#9CA3AF', fontSize: 12 }}>📍 {selectedLandmark.lat.toFixed(2)}°, {selectedLandmark.lng.toFixed(2)}°</Text>
+                    <View style={{ backgroundColor: 'rgba(255,255,255,0.06)', paddingHorizontal: 12, paddingVertical: 6, borderRadius: 5 }}>
+                      <Text style={{ color: '#666666', fontSize: 12 }}>📍 {selectedLandmark.lat.toFixed(2)}°, {selectedLandmark.lng.toFixed(2)}°</Text>
                     </View>
                   </View>
 
@@ -3755,7 +3676,7 @@ export default function MoonScreen() {
             paddingTop: 60, paddingBottom: 16, paddingHorizontal: 20,
             borderBottomWidth: 1, borderBottomColor: 'rgba(255,255,255,0.08)',
           }}>
-            <Text style={{ fontSize: 17, fontWeight: '700', color: '#F9FAFB' }}>개척 확정</Text>
+            <Text style={{ fontSize: 17, fontWeight: '600', color: '#EBECF1' }}>개척 확정</Text>
             <TouchableOpacity
               onPress={() => setShowOccupyConfirm(false)}
               style={{ position: 'absolute', right: 20, top: 60 }}
@@ -3808,49 +3729,82 @@ export default function MoonScreen() {
                 paddingVertical: 18, alignItems: 'center',
                 flexDirection: 'row', justifyContent: 'center', gap: 8,
               }}
+              disabled={purchasing}
               activeOpacity={0.8}
-              onPress={() => {
-                const cellTokens = selectedCell?.isMultiSelect
-                  ? (selectedCell.multiTokens || [])
-                  : (selectedCell?.cellId ? [selectedCell.cellId] : []);
+              onPress={async () => {
+                if (purchasing) return;
+                setPurchasing(true);
+                try {
+                  const cellTokens = selectedCell?.isMultiSelect
+                    ? (selectedCell.multiTokens || [])
+                    : (selectedCell?.cellId ? [selectedCell.cellId] : []);
 
-                const territories = cellTokens.map((token: string) => ({
-                  token,
-                  level: occupySelectLevel,
-                  lat: selectedCell?.lat || 0,
-                  lng: selectedCell?.lng || 0,
-                  area: selectedCell?.area || '0.2',
-                  magCost: 1,
-                }));
-                spendEll(magCost, territories);
+                  const territories = cellTokens.map((token: string) => ({
+                    token,
+                    level: occupySelectLevel,
+                    lat: selectedCell?.lat || 0,
+                    lng: selectedCell?.lng || 0,
+                    area: selectedCell?.area || '0.2',
+                    magCost: 1,
+                  }));
 
-                (async () => {
+                  // 로컬 옵티미스틱 업데이트
+                  spendEll(magCost, territories);
+
+                  // DB 연동: 셀별 구매 처리 (ELL 차감 + INSERT)
+                  let successCount = 0;
+                  const ellPerCell = ELL_PER_MAG;
                   for (const t of territories) {
-                    await occupyCell('hero', t.token, t.lat, t.lng, t.magCost);
+                    if (user?.id) {
+                      const ok = await occupyCell(user.id, t.token, t.lat, t.lng, t.magCost, ellPerCell);
+                      if (ok) successCount++;
+                    }
                   }
+
+                  // DB에서 최신 상태 갱신
                   const tokens = await getAllOccupiedTokens();
-                  const myCells = await getUserOccupiedCells('hero');
+                  const myCells = user?.id ? await getUserOccupiedCells(user.id) : [];
                   const myTokens = myCells.map(c => c.cellId);
                   webviewRef.current?.postMessage(JSON.stringify({
                     type: 'SET_OCCUPIED_TOKENS', payload: { tokens, myTokens }
                   }));
-                })();
 
-                setMagCost(0);
-                setShowOccupyConfirm(false);
-                setSelectedCell(null);
-                webviewRef.current?.postMessage(JSON.stringify({
-                  type: 'OCCUPY_CELLS',
-                  payload: { tokens: cellTokens, level: occupySelectLevel }
-                }));
-                setTimeout(() => {
-                  const { Alert: RNAlert } = require('react-native');
-                  RNAlert.alert('개척 완료', `구역 개척 완료!\n소모: ${magCost * ELL_PER_MAG} ELL (${magCost} Mag)`);
-                }, 300);
+                  // ELL 잔액 및 유저 정보 DB에서 새로고침
+                  await refreshBalance();
+                  await refreshUser();
+
+                  setMagCost(0);
+                  setShowOccupyConfirm(false);
+                  setSelectedCell(null);
+                  webviewRef.current?.postMessage(JSON.stringify({
+                    type: 'OCCUPY_CELLS',
+                    payload: { tokens: cellTokens, level: occupySelectLevel }
+                  }));
+
+                  if (successCount > 0) {
+                    setTimeout(() => {
+                      Alert.alert('개척 완료', `구역 개척 완료!\n소모: ${magCost * ELL_PER_MAG} ELL (${magCost} Mag)`);
+                    }, 300);
+                  } else {
+                    setTimeout(() => {
+                      Alert.alert('개척 실패', 'ELL 잔액이 부족하거나 오류가 발생했습니다.');
+                    }, 300);
+                    // 로컬 상태도 되돌리기
+                    await refreshBalance();
+                  }
+                } finally {
+                  setPurchasing(false);
+                }
               }}
             >
-              <Ionicons name="checkmark-circle" size={20} color="#fff" />
-              <Text style={{ color: '#fff', fontSize: 16, fontWeight: '700' }}>개척 하기</Text>
+              {purchasing ? (
+                <Text style={{ color: '#fff', fontSize: 16, fontWeight: '700' }}>처리 중...</Text>
+              ) : (
+                <>
+                  <Ionicons name="checkmark-circle" size={20} color="#fff" />
+                  <Text style={{ color: '#fff', fontSize: 16, fontWeight: '700' }}>개척 하기</Text>
+                </>
+              )}
             </TouchableOpacity>
             <TouchableOpacity
               onPress={() => setShowOccupyConfirm(false)}
@@ -3902,16 +3856,16 @@ const styles = StyleSheet.create({
     borderBottomColor: 'transparent',
   },
   modeTabActive: {
-    borderBottomColor: '#4A6CF7',
+    borderBottomColor: '#3C57E9',
   },
   modeTabText: {
     color: 'rgba(255,255,255,0.4)',
     fontSize: 15,
-    fontWeight: '600',
+    fontWeight: '500',
   },
   modeTabTextActive: {
-    color: '#FFFFFF',
-    fontWeight: '700',
+    color: '#EBECF1',
+    fontWeight: '600',
   },
 
   // 서브 모드 토글 (우주/1인칭/위성)
@@ -4025,27 +3979,31 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   layerBtn: {
-    width: 46,
-    height: 46,
-    backgroundColor: '#2A2D3E',
-    borderRadius: 8,
+    width: 56,
+    height: 56,
+    backgroundColor: 'rgba(50,57,80,0.8)',
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.07)',
     alignItems: 'center',
     justifyContent: 'center',
   },
   controlGroup: {
-    backgroundColor: '#2A2D3E',
-    borderRadius: 8,
+    backgroundColor: 'rgba(50,57,80,0.8)',
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.07)',
     overflow: 'hidden',
   },
   controlBtn: {
-    width: 46,
-    height: 46,
+    width: 56,
+    height: 56,
     alignItems: 'center',
     justifyContent: 'center',
   },
   controlSep: {
     height: 1,
-    backgroundColor: 'rgba(255, 255, 255, 0.08)',
+    backgroundColor: 'rgba(255, 255, 255, 0.07)',
     marginHorizontal: 10,
   },
   levelSelectContainer: {
@@ -4079,6 +4037,20 @@ const styles = StyleSheet.create({
     right: 16,
     bottom: 16,
     zIndex: 10,
+  },
+  aiPicksBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#3C57E9',
+    paddingHorizontal: 20,
+    paddingVertical: 14,
+    borderRadius: 14,
+    gap: 8,
+  },
+  aiPicksBtnText: {
+    color: '#FFFFFF',
+    fontSize: 16,
+    fontWeight: '700',
   },
   controlBtnActive: {
     backgroundColor: 'rgba(59, 130, 246, 0.9)',

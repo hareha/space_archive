@@ -15,7 +15,7 @@ export function createCesiumARHtml() {
       width: 100%; height: 100%;
       margin: 0; padding: 0;
       overflow: hidden;
-      background: #000 !important;
+      background: transparent !important;
       -webkit-user-select: none;
       user-select: none;
     }
@@ -51,7 +51,7 @@ export function createCesiumARHtml() {
     #arCloseBtn:active { background: rgba(255,255,255,0.25); }
   </style>
 </head>
-<body style="background: #000 !important;">
+<body style="background: transparent !important;">
   <div id="cesiumContainer"></div>
   <script>
     Cesium.Ion.defaultAccessToken = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJqdGkiOiI3MjNhYjIzZi0wMWU5LTQzOTEtODY3Ni1kY2JkNTEyMmE2NTgiLCJpZCI6Mzc2MDQ4LCJpYXQiOjE3Njc4MzYyNTR9.K6HpEEiCNNlC8AzsTe3zuuGtcg9AJKEAnt8mA2MIoMg';

@@ -164,7 +164,7 @@ export const CESIUM_CONTROLS_OCCUPATION = `
 
           // 팝업 내용 설정
           var statusEl = document.getElementById('occStatusText');
-          statusEl.textContent = isMine ? 'MY TERRITORY' : 'OCCUPIED';
+          statusEl.textContent = isMine ? '내 영토' : '점유됨';
           statusEl.className = 'occ-status ' + (isMine ? 'mine' : 'other');
           document.getElementById('occTokenText').textContent = token;
           document.getElementById('occCoordText').textContent = lat.toFixed(4) + ', ' + lng.toFixed(4);
@@ -382,7 +382,7 @@ export const CESIUM_CONTROLS_OCCUPATION = `
                                   perPositionHeight: true,
                               }),
                               attributes: { color: Cesium.ColorGeometryInstanceAttribute.fromColor(
-                                  new Cesium.Color(0.95, 0.95, 1.0, 0.3)
+                                  new Cesium.Color(0.612, 0.949, 1.0, 0.4)  // #9CF2FF
                               )}
                           }),
                           appearance: new Cesium.PerInstanceColorAppearance({
@@ -431,7 +431,7 @@ export const CESIUM_CONTROLS_OCCUPATION = `
               if (msg.type === 'ENTER_TEST2_MODE') {
 
                   // ═══ 개척모드 진입 시 모든 3D 모델(착륙선/위성) 제거 ═══
-                  var modelFlags = ['_isApolloModel', '_isDanuriModel', '_isChandrayaanModel', '_isCapstoneModel', '_isLroModel'];
+                  var modelFlags = ['_isApolloModel', '_isDanuriModel', '_isCapstoneModel', '_isLroModel'];
                   var entsToRemove = [];
                   viewer.entities.values.forEach(function(entity) {
                       for (var fi = 0; fi < modelFlags.length; fi++) {
@@ -452,6 +452,42 @@ export const CESIUM_CONTROLS_OCCUPATION = `
                   window.trSelectionPrimMap = {};
                   // 개척모드2에서만 카메라 틸트 해제
                   viewer.scene.screenSpaceCameraController.enableTilt = true;
+                  // ═══ 핀치 줌(두 손가락) 완전 차단 ═══
+                  // 1) CesiumJS 카메라 컨트롤러 줌 비활성화
+                  viewer.scene.screenSpaceCameraController.enableZoom = false;
+                  // 2) zoomEventTypes 비우기 (CesiumJS 내부 터치 줌 이벤트 원천 차단)
+                  window._savedZoomEventTypes = viewer.scene.screenSpaceCameraController.zoomEventTypes
+                      ? viewer.scene.screenSpaceCameraController.zoomEventTypes.slice() : null;
+                  viewer.scene.screenSpaceCameraController.zoomEventTypes = [];
+                  // 3) tiltEventTypes에서도 PINCH 제거 (CesiumJS가 핀치를 틸트로 해석하는 것도 차단)
+                  window._savedTiltEventTypes = viewer.scene.screenSpaceCameraController.tiltEventTypes
+                      ? viewer.scene.screenSpaceCameraController.tiltEventTypes.slice() : null;
+                  viewer.scene.screenSpaceCameraController.tiltEventTypes = [
+                      Cesium.CameraEventType.MIDDLE_DRAG,
+                      Cesium.CameraEventType.RIGHT_DRAG
+                  ];
+                  // 4) minimumZoomDistance = maximumZoomDistance (줌 범위 0으로)
+                  window._savedMinZoom = viewer.scene.screenSpaceCameraController.minimumZoomDistance;
+                  window._savedMaxZoom = viewer.scene.screenSpaceCameraController.maximumZoomDistance;
+                  var currentCamH = Cesium.Cartographic.fromCartesian(
+                      viewer.camera.position, Cesium.Ellipsoid.MOON
+                  );
+                  // (줌 범위 잠금은 flyTo에서 변경되므로 이벤트 차단에 의존)
+                  // 5) 캔버스 레벨 터치 이벤트에서 2+ 손가락 차단 (최종 안전장치)
+                  window._blockPinchZoom = function(e) {
+                      if (e.touches && e.touches.length >= 2) {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          return false;
+                      }
+                  };
+                  // gesturestart/gesturechange — iOS Safari WebView 전용
+                  window._blockGesture = function(e) { e.preventDefault(); return false; };
+                  var canvas = viewer.scene.canvas;
+                  canvas.addEventListener('touchmove', window._blockPinchZoom, { passive: false, capture: true });
+                  canvas.addEventListener('touchstart', window._blockPinchZoom, { passive: false, capture: true });
+                  canvas.addEventListener('gesturestart', window._blockGesture, { passive: false });
+                  canvas.addEventListener('gesturechange', window._blockGesture, { passive: false });
 
                   function doRenderWhenReady() {
                       if (!window.tilesetReady) {
@@ -491,9 +527,9 @@ export const CESIUM_CONTROLS_OCCUPATION = `
                   // ═══ 개척모드 완전 초기화 ═══
                   // Primitive 정리
                   trGridPrimitives.removeAll();
-                  trNeighborPrimitives.removeAll();
-                  trFlashPrimitives.removeAll();
-                  trAccumulatedPrimitives.removeAll();
+                  if (typeof trNeighborPrimitives !== 'undefined' && trNeighborPrimitives) trNeighborPrimitives.removeAll();
+                  if (typeof trFlashPrimitives !== 'undefined' && trFlashPrimitives) trFlashPrimitives.removeAll();
+                  if (typeof trAccumulatedPrimitives !== 'undefined' && trAccumulatedPrimitives) trAccumulatedPrimitives.removeAll();
 
                   // 선택 상태 초기화
                   window.multiSelectedL16 = [];
@@ -535,6 +571,32 @@ export const CESIUM_CONTROLS_OCCUPATION = `
 
                   // 카메라 틸트 잠금
                   viewer.scene.screenSpaceCameraController.enableTilt = false;
+                  // ═══ 핀치 줌 복원 ═══
+                  viewer.scene.screenSpaceCameraController.enableZoom = true;
+                  if (window._savedZoomEventTypes) {
+                      viewer.scene.screenSpaceCameraController.zoomEventTypes = window._savedZoomEventTypes;
+                      window._savedZoomEventTypes = null;
+                  }
+                  if (window._savedTiltEventTypes) {
+                      viewer.scene.screenSpaceCameraController.tiltEventTypes = window._savedTiltEventTypes;
+                      window._savedTiltEventTypes = null;
+                  }
+                  if (window._savedMinZoom !== undefined) {
+                      viewer.scene.screenSpaceCameraController.minimumZoomDistance = window._savedMinZoom;
+                      viewer.scene.screenSpaceCameraController.maximumZoomDistance = window._savedMaxZoom;
+                  }
+                  // 터치 이벤트 차단 해제
+                  var canvas = viewer.scene.canvas;
+                  if (window._blockPinchZoom) {
+                      canvas.removeEventListener('touchmove', window._blockPinchZoom, { capture: true });
+                      canvas.removeEventListener('touchstart', window._blockPinchZoom, { capture: true });
+                      window._blockPinchZoom = null;
+                  }
+                  if (window._blockGesture) {
+                      canvas.removeEventListener('gesturestart', window._blockGesture);
+                      canvas.removeEventListener('gesturechange', window._blockGesture);
+                      window._blockGesture = null;
+                  }
 
                   // 이벤트 리스너 정리
                   if (_trTileListener && window.moonTileset) {
@@ -701,35 +763,41 @@ export const CESIUM_CONTROLS_OCCUPATION = `
               }
               // ═══ JUMP_TO_CELL: S2 토큰으로 즉시 점프 (드릴다운 없이 바로 그리드 렌더) ═══
               if (msg.type === 'JUMP_TO_CELL') {
+                  sendToRN('DEBUG_LOG', { msg: '[TR-JUMP] received token: ' + msg.token });
                   var jumpToken = msg.token;
-                  if (!jumpToken) return;
+                  if (!jumpToken) { sendToRN('DEBUG_LOG', { msg: '[TR-JUMP] no token' }); return; }
                   var jumpCellId = s2.cellid.fromToken(jumpToken);
                   var jumpLevel = s2.cellid.level(jumpCellId);
+                  sendToRN('DEBUG_LOG', { msg: '[TR-JUMP] level: ' + jumpLevel });
 
-                  // 기존 상태 완전 초기화
-                  stopCameraTracking();
-                  stopL0CameraTracking();
-                  if (_spreadAnimFrame) { cancelAnimationFrame(_spreadAnimFrame); _spreadAnimFrame = null; }
-                  if (_parentFadeFrame) { cancelAnimationFrame(_parentFadeFrame); _parentFadeFrame = null; }
-                  if (_l0AnimFrame) { cancelAnimationFrame(_l0AnimFrame); _l0AnimFrame = null; }
+                  sendToRN('DEBUG_LOG', { msg: '[TR-JUMP] cleanup start' });
+                  // 기존 상태 완전 초기화 — 외부 파일 변수는 window를 통해 안전 접근
+                  if (typeof stopCameraTracking === 'function') stopCameraTracking();
+                  if (typeof stopL0CameraTracking === 'function') stopL0CameraTracking();
+                  try { if (typeof _spreadAnimFrame !== 'undefined' && _spreadAnimFrame) { cancelAnimationFrame(_spreadAnimFrame); _spreadAnimFrame = null; } } catch(ce) {}
+                  try { if (typeof _parentFadeFrame !== 'undefined' && _parentFadeFrame) { cancelAnimationFrame(_parentFadeFrame); _parentFadeFrame = null; } } catch(ce) {}
+                  try { if (typeof _l0AnimFrame !== 'undefined' && _l0AnimFrame) { cancelAnimationFrame(_l0AnimFrame); _l0AnimFrame = null; } } catch(ce) {}
                   trGridPrimitives.removeAll();
-                  trNeighborPrimitives.removeAll();
-                  trFlashPrimitives.removeAll();
-                  trAccumulatedPrimitives.removeAll();
+                  if (typeof trNeighborPrimitives !== 'undefined' && trNeighborPrimitives) trNeighborPrimitives.removeAll();
+                  if (typeof trFlashPrimitives !== 'undefined' && trFlashPrimitives) trFlashPrimitives.removeAll();
+                  if (typeof trAccumulatedPrimitives !== 'undefined' && trAccumulatedPrimitives) trAccumulatedPrimitives.removeAll();
                   window.multiSelectedL16 = [];
                   window.trSelectionPrimMap = {};
-                  _isFlyingTo = false;
-                  _activeToken = null;
-                  _lastCameraCenterToken = null;
-                  _l0LastToken = null;
-                  for (var rk in _renderedCellMap) {
-                      var entry = _renderedCellMap[rk];
-                      if (entry && entry.labelCol) {
-                          try { viewer.scene.primitives.remove(entry.labelCol); } catch(e) {}
+                  try { _isFlyingTo = false; } catch(ce) {}
+                  try { _activeToken = null; } catch(ce) {}
+                  try { _lastCameraCenterToken = null; } catch(ce) {}
+                  try { _l0LastToken = null; } catch(ce) {}
+                  if (typeof _renderedCellMap !== 'undefined') {
+                      for (var rk in _renderedCellMap) {
+                          var entry = _renderedCellMap[rk];
+                          if (entry && entry.labelCol) {
+                              try { viewer.scene.primitives.remove(entry.labelCol); } catch(e) {}
+                          }
                       }
+                      _renderedCellMap = {};
                   }
-                  _renderedCellMap = {};
 
+                  sendToRN('DEBUG_LOG', { msg: '[TR-JUMP] cleanup done, building selectionStack' });
                   // selectionStack을 한번에 [L4, L8, L12]로 세팅
                   selectionStack = [];
                   var jumpDrillLevels = [4, 8, 12];
@@ -739,6 +807,7 @@ export const CESIUM_CONTROLS_OCCUPATION = `
                       }
                   }
 
+                  sendToRN('DEBUG_LOG', { msg: '[TR-JUMP] stack built: ' + selectionStack.length + ' entries' });
                   // L16 타겟 셀 중심 좌표 (이 셀이 화면 중앙에 오도록)
                   var targetCell = s2.Cell.fromCellID(jumpCellId);
                   var tc0 = targetCell.center();
@@ -748,6 +817,7 @@ export const CESIUM_CONTROLS_OCCUPATION = `
                   _lastCameraCenterToken = s2.cellid.toToken(selectionStack[selectionStack.length - 1]);
 
                   // ═══ 카메라: camera.flyTo 한번. maximumHeight로 관통 방지 ═══
+                  sendToRN('DEBUG_LOG', { msg: '[TR-JUMP] starting flyTo' });
                   var jumpTargetH = 1500; // L12 적정 높이 (타원체 위 1.5km)
                   viewer.camera.flyTo({
                       destination: Cesium.Cartesian3.fromRadians(lcLon, lcLat, jumpTargetH, Cesium.Ellipsoid.MOON),
@@ -759,6 +829,7 @@ export const CESIUM_CONTROLS_OCCUPATION = `
                       duration: 2.0,
                       maximumHeight: 200000, // 200km 아치 → 달 위로 넘어감
                       complete: function() {
+                          sendToRN('DEBUG_LOG', { msg: '[TR-JUMP] flyTo complete' });
                           // flyTo arc 이후 정확한 위치/방향 강제 보정
                           viewer.camera.setView({
                               destination: Cesium.Cartesian3.fromRadians(lcLon, lcLat, jumpTargetH, Cesium.Ellipsoid.MOON),
@@ -769,8 +840,8 @@ export const CESIUM_CONTROLS_OCCUPATION = `
                               }
                           });
                           // 도착 → L16 그리드 렌더
-                          renderDynamicGrid(null, 'expand');
-                          startCameraTracking();
+                          if (typeof renderDynamicGrid === 'function') renderDynamicGrid(null, 'expand');
+                          if (typeof startCameraTracking === 'function') startCameraTracking();
                           // L16 타겟 셀 선택 + 하이라이트 + 팝업
                           setTimeout(function() {
                               var tc = s2.Cell.fromCellID(jumpCellId);
@@ -883,6 +954,7 @@ export const CESIUM_CONTROLS_OCCUPATION = `
                   });
               }
           } catch(e) {
+              sendToRN('DEBUG_LOG', { msg: '[TR] handleTRMessage ERROR: ' + (e.message || e) + ' stack: ' + (e.stack || '') });
               console.error('[TR] handleTRMessage error:', e);
           }
       }

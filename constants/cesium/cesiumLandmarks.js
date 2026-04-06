@@ -204,6 +204,66 @@ export const CESIUM_LANDMARKS = `
           return colors[country] || '#9CA3AF';
       }
 
+      // ── HTML 라벨 오버레이 스타일 주입 ──
+      var labelStyle = document.createElement('style');
+      labelStyle.textContent = [
+          '.lm-label {',
+          '  position: absolute; pointer-events: none; z-index: 10;',
+          '  background: rgba(40, 44, 58, 0.78);',
+          '  color: rgba(255,255,255,0.93);',
+          '  font: 500 12px sans-serif;',
+          '  padding: 5px 12px;',
+          '  border-radius: 100px;',
+          '  white-space: nowrap;',
+          '  transform: translate(0%, -80%);',
+          '  transition: opacity 0.15s;',
+          '}'
+      ].join('\\n');
+      document.head.appendChild(labelStyle);
+
+      // ── 라벨 컨테이너 ──
+      var labelContainer = document.createElement('div');
+      labelContainer.id = 'lm-labels';
+      labelContainer.style.cssText = 'position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none;overflow:hidden;z-index:10;';
+      viewer.container.appendChild(labelContainer);
+
+      // ── 선택 마커 하이라이트 ──
+      var _highlightedEntity = null;
+      function highlightLandmark(lat, lng) {
+          // 모든 마커를 기본 흰색으로 리셋
+          for (var i = 0; i < terrainEntities.length; i++) {
+              terrainEntities[i].point.color = Cesium.Color.WHITE.withAlpha(0.9);
+              terrainEntities[i].point.pixelSize = 7;
+              if (terrainEntities[i]._labelDiv) terrainEntities[i]._labelDiv.style.color = 'rgba(255,255,255,0.93)';
+          }
+          for (var j = 0; j < landingEntities.length; j++) {
+              landingEntities[j].point.color = Cesium.Color.WHITE.withAlpha(0.9);
+              landingEntities[j].point.pixelSize = 7;
+              if (landingEntities[j]._labelDiv) landingEntities[j]._labelDiv.style.color = 'rgba(255,255,255,0.93)';
+          }
+          // 해당 좌표에 가장 가까운 마커를 파란색으로
+          var allEntities = terrainEntities.concat(landingEntities);
+          var minDist = Infinity;
+          var closest = null;
+          for (var k = 0; k < allEntities.length; k++) {
+              var ent = allEntities[k];
+              var pos = ent.position.getValue(Cesium.JulianDate.now());
+              if (!pos) continue;
+              var carto = Cesium.Cartographic.fromCartesian(pos, Cesium.Ellipsoid.MOON);
+              var eLat = Cesium.Math.toDegrees(carto.latitude);
+              var eLng = Cesium.Math.toDegrees(carto.longitude);
+              var dist = Math.abs(eLat - lat) + Math.abs(eLng - lng);
+              if (dist < minDist) { minDist = dist; closest = ent; }
+          }
+          if (closest && minDist < 1) {
+              closest.point.color = Cesium.Color.fromCssColorString('#67BDFF');
+              closest.point.pixelSize = 10;
+              if (closest._labelDiv) closest._labelDiv.style.color = '#67BDFF';
+              _highlightedEntity = closest;
+          }
+      }
+      window.highlightLandmark = highlightLandmark;
+
       // ── 랜드마크 로드 ──
       function loadLandmarkModels() {
           if (landmarksLoaded) return;
@@ -212,84 +272,164 @@ export const CESIUM_LANDMARKS = `
           // 1. 대표 지형 50개
           for (var i = 0; i < LANDMARK_SITES.length; i++) {
               var ls = LANDMARK_SITES[i];
-              var typeColor = Cesium.Color.fromCssColorString(getTerrainTypeColor(ls.type));
+
+              var tDiv = document.createElement('div');
+              tDiv.className = 'lm-label';
+              tDiv.textContent = ls.name;
+              tDiv.style.display = 'none';
+              labelContainer.appendChild(tDiv);
 
               var tEntity = viewer.entities.add({
-                  position: moonPos(ls.lat, ls.lng, 0),
+                  position: moonPos(ls.lat, ls.lng, 10000),
                   point: {
                       pixelSize: 7,
-                      color: typeColor.withAlpha(0.9),
-                      outlineColor: Cesium.Color.BLACK.withAlpha(0.6),
-                      outlineWidth: 1,
-                      heightReference: Cesium.HeightReference.CLAMP_TO_GROUND,
+                      color: Cesium.Color.WHITE.withAlpha(0.9),
+                      outlineColor: Cesium.Color.TRANSPARENT,
+                      outlineWidth: 0,
                       disableDepthTestDistance: Number.POSITIVE_INFINITY,
                       scaleByDistance: new Cesium.NearFarScalar(1000, 1.2, 1500000, 0.3),
-                  },
-                  label: {
-                      text: ls.name,
-                      font: '11px sans-serif',
-                      fillColor: typeColor,
-                      outlineColor: Cesium.Color.BLACK,
-                      outlineWidth: 2,
-                      style: Cesium.LabelStyle.FILL_AND_OUTLINE,
-                      heightReference: Cesium.HeightReference.CLAMP_TO_GROUND,
-                      verticalOrigin: Cesium.VerticalOrigin.BOTTOM,
-                      pixelOffset: new Cesium.Cartesian2(10, -4),
-                      disableDepthTestDistance: Number.POSITIVE_INFINITY,
-                      scaleByDistance: new Cesium.NearFarScalar(1000, 1.0, 1500000, 0.15),
-                      showBackground: true,
-                      backgroundColor: new Cesium.Color(0, 0, 0, 0.7),
-                      backgroundPadding: new Cesium.Cartesian2(6, 4),
                   },
                   show: terrainVisible,
               });
               tEntity._lmId = ls.id;
               tEntity._lmType = 'terrain';
               tEntity._featureType = ls.type;
+              tEntity._labelDiv = tDiv;
+              tEntity._lsLon = Cesium.Math.toRadians(ls.lng);
+              tEntity._lsLat = Cesium.Math.toRadians(ls.lat);
+              tEntity._heightResolved = false;
               terrainEntities.push(tEntity);
           }
 
-          // 2. 착륙지점 55개
+          // 2. 착륙지점 55개 — point + model 통합 엔티티
+          var apolloIds = ['apollo11','apollo12','apollo14','apollo15','apollo16','apollo17'];
+          var chandrayaanIds = ['chandrayaan2','chandrayaan3'];
+
           for (var j = 0; j < LANDING_SITES.length; j++) {
               var site = LANDING_SITES[j];
-              var dotColor = Cesium.Color.fromCssColorString(getCountryColor(site.country));
-              var outlineCol = site.ok ? Cesium.Color.fromCssColorString('#34D399') : Cesium.Color.fromCssColorString('#EF4444');
+
+              var sDiv = document.createElement('div');
+              sDiv.className = 'lm-label';
+              sDiv.textContent = site.name;
+              sDiv.style.display = 'none';
+              labelContainer.appendChild(sDiv);
 
               var sEntity = viewer.entities.add({
-                  position: moonPos(site.lat, site.lng, 0),
+                  position: moonPos(site.lat, site.lng, 10000),
                   point: {
-                      pixelSize: 8,
-                      color: dotColor,
-                      outlineColor: outlineCol,
-                      outlineWidth: 2,
-                      heightReference: Cesium.HeightReference.CLAMP_TO_GROUND,
+                      pixelSize: 7,
+                      color: Cesium.Color.WHITE.withAlpha(0.9),
+                      outlineColor: Cesium.Color.TRANSPARENT,
+                      outlineWidth: 0,
                       disableDepthTestDistance: Number.POSITIVE_INFINITY,
                       scaleByDistance: new Cesium.NearFarScalar(500, 1.5, 800000, 0.3),
                   },
-                  label: {
-                      text: site.name,
-                      font: '12px sans-serif',
-                      fillColor: dotColor,
-                      outlineColor: Cesium.Color.BLACK,
-                      outlineWidth: 2,
-                      style: Cesium.LabelStyle.FILL_AND_OUTLINE,
-                      heightReference: Cesium.HeightReference.CLAMP_TO_GROUND,
-                      verticalOrigin: Cesium.VerticalOrigin.CENTER,
-                      horizontalOrigin: Cesium.HorizontalOrigin.LEFT,
-                      pixelOffset: new Cesium.Cartesian2(12, 0),
-                      disableDepthTestDistance: Number.POSITIVE_INFINITY,
-                      scaleByDistance: new Cesium.NearFarScalar(500, 1.0, 800000, 0.15),
-                      showBackground: true,
-                      backgroundColor: new Cesium.Color(0, 0, 0, 0.7),
-                      backgroundPadding: new Cesium.Cartesian2(6, 3),
-                  },
-                  show: landingSitesVisible,
+                  show: false,
               });
               sEntity._lmId = site.id;
               sEntity._lmType = 'landing';
               sEntity._country = site.country;
+              sEntity._labelDiv = sDiv;
+              sEntity._lsLatDeg = site.lat;
+              sEntity._lsLngDeg = site.lng;
+              sEntity._lsLon = Cesium.Math.toRadians(site.lng);
+              sEntity._lsLat = Cesium.Math.toRadians(site.lat);
+              sEntity._heightResolved = false;
+
+              // 모델 타입 미리 기록 (GLB 도착 시 적용)
+              if (apolloIds.indexOf(site.id) !== -1) {
+                  sEntity._modelType = 'apollo';
+              } else if (chandrayaanIds.indexOf(site.id) !== -1) {
+                  sEntity._modelType = 'chandrayaan';
+              } else {
+                  sEntity._modelType = 'flag';
+              }
               landingEntities.push(sEntity);
           }
+
+          // 2-1. GLB URI 도착 시 기존 엔티티에 model 속성 추가
+          window._landingModelEntities = []; // 호환용
+          var _modelsAttached = false;
+
+          function attachModelsToEntities() {
+              var modelMap = {
+                  'apollo': { uri: window.APOLLO_LM_URI, scale: 6 },
+                  'chandrayaan': { uri: window.CHANDRAYAAN2_GLB_URI, scale: 3 },
+                  'flag': { uri: window.FLAG_GLB_URI, scale: 800 },
+              };
+              var allAttached = true;
+              for (var ai = 0; ai < landingEntities.length; ai++) {
+                  var ent = landingEntities[ai];
+                  if (ent._isLandingModel) continue; // 이미 붙음
+                  var info = modelMap[ent._modelType];
+                  if (info && info.uri) {
+                      ent.model = {
+                          uri: info.uri,
+                          scale: info.scale,
+                          minimumPixelSize: 16,
+                          maximumScale: 20000,
+                      };
+                      ent._isLandingModel = true;
+                  } else {
+                      allAttached = false;
+                  }
+              }
+              _modelsAttached = allAttached;
+              window._landingModelEntities = landingEntities;
+          }
+
+          var _modelAttachTimer = setInterval(function() {
+              attachModelsToEntities();
+              if (_modelsAttached) clearInterval(_modelAttachTimer);
+          }, 2000);
+
+          // ── 높이 resolve (카메라 근처 미해결 엔티티만) ──
+          function _resolveNearby(entities) {
+              var camCarto = viewer.camera.positionCartographic;
+              if (!camCarto) return;
+              var camLon = camCarto.longitude, camLat = camCarto.latitude;
+              var maxDist = 0.2; // ~11도 ≈ 약 340km on moon
+              var count = 0, maxBatch = 8;
+
+              for (var i = 0; i < entities.length; i++) {
+                  if (count >= maxBatch) break;
+                  var ent = entities[i];
+                  if (ent._heightResolved) continue;
+                  // 거리 체크 (radian 단위)
+                  var dLon = Math.abs(ent._lsLon - camLon);
+                  var dLat = Math.abs(ent._lsLat - camLat);
+                  if (dLon > maxDist || dLat > maxDist) continue;
+
+                  var carto = Cesium.Cartographic.fromRadians(ent._lsLon, ent._lsLat);
+                  var sh = viewer.scene.sampleHeight(carto);
+                  if (sh !== undefined && sh !== null && !isNaN(sh)) {
+                      ent.position = Cesium.Cartesian3.fromRadians(ent._lsLon, ent._lsLat, sh + 30, Cesium.Ellipsoid.MOON);
+                      ent._heightResolved = true;
+                  }
+                  count++;
+              }
+          }
+
+          function resolveAllHeights() {
+              if (landingSitesVisible) _resolveNearby(landingEntities);
+              if (terrainVisible) _resolveNearby(terrainEntities);
+          }
+          window.resolveAllLandingHeights = resolveAllHeights;
+
+          // 카메라 이동 완료 시 자동 재계산 (500ms 딜레이)
+          var _moveEndTimer = null;
+          viewer.camera.moveEnd.addEventListener(function() {
+              if (!landingSitesVisible && !terrainVisible) return;
+              if (_moveEndTimer) clearTimeout(_moveEndTimer);
+              _moveEndTimer = setTimeout(function() {
+                  var hasUnresolved = false;
+                  var allEnts = landingEntities.concat(terrainEntities);
+                  for (var ui = 0; ui < allEnts.length; ui++) {
+                      if (!allEnts[ui]._heightResolved) { hasUnresolved = true; break; }
+                  }
+                  if (hasUnresolved) resolveAllHeights();
+              }, 500);
+          });
 
           // 3. 달 뒤편 마커 숨김 + depthTest 동적 조정
           //    카메라 높이에 따라 disableDepthTestDistance를 조절:
@@ -345,22 +485,36 @@ export const CESIUM_LANDMARKS = `
               }
 
               function checkEntity(entity, baseVisible, filterArr, filterProp) {
-                  if (!baseVisible) { entity.show = false; return; }
+                  var div = entity._labelDiv;
+                  if (!baseVisible) { entity.show = false; if (div) div.style.display = 'none'; return; }
                   if (filterArr && filterArr.length > 0 && filterArr.indexOf(entity[filterProp]) === -1) {
-                      entity.show = false; return;
+                      entity.show = false; if (div) div.style.display = 'none'; return;
                   }
                   var pos = entity.position && entity.position.getValue
                       ? entity.position.getValue(viewer.clock.currentTime)
                       : entity.position;
-                  if (!pos) { entity.show = false; return; }
+                  if (!pos) { entity.show = false; if (div) div.style.display = 'none'; return; }
                   var pMag = Cesium.Cartesian3.magnitude(pos);
-                  if (pMag < 1) { entity.show = false; return; }
+                  if (pMag < 1) { entity.show = false; if (div) div.style.display = 'none'; return; }
                   var dot = (camDirX * pos.x + camDirY * pos.y + camDirZ * pos.z) / pMag;
-                  entity.show = dot > threshold;
+                  var visible = dot > threshold;
+                  entity.show = visible;
 
                   // depthTest 동적 갱신
                   if (entity.point) entity.point.disableDepthTestDistance = depthDist;
-                  if (entity.label) entity.label.disableDepthTestDistance = depthDist;
+
+                  // HTML 라벨 위치 업데이트 (카메라가 가까울 때만)
+                  if (div) {
+                      if (!visible || camHeight > 120000) { div.style.display = 'none'; return; }
+                      var screenPos = Cesium.SceneTransforms.wgs84ToWindowCoordinates(viewer.scene, pos);
+                      if (screenPos && screenPos.x > -50 && screenPos.x < viewer.canvas.width + 50 && screenPos.y > -30 && screenPos.y < viewer.canvas.height + 30) {
+                          div.style.display = 'block';
+                          div.style.left = (screenPos.x + 4) + 'px';
+                          div.style.top = (screenPos.y - 18) + 'px';
+                      } else {
+                          div.style.display = 'none';
+                      }
+                  }
               }
 
               for (var ti = 0; ti < terrainEntities.length; ti++) {
@@ -377,8 +531,14 @@ export const CESIUM_LANDMARKS = `
           landingSitesVisible = enabled;
           terrainVisible = enabled;
           if (!landmarksLoaded) { loadLandmarkModels(); sendLandmarkList(); }
-          for (var i = 0; i < landingEntities.length; i++) landingEntities[i].show = enabled;
-          for (var j = 0; j < terrainEntities.length; j++) terrainEntities[j].show = enabled;
+          for (var i = 0; i < landingEntities.length; i++) {
+              landingEntities[i].show = enabled;
+              if (landingEntities[i]._labelDiv) landingEntities[i]._labelDiv.style.display = enabled ? 'block' : 'none';
+          }
+          for (var j = 0; j < terrainEntities.length; j++) {
+              terrainEntities[j].show = enabled;
+              if (terrainEntities[j]._labelDiv) terrainEntities[j]._labelDiv.style.display = enabled ? 'block' : 'none';
+          }
           if (enabled) sendLandmarkList();
       }
 
@@ -386,28 +546,34 @@ export const CESIUM_LANDMARKS = `
       function toggleLandingSites(enabled, countries) {
           landingSitesVisible = enabled;
           if (!landmarksLoaded) { loadLandmarkModels(); sendLandmarkList(); }
+
+          // 켤 때 GLB 아직 안 붙었으면 시도 + 높이 재해결
+          if (enabled) {
+              if (!_modelsAttached) attachModelsToEntities();
+              resolveAllLandingHeights();
+          }
+
           var hasFilter = countries && countries.length > 0;
           for (var i = 0; i < landingEntities.length; i++) {
+              var showIt;
               if (!enabled) {
-                  landingEntities[i].show = false;
+                  showIt = false;
               } else if (hasFilter) {
-                  landingEntities[i].show = countries.indexOf(landingEntities[i]._country) !== -1;
+                  showIt = countries.indexOf(landingEntities[i]._country) !== -1;
               } else {
-                  landingEntities[i].show = true;
+                  showIt = true;
               }
+              landingEntities[i].show = showIt;
+              if (landingEntities[i]._labelDiv) landingEntities[i]._labelDiv.style.display = showIt ? 'block' : 'none';
           }
-          // 착륙지 필터 상태 저장 (preRender에서 사용)
           window._landingCountryFilter = hasFilter ? countries : null;
-          // 3D 착륙선 모델도 토글
-          viewer.entities.values.forEach(function(entity) {
-              if (entity._isApolloModel) entity.show = enabled;
-          });
       }
 
       // ── 지형만 토글 (types: 필터 배열, 비어있으면 전체) ──
       function toggleTerrainFlags(enabled, types) {
           terrainVisible = enabled;
           if (!landmarksLoaded) { loadLandmarkModels(); sendLandmarkList(); }
+          if (enabled) resolveAllTerrainHeights();
           var hasFilter = types && types.length > 0;
           for (var j = 0; j < terrainEntities.length; j++) {
               if (!enabled) {
@@ -418,7 +584,6 @@ export const CESIUM_LANDMARKS = `
                   terrainEntities[j].show = true;
               }
           }
-          // 지형 필터 상태 저장 (preRender에서 사용)
           window._terrainTypeFilter = hasFilter ? types : null;
       }
 

@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import {
   View, Text, TouchableOpacity, TextInput, StyleSheet, SafeAreaView, ScrollView,
-  StatusBar, KeyboardAvoidingView, Platform, ActivityIndicator, Alert,
+  StatusBar, KeyboardAvoidingView, Platform, ActivityIndicator,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
@@ -22,6 +22,7 @@ export default function SignupScreen() {
   const [passwordConfirm, setPasswordConfirm] = useState('');
   const [nickname, setNickname] = useState('');
   const [showPassword, setShowPassword] = useState(false);
+  const [showConfirm, setShowConfirm] = useState(false);
   const [loading, setLoading] = useState(false);
 
   const [agreements, setAgreements] = useState<AgreementItem[]>([
@@ -53,12 +54,11 @@ export default function SignupScreen() {
   const handleSignup = async () => {
     if (!canSubmit) return;
     setLoading(true);
-    const success = await signup(email, password, nickname);
+    const marketingConsent = agreements.find(a => a.key === 'marketing')?.checked ?? false;
+    const success = await signup(email, password, nickname, marketingConsent);
     setLoading(false);
     if (success) {
-      Alert.alert('가입 완료! 🎉', 'Plus Ultra에 오신 걸 환영합니다.', [
-        { text: '시작하기', onPress: () => router.replace('/(tabs)/mypage') },
-      ]);
+      router.replace({ pathname: '/auth/verify', params: { email: email.trim().toLowerCase() } });
     }
   };
 
@@ -85,121 +85,153 @@ export default function SignupScreen() {
           keyboardShouldPersistTaps="handled"
         >
           {/* 이메일 */}
-          <Text style={s.label}>이메일</Text>
-          <TextInput
-            style={[s.input, email && !emailValid && s.inputError]}
-            placeholder="example@email.com"
-            placeholderTextColor="#BDBDBD"
-            value={email}
-            onChangeText={setEmail}
-            keyboardType="email-address"
-            autoCapitalize="none"
-            autoCorrect={false}
-          />
-          {email && !emailValid && <Text style={s.errorText}>올바른 이메일 형식을 입력해주세요</Text>}
+          <View style={s.fieldGroup}>
+            <View style={s.labelRow}>
+              <Text style={s.label}>이메일</Text>
+              <Text style={s.requiredStar}>✱</Text>
+            </View>
+            <View style={[s.inputBox, email && !emailValid && s.inputError]}>
+              <TextInput
+                style={s.inputText}
+                placeholder="example@email.com"
+                placeholderTextColor="#B2B2B2"
+                value={email}
+                onChangeText={setEmail}
+                keyboardType="email-address"
+                autoCapitalize="none"
+                autoCorrect={false}
+              />
+            </View>
+            {email && !emailValid && (
+              <View style={s.errorRow}>
+                <Text style={s.errorText}>올바른 이메일 형식을 입력해주세요</Text>
+              </View>
+            )}
+          </View>
 
           {/* 비밀번호 */}
-          <Text style={s.label}>비밀번호</Text>
-          <View style={s.inputRow}>
-            <TextInput
-              style={[s.inputFlex, password && !passwordValid && s.inputError]}
-              placeholder="8자 이상 영문·숫자·특수문자 포함"
-              placeholderTextColor="#BDBDBD"
-              value={password}
-              onChangeText={setPassword}
-              secureTextEntry={!showPassword}
-              autoCapitalize="none"
-            />
-            <TouchableOpacity onPress={() => setShowPassword(!showPassword)} style={s.eyeBtn}>
-              <Ionicons name={showPassword ? 'eye-outline' : 'eye-off-outline'} size={20} color="#9E9E9E" />
-            </TouchableOpacity>
+          <View style={s.fieldGroup}>
+            <View style={s.labelRow}>
+              <Text style={s.label}>비밀번호</Text>
+              <Text style={s.requiredStar}>✱</Text>
+            </View>
+            <View style={[s.inputBox, password && !passwordValid && s.inputError]}>
+              <TextInput
+                style={s.inputText}
+                placeholder="8자 이상 영문·숫자·특수문자 포함"
+                placeholderTextColor="#B2B2B2"
+                value={password}
+                onChangeText={setPassword}
+                secureTextEntry={!showPassword}
+                autoCapitalize="none"
+              />
+              <TouchableOpacity onPress={() => setShowPassword(!showPassword)} style={s.eyeBtn}>
+                <Ionicons name={showPassword ? 'eye-outline' : 'eye-off-outline'} size={20} color="#B2B2B2" />
+              </TouchableOpacity>
+            </View>
+            {password && !passwordValid && (
+              <View style={s.errorRow}>
+                <Text style={s.errorText}>영문, 숫자, 특수문자 포함 8자 이상</Text>
+              </View>
+            )}
           </View>
-          {password && !passwordValid && <Text style={s.errorText}>영문, 숫자, 특수문자 포함 8자 이상</Text>}
 
           {/* 비밀번호 확인 */}
-          <Text style={s.label}>비밀번호 확인</Text>
-          <TextInput
-            style={[s.input, passwordConfirm && !passwordMatch && s.inputError]}
-            placeholder="비밀번호를 다시 입력하세요"
-            placeholderTextColor="#BDBDBD"
-            value={passwordConfirm}
-            onChangeText={setPasswordConfirm}
-            secureTextEntry={!showPassword}
-            autoCapitalize="none"
-          />
-          {passwordConfirm && !passwordMatch && <Text style={s.errorText}>비밀번호가 일치하지 않습니다</Text>}
+          <View style={s.fieldGroup}>
+            <View style={s.labelRow}>
+              <Text style={s.label}>비밀번호 확인</Text>
+              <Text style={s.requiredStar}>✱</Text>
+            </View>
+            <View style={[s.inputBox, passwordConfirm && !passwordMatch && s.inputError]}>
+              <TextInput
+                style={s.inputText}
+                placeholder="비밀번호를 다시 입력하세요"
+                placeholderTextColor="#B2B2B2"
+                value={passwordConfirm}
+                onChangeText={setPasswordConfirm}
+                secureTextEntry={!showConfirm}
+                autoCapitalize="none"
+              />
+              <TouchableOpacity onPress={() => setShowConfirm(!showConfirm)} style={s.eyeBtn}>
+                <Ionicons name={showConfirm ? 'eye-outline' : 'eye-off-outline'} size={20} color="#B2B2B2" />
+              </TouchableOpacity>
+            </View>
+            {passwordConfirm && !passwordMatch && (
+              <View style={s.errorRow}>
+                <Text style={s.errorText}>비밀번호가 일치하지 않습니다</Text>
+              </View>
+            )}
+          </View>
 
           {/* 닉네임 */}
-          <Text style={s.label}>닉네임</Text>
-          <TextInput
-            style={[s.input, nickname && !nicknameValid && s.inputError]}
-            placeholder="2-10자 이내로 입력하세요"
-            placeholderTextColor="#BDBDBD"
-            value={nickname}
-            onChangeText={setNickname}
-            maxLength={10}
-          />
-          <Text style={s.hintText}>공백 없이 한글, 영문, 숫자만 사용 가능</Text>
+          <View style={s.fieldGroup}>
+            <View style={s.labelRow}>
+              <Text style={s.label}>닉네임</Text>
+            </View>
+            <View style={[s.inputBox, nickname && !nicknameValid && s.inputError]}>
+              <TextInput
+                style={s.inputText}
+                placeholder="2-10자 이내로 입력하세요"
+                placeholderTextColor="#B2B2B2"
+                value={nickname}
+                onChangeText={setNickname}
+                maxLength={10}
+              />
+            </View>
+          </View>
 
           {/* 약관 동의 */}
           <View style={s.agreementSection}>
-            <Text style={s.agreementTitle}>약관 동의</Text>
-
             {/* 전체 동의 */}
-            <TouchableOpacity style={s.agreementAllRow} onPress={toggleAll} activeOpacity={0.7}>
+            <TouchableOpacity style={s.agreeAllRow} onPress={toggleAll} activeOpacity={0.7}>
               <View style={[s.checkbox, allChecked && s.checkboxChecked]}>
-                {allChecked && <Ionicons name="checkmark" size={16} color="#fff" />}
+                {allChecked && <Ionicons name="checkmark" size={14} color="#fff" />}
               </View>
-              <Text style={s.agreementAllText}>전체 동의</Text>
+              <Text style={s.agreeAllText}>전체 동의</Text>
             </TouchableOpacity>
 
-            <View style={s.agreementDivider} />
-
             {/* 개별 항목 */}
-            {agreements.map(item => (
-              <TouchableOpacity
-                key={item.key}
-                style={s.agreementRow}
-                onPress={() => toggleItem(item.key)}
-                activeOpacity={0.7}
-              >
-                <View style={[s.checkbox, item.checked && s.checkboxChecked]}>
-                  {item.checked && <Ionicons name="checkmark" size={14} color="#fff" />}
-                </View>
-                <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                  <View style={[s.requiredBadge, !item.required && s.optionalBadge]}>
-                    <Text style={[s.requiredBadgeText, !item.required && s.optionalBadgeText]}>
-                      {item.required ? '필수' : '선택'}
-                    </Text>
+            <View style={s.agreeItems}>
+              {agreements.map(item => (
+                <TouchableOpacity
+                  key={item.key}
+                  style={s.agreeRow}
+                  onPress={() => toggleItem(item.key)}
+                  activeOpacity={0.7}
+                >
+                  <View style={[s.checkbox, item.checked && s.checkboxChecked]}>
+                    {item.checked && <Ionicons name="checkmark" size={14} color="#fff" />}
                   </View>
-                  <Text style={s.agreementText}>{item.label}</Text>
-                </View>
-                <TouchableOpacity hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
-                  <Text style={s.viewLink}>보기 ›</Text>
+                  <Text style={s.agreeText}>
+                    <Text style={item.required ? s.requiredTag : s.optionalTag}>
+                      {item.required ? '[필수]' : '[선택]'}
+                    </Text>
+                    {' '}{item.label}
+                  </Text>
+                  <TouchableOpacity hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+                    <Ionicons name="chevron-forward" size={18} color="#B2B2B2" />
+                  </TouchableOpacity>
                 </TouchableOpacity>
-              </TouchableOpacity>
-            ))}
+              ))}
+            </View>
           </View>
 
           {/* 가입 버튼 */}
-          <TouchableOpacity
-            style={[s.submitBtn, !canSubmit && s.submitBtnDisabled]}
-            onPress={handleSignup}
-            disabled={loading || !canSubmit}
-            activeOpacity={0.85}
-          >
-            {loading ? (
-              <ActivityIndicator color="#fff" />
-            ) : (
-              <Text style={s.submitBtnText}>가입하기</Text>
-            )}
-          </TouchableOpacity>
-
-          {/* 이미 계정이 있으신가요? */}
-          <View style={s.loginRow}>
-            <Text style={s.loginRowText}>이미 계정이 있으신가요?</Text>
-            <TouchableOpacity onPress={() => router.replace('/auth/login')}>
-              <Text style={s.loginRowLink}>  로그인</Text>
+          <View style={s.submitSection}>
+            <TouchableOpacity
+              style={[s.submitBtn, (!canSubmit || loading) && s.submitBtnDisabled]}
+              onPress={handleSignup}
+              disabled={loading || !canSubmit}
+              activeOpacity={0.85}
+            >
+              {loading ? (
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                  <ActivityIndicator color="#fff" size="small" />
+                  <Text style={s.submitBtnText}>인증번호 발송 중...</Text>
+                </View>
+              ) : (
+                <Text style={s.submitBtnText}>가입하기</Text>
+              )}
             </TouchableOpacity>
           </View>
 
@@ -214,63 +246,58 @@ const s = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#FFFFFF' },
   header: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-    paddingHorizontal: 16, paddingVertical: 14,
-    borderBottomWidth: 1, borderBottomColor: '#F0F0F0',
+    paddingHorizontal: 16, height: 58, paddingTop: 14, paddingBottom: 14,
   },
   backBtn: { padding: 4, width: 40 },
-  headerTitle: { fontSize: 17, fontWeight: '700', color: '#1A1A1A' },
-  scrollContent: { paddingHorizontal: 24, paddingTop: 20 },
+  headerTitle: { fontSize: 18, fontWeight: '600', color: '#1A1A1A', fontFamily: 'Pretendard' },
+  scrollContent: { paddingHorizontal: 16, paddingTop: 16, paddingBottom: 40 },
 
-  label: { fontSize: 14, fontWeight: '600', color: '#1A1A1A', marginTop: 16, marginBottom: 8 },
-  input: {
-    backgroundColor: '#F7F7FA', borderRadius: 10, borderWidth: 1, borderColor: '#E5E5E5',
-    paddingHorizontal: 14, height: 48, fontSize: 15, color: '#1A1A1A',
-  },
-  inputError: { borderColor: '#EF4444' },
-  inputRow: {
+  // 필드 그룹 — 에러 없을 때도 간격 확보
+  fieldGroup: { marginBottom: 20 },
+  labelRow: { flexDirection: 'row', alignItems: 'center', gap: 4, marginBottom: 8 },
+  label: { fontSize: 14, fontWeight: '500', color: '#808080', fontFamily: 'Pretendard' },
+  requiredStar: { fontSize: 8, color: '#FF1900', marginTop: -4 },
+
+  // Input
+  inputBox: {
     flexDirection: 'row', alignItems: 'center',
-    backgroundColor: '#F7F7FA', borderRadius: 10, borderWidth: 1, borderColor: '#E5E5E5',
-    paddingHorizontal: 14, height: 48,
+    borderWidth: 1, borderColor: '#B2B2B2', borderRadius: 5,
+    height: 46, paddingHorizontal: 16,
   },
-  inputFlex: { flex: 1, fontSize: 15, color: '#1A1A1A' },
+  inputText: {
+    flex: 1, fontSize: 14, fontWeight: '500', color: '#000', fontFamily: 'Pretendard',
+  },
+  inputError: { borderColor: '#FF0000' },
   eyeBtn: { padding: 4 },
-  errorText: { color: '#EF4444', fontSize: 12, marginTop: 4, marginLeft: 4 },
-  hintText: { color: '#BDBDBD', fontSize: 12, marginTop: 4, marginLeft: 4 },
+  errorRow: { alignItems: 'flex-end', marginTop: 6 },
+  errorText: { color: '#FF1900', fontSize: 12, fontFamily: 'Pretendard' },
 
   // 약관
-  agreementSection: { marginTop: 28, paddingTop: 20, borderTopWidth: 1, borderTopColor: '#F0F0F0' },
-  agreementTitle: { fontSize: 15, fontWeight: '700', color: '#1A1A1A', marginBottom: 12 },
-  agreementAllRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 10, gap: 10 },
-  agreementAllText: { fontSize: 15, fontWeight: '700', color: '#1A1A1A' },
-  agreementDivider: { height: 1, backgroundColor: '#F0F0F0', marginVertical: 6 },
-  agreementRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 8, gap: 10 },
-  agreementText: { fontSize: 14, color: '#555', flex: 1 },
+  agreementSection: { marginTop: 28, gap: 12 },
+  agreeAllRow: {
+    flexDirection: 'row', alignItems: 'center', gap: 8,
+    backgroundColor: '#EAECF6', borderRadius: 5,
+    height: 46, paddingHorizontal: 10,
+  },
+  agreeAllText: { fontSize: 16, fontWeight: '600', color: '#1A1A1A', fontFamily: 'Pretendard' },
+  agreeItems: { paddingHorizontal: 10, gap: 11 },
+  agreeRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  agreeText: { flex: 1, fontSize: 12, color: '#808080', lineHeight: 17, fontFamily: 'Pretendard' },
+  requiredTag: { color: '#3C57E9', fontWeight: '400' },
+  optionalTag: { color: '#999', fontWeight: '400' },
+
   checkbox: {
-    width: 22, height: 22, borderRadius: 4, borderWidth: 1.5, borderColor: '#D1D5DB',
+    width: 20, height: 20, borderRadius: 3, borderWidth: 1.5, borderColor: '#B2B2B2',
     justifyContent: 'center', alignItems: 'center',
   },
-  checkboxChecked: { backgroundColor: '#1A1A1A', borderColor: '#1A1A1A' },
-  requiredBadge: {
-    backgroundColor: '#FEE2E2', borderRadius: 4, paddingHorizontal: 6, paddingVertical: 2,
-  },
-  requiredBadgeText: { fontSize: 11, fontWeight: '700', color: '#EF4444' },
-  optionalBadge: { backgroundColor: '#F0F0F0' },
-  optionalBadgeText: { color: '#9E9E9E' },
-  viewLink: { color: '#BDBDBD', fontSize: 13 },
+  checkboxChecked: { backgroundColor: '#3C57E9', borderColor: '#3C57E9' },
 
   // 가입 버튼
+  submitSection: { marginTop: 46, paddingHorizontal: 0 },
   submitBtn: {
-    backgroundColor: '#1A1A1A', borderRadius: 12,
-    paddingVertical: 16, alignItems: 'center', marginTop: 28,
+    backgroundColor: '#3C57E9', borderRadius: 5,
+    height: 56, alignItems: 'center', justifyContent: 'center',
   },
   submitBtnDisabled: { opacity: 0.3 },
-  submitBtnText: { color: '#fff', fontSize: 16, fontWeight: '700' },
-
-  // 로그인 권유
-  loginRow: {
-    flexDirection: 'row', justifyContent: 'center', alignItems: 'center',
-    marginTop: 16,
-  },
-  loginRowText: { color: '#9E9E9E', fontSize: 14 },
-  loginRowLink: { color: '#1A1A1A', fontSize: 14, fontWeight: '700', textDecorationLine: 'underline' },
+  submitBtnText: { color: '#fff', fontSize: 16, fontWeight: '600', fontFamily: 'Pretendard' },
 });

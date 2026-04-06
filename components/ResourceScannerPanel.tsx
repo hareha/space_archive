@@ -1,6 +1,16 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, ScrollView, Dimensions, ActivityIndicator, Animated } from 'react-native';
-import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
+import { Ionicons } from '@expo/vector-icons';
+import Svg, { Path } from 'react-native-svg';
+
+// ─── 스캐너 아이콘 ───
+const ScannerIcon = ({ size = 22 }: { size?: number }) => (
+  <Svg width={size} height={size} viewBox="0 0 22 22" fill="none">
+    <Path d="M15.1668 8.54141L19.7512 5.67485L11.7312 0.661043C11.3877 0.446319 10.9367 0.446319 10.5932 0.661043L2.57324 5.67485L7.1576 8.54141C8.02723 7.25307 9.49809 6.40491 11.1622 6.40491C12.8263 6.40491 14.2972 7.25307 15.1668 8.54141Z" fill="white" />
+    <Path d="M12.2354 15.9387C14.3826 15.4448 15.993 13.5338 15.993 11.2362C15.993 11.0108 15.9608 10.8068 15.9286 10.592L20.8243 7.53223V15.5307C20.8243 15.9065 20.6311 16.25 20.3197 16.4433L12.2354 21.5V15.9387Z" fill="#808080" />
+    <Path d="M6.39571 10.592C6.3635 10.8068 6.33129 11.0215 6.33129 11.2362C6.33129 13.5338 7.94172 15.4448 10.089 15.9387V21.5L2.0046 16.4433C1.69325 16.25 1.5 15.8957 1.5 15.5307V7.53223L6.39571 10.592Z" fill="#B2B2B2" />
+  </Svg>
+);
 
 const { width: SCREEN_W } = Dimensions.get('window');
 
@@ -173,7 +183,7 @@ export default function ResourceScannerPanel({
       {/* ════ 접힌 상태: 토글 버튼 ════ */}
       {!visible && !showPanel && (
         <TouchableOpacity style={styles.toggleBtn} onPress={onToggle} activeOpacity={0.7}>
-          <MaterialCommunityIcons name="radar" size={22} color="#fff" />
+          <ScannerIcon size={22} />
         </TouchableOpacity>
       )}
 
@@ -185,13 +195,12 @@ export default function ResourceScannerPanel({
 
               {/* ── 헤더 ── */}
               <View style={styles.headerRow}>
-                <View style={[styles.headerIcon, { backgroundColor: activeColor + '25' }]}>
-                  <MaterialCommunityIcons name="radar" size={16} color={activeColor} />
+                <View style={styles.headerIcon}>
+                  <ScannerIcon size={18} />
                 </View>
-                <Text style={styles.titleText}>자원 스캐너</Text>
                 <View style={{ flex: 1 }} />
                 <TouchableOpacity onPress={onToggle} hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}>
-                  <Ionicons name="close-circle" size={20} color="rgba(255,255,255,0.4)" />
+                  <Ionicons name="close" size={20} color="rgba(255,255,255,0.5)" />
                 </TouchableOpacity>
               </View>
 
@@ -209,10 +218,9 @@ export default function ResourceScannerPanel({
                       return (
                         <TouchableOpacity
                           key={key}
-                          style={[styles.tab, isActive && styles.tabActive]}
+                          style={[styles.tab, isActive ? styles.tabActive : styles.tabInactive]}
                           onPress={() => {
                             setActiveTab(key);
-                            // 대메뉴 전환 시 해당 카테고리의 첫 번째 자원으로 자동 선택
                             const firstResource = RESOURCE_CATEGORIES[key].resources[0];
                             if (firstResource) {
                               onSelectResource(firstResource.key);
@@ -227,21 +235,23 @@ export default function ResourceScannerPanel({
                       );
                     })}
                   </View>
+
+                  {/* 가로선 디바이더 */}
+                  <View style={styles.dividerLine} />
+
                   <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.chipScroll}>
                     {category.resources.map((resource) => {
                       const isAct = activeResource === resource.key;
                       return (
                         <TouchableOpacity
                           key={resource.key}
-                          style={[styles.chip, isAct && { backgroundColor: resource.color + '20', borderColor: resource.color + '60' }]}
+                          style={[styles.chip, isAct ? styles.chipActive : styles.chipInactive]}
                           onPress={() => onSelectResource(resource.key)}
                           activeOpacity={0.6}
                         >
-                          <MaterialCommunityIcons name={resource.icon as any} size={14} color={isAct ? resource.color : '#666'} />
-                          <Text style={[styles.chipLabel, isAct && { color: resource.color, fontWeight: '700' }]}>
-                            {resource.label}{resource.key === 'u' ? ' ≈0.27×Th' : ''}
+                          <Text style={[styles.chipLabel, isAct && styles.chipLabelActive]}>
+                            {resource.label}
                           </Text>
-                          {isAct && <View style={[styles.chipDot, { backgroundColor: resource.color }]} />}
                         </TouchableOpacity>
                       );
                     })}
@@ -348,8 +358,9 @@ const styles = StyleSheet.create({
     position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, zIndex: 8,
   },
   toggleBtn: {
-    position: 'absolute', top: 12, left: 12, width: 46, height: 46,
-    borderRadius: 8, backgroundColor: '#2A2D3E',
+    position: 'absolute', top: 12, left: 12, width: 56, height: 56,
+    borderRadius: 10, backgroundColor: 'rgba(50,57,80,0.8)',
+    borderWidth: 1, borderColor: 'rgba(255,255,255,0.07)',
     justifyContent: 'center', alignItems: 'center',
   },
 
@@ -366,27 +377,35 @@ const styles = StyleSheet.create({
     borderWidth: 1, borderColor: 'rgba(255,255,255,0.10)',
     borderRadius: 16, paddingTop: 14, paddingBottom: 12, paddingHorizontal: 14,
   },
-  headerRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 12 },
-  headerIcon: { width: 28, height: 28, borderRadius: 14, justifyContent: 'center', alignItems: 'center', marginRight: 6 },
-  titleText: { color: '#eee', fontSize: 13, fontWeight: '700', letterSpacing: 0.2 },
+  headerRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 14 },
+  headerIcon: { marginRight: 6 },
 
   loadingBox: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, paddingVertical: 10 },
   loadingText: { color: '#60A5FA', fontSize: 12, fontWeight: '600' },
 
-  tabRow: { flexDirection: 'row', gap: 6, marginBottom: 10 },
-  tab: { flex: 1, paddingVertical: 7, borderRadius: 10, backgroundColor: 'rgba(255,255,255,0.06)', alignItems: 'center' },
-  tabActive: { backgroundColor: 'rgba(59,130,246,0.25)' },
-  tabText: { color: '#777', fontSize: 12, fontWeight: '600' },
-  tabTextActive: { color: '#93C5FD' },
+  tabRow: { flexDirection: 'row', gap: 6, marginBottom: 12 },
+  dividerLine: { height: 1, backgroundColor: 'rgba(255,255,255,0.08)', marginBottom: 12 },
+  tab: { flex: 1, paddingVertical: 10, borderRadius: 10, alignItems: 'center', justifyContent: 'center' },
+  tabActive: { backgroundColor: '#3C57E9' },
+  tabInactive: { backgroundColor: 'rgba(255,255,255,0.07)' },
+  tabText: { color: '#666666', fontSize: 14, fontWeight: '500' },
+  tabTextActive: { color: '#FFFFFF' },
 
-  chipScroll: { flexDirection: 'row', gap: 8, paddingBottom: 4 },
+  chipScroll: { flexDirection: 'row', gap: 6, paddingBottom: 4 },
   chip: {
-    flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, paddingVertical: 8,
-    borderRadius: 16, backgroundColor: 'rgba(255,255,255,0.06)',
-    borderWidth: 1, borderColor: 'rgba(255,255,255,0.08)', gap: 5,
+    height: 34, minWidth: 70,
+    paddingHorizontal: 20, borderRadius: 20,
+    alignItems: 'center', justifyContent: 'center',
   },
-  chipLabel: { color: '#999', fontSize: 12, fontWeight: '500' },
-  chipDot: { width: 5, height: 5, borderRadius: 3, marginLeft: 2 },
+  chipActive: {
+    backgroundColor: '#EBECF1',
+    paddingHorizontal: 24,
+  },
+  chipInactive: {
+    backgroundColor: 'rgba(255,255,255,0.07)',
+  },
+  chipLabel: { color: '#999999', fontSize: 14, fontWeight: '500' },
+  chipLabelActive: { color: '#000000' },
 
   /* ── 하단 통합 바 ── */
   bottomBar: {

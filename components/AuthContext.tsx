@@ -1,40 +1,41 @@
 /**
- * 인증 컨텍스트 — 로그인/회원가입/로그아웃 상태 관리
+ * 인증 컨텍스트 — Supabase Auth 기반
  * 
- * TODO: TEMP_AUTH - 임시 로그인 로직 (아무 이메일/비번 → 주인공 계정)
- * 실제 연동 시 login() 내부의 임시 코드를 삭제하고 실제 API 호출로 교체하세요.
+ * - 이메일/비밀번호 회원가입·로그인
+ * - Supabase Auth 세션 자동 관리
+ * - 회원가입 시 handle_new_user() 트리거로 public.users 자동 생성
  */
 import React, { createContext, useState, useContext, useEffect, useCallback } from 'react';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Alert } from 'react-native';
-import { initDatabase, getUserByEmail, createUser, getUser, DBUser } from '@/services/database';
-import { HERO_USER } from '@/constants/dummyUsers';
-
-const AUTH_SESSION_KEY = '@auth_session';
+import { supabase } from '@/services/supabase';
+import type { Session, User } from '@supabase/supabase-js';
 
 export interface AuthUser {
-  id: string;
+  id: string;          // uuid (auth.users.id = public.users.id)
   email: string;
   nickname: string;
   avatarColor: string;
-  magBalance: number;
+  avatarUrl: string | null;
+  ellBalance: number;
   totalOccupied: number;
-  joinDate: string;
+  joinDate: string;    // created_at ISO
 }
 
 interface AuthContextType {
   user: AuthUser | null;
+  session: Session | null;
   isLoggedIn: boolean;
   isLoading: boolean;
   login: (email: string, password: string) => Promise<boolean>;
-  signup: (email: string, password: string, nickname: string) => Promise<boolean>;
+  signup: (email: string, password: string, nickname: string, marketingConsent?: boolean) => Promise<boolean>;
   logout: () => Promise<void>;
-  loginWithSNS: (provider: 'kakao' | 'apple' | 'naver' | 'facebook') => Promise<void>;
+  loginWithSNS: (provider: 'kakao' | 'apple' | 'naver') => Promise<void>;
   refreshUser: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType>({
   user: null,
+  session: null,
   isLoggedIn: false,
   isLoading: true,
   login: async () => false,
@@ -48,125 +49,185 @@ export function useAuth() {
   return useContext(AuthContext);
 }
 
-function dbUserToAuthUser(dbUser: DBUser): AuthUser {
+// ── public.users row → AuthUser 변환 ──
+function toAuthUser(row: any): AuthUser {
   return {
-    id: dbUser.id,
-    email: dbUser.email,
-    nickname: dbUser.nickname,
-    avatarColor: dbUser.avatarColor,
-    magBalance: dbUser.magBalance,
-    totalOccupied: dbUser.totalOccupied,
-    joinDate: dbUser.joinDate,
+    id: row.id,
+    email: row.email || '',
+    nickname: row.nickname || '탐험가',
+    avatarColor: row.avatar_color || '#3B82F6',
+    avatarUrl: row.avatar_url || null,
+    ellBalance: row.ell_balance ?? 0,
+    totalOccupied: row.total_occupied ?? 0,
+    joinDate: row.created_at || new Date().toISOString(),
   };
+}
+
+// ── public.users에서 프로필 로드 ──
+async function fetchProfile(userId: string): Promise<AuthUser | null> {
+  const { data, error } = await supabase
+    .from('users')
+    .select('*')
+    .eq('id', userId)
+    .single();
+
+  if (error) {
+    console.error('[Auth] fetchProfile error:', error.message);
+    return null;
+  }
+  return data ? toAuthUser(data) : null;
 }
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<AuthUser | null>(null);
+  const [session, setSession] = useState<Session | null>(null);
   const [isLoading, setIsLoading] = useState(true);
 
-  // 앱 시작 시 DB 초기화 + 세션 복원
+  // ── 세션 변경 감지 ──
   useEffect(() => {
-    const init = async () => {
-      try {
-        await initDatabase();
-        const sessionRaw = await AsyncStorage.getItem(AUTH_SESSION_KEY);
-        if (sessionRaw) {
-          const session = JSON.parse(sessionRaw);
-          const dbUser = await getUser(session.userId);
-          if (dbUser) {
-            setUser(dbUserToAuthUser(dbUser));
-          }
-        }
-      } catch (e) {
-        console.error('[Auth] Init error:', e);
+    let mounted = true;
+
+    // 1) 현재 세션 가져오기
+    supabase.auth.getSession().then(async ({ data: { session: s } }) => {
+      if (!mounted) return;
+      setSession(s);
+      if (s?.user) {
+        const profile = await fetchProfile(s.user.id);
+        if (mounted) setUser(profile);
       }
       setIsLoading(false);
+    }).catch(() => {
+      if (mounted) setIsLoading(false);
+    });
+
+    // 2) 세션 변경 리스너 (INITIAL_SESSION 무시 — getSession에서 이미 처리)
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(
+      async (event, s) => {
+        if (!mounted) return;
+        if (event === 'INITIAL_SESSION') return; // 중복 방지
+        console.log('[Auth] onAuthStateChange:', event);
+        setSession(s);
+        if (s?.user) {
+          const profile = await fetchProfile(s.user.id);
+          if (mounted) setUser(profile);
+        } else {
+          setUser(null);
+        }
+      }
+    );
+
+    return () => {
+      mounted = false;
+      subscription.unsubscribe();
     };
-    init();
   }, []);
 
-  // 로그인
+  // ── 로그인 ──
   const login = useCallback(async (email: string, password: string): Promise<boolean> => {
     try {
-      // =============================================
-      // TODO: TEMP_AUTH - 실제 연동 시 아래 블록 삭제
-      // 아무 이메일/비번으로 로그인하면 주인공 계정으로 로그인
-      // =============================================
-      const heroUser = await getUser(HERO_USER.id);
-      if (heroUser) {
-        const authUser = dbUserToAuthUser(heroUser);
-        setUser(authUser);
-        await AsyncStorage.setItem(AUTH_SESSION_KEY, JSON.stringify({ userId: heroUser.id }));
-        return true;
-      }
-      // =============================================
-      // TODO: TEMP_AUTH 끝 — 여기 아래에 실제 인증 로직 추가
-      // =============================================
+      const { data, error } = await supabase.auth.signInWithPassword({
+        email: email.trim().toLowerCase(),
+        password,
+      });
 
-      // 실제 로직 (현재는 TEMP_AUTH로 인해 도달하지 않음)
-      const dbUser = await getUserByEmail(email);
-      if (!dbUser || dbUser.password !== password) {
-        Alert.alert('로그인 실패', '이메일 또는 비밀번호가 올바르지 않습니다.');
+      if (error) {
+        // 에러 메시지 한글화
+        let msg = '로그인 실패';
+        if (error.message.includes('Invalid login credentials')) {
+          msg = '이메일 또는 비밀번호가 올바르지 않습니다.';
+        } else if (error.message.includes('Email not confirmed')) {
+          msg = '이메일 인증이 완료되지 않았습니다. 메일함을 확인해주세요.';
+        } else {
+          msg = error.message;
+        }
+        Alert.alert('로그인 실패', msg);
         return false;
       }
 
-      const authUser = dbUserToAuthUser(dbUser);
-      setUser(authUser);
-      await AsyncStorage.setItem(AUTH_SESSION_KEY, JSON.stringify({ userId: dbUser.id }));
-      return true;
-    } catch (e) {
-      console.error('[Auth] Login error:', e);
-      return false;
-    }
-  }, []);
-
-  // 회원가입
-  const signup = useCallback(async (email: string, password: string, nickname: string): Promise<boolean> => {
-    try {
-      const newUser = await createUser({ email, password, nickname });
-      const authUser = dbUserToAuthUser(newUser);
-      setUser(authUser);
-      await AsyncStorage.setItem(AUTH_SESSION_KEY, JSON.stringify({ userId: newUser.id }));
-      return true;
+      return !!data.session;
     } catch (e: any) {
-      Alert.alert('회원가입 실패', e.message || '오류가 발생했습니다.');
+      console.error('[Auth] Login error:', e);
+      Alert.alert('오류', '네트워크 연결을 확인해주세요.');
       return false;
     }
   }, []);
 
-  // 로그아웃
-  const logout = useCallback(async () => {
-    setUser(null);
-    await AsyncStorage.removeItem(AUTH_SESSION_KEY);
-  }, []);
-
-  // SNS 로그인 (임시: 모든 SNS 버튼 → 주인공 계정 로그인)
-  const loginWithSNS = useCallback(async (provider: 'kakao' | 'apple' | 'naver' | 'facebook') => {
-    // TODO: SNS_AUTH - 실제 SNS SDK 연동 시 구현
+  // ── 회원가입 ──
+  const signup = useCallback(async (email: string, password: string, nickname: string, marketingConsent: boolean = false): Promise<boolean> => {
     try {
-      const heroUser = await getUser(HERO_USER.id);
-      if (heroUser) {
-        const authUser = dbUserToAuthUser(heroUser);
-        setUser(authUser);
-        await AsyncStorage.setItem(AUTH_SESSION_KEY, JSON.stringify({ userId: heroUser.id }));
+      const { data, error } = await supabase.auth.signUp({
+        email: email.trim().toLowerCase(),
+        password,
+        options: {
+          data: {
+            full_name: nickname,  // handle_new_user() 트리거에서 이 값 사용
+            name: nickname,
+            marketing_consent: marketingConsent,
+          },
+        },
+      });
+
+      if (error) {
+        let msg = '회원가입 실패';
+        if (error.message.includes('already registered')) {
+          msg = '이미 가입된 이메일입니다.';
+        } else if (error.message.includes('Password should be')) {
+          msg = '비밀번호가 너무 짧습니다. 6자 이상 입력해주세요.';
+        } else {
+          msg = error.message;
+        }
+        Alert.alert('회원가입 실패', msg);
+        return false;
       }
-    } catch (e) {
-      console.error('[Auth] SNS login error:', e);
+
+      // 이미 가입된 이메일 감지 (Supabase는 보안상 에러 대신 빈 identities 반환)
+      if (data.user && data.user.identities && data.user.identities.length === 0) {
+        Alert.alert('회원가입 실패', '이미 가입된 이메일입니다.');
+        return false;
+      }
+
+      // Supabase 이메일 확인이 비활성화되어있으면 바로 세션 생성됨
+      if (data.session) {
+        return true;
+      }
+
+      // 이메일 확인 활성화 시 → signup.tsx에서 verify 화면으로 이동
+      if (data.user && !data.session) {
+        return true;  // 가입 자체는 성공, 인증 대기
+      }
+
+      return !!data.user;
+    } catch (e: any) {
+      console.error('[Auth] Signup error:', e);
+      Alert.alert('오류', '네트워크 연결을 확인해주세요.');
+      return false;
     }
   }, []);
 
-  // 유저 정보 새로고침
+  // ── 로그아웃 ──
+  const logout = useCallback(async () => {
+    await supabase.auth.signOut();
+    setUser(null);
+    setSession(null);
+  }, []);
+
+  // ── SNS 로그인 (추후 구현) ──
+  const loginWithSNS = useCallback(async (provider: 'kakao' | 'apple' | 'naver') => {
+    // TODO: Supabase OAuth 또는 네이티브 SDK 연동
+    Alert.alert('준비 중', `${provider} 로그인은 곧 지원될 예정입니다.`);
+  }, []);
+
+  // ── 유저 정보 새로고침 ──
   const refreshUser = useCallback(async () => {
-    if (!user) return;
-    const dbUser = await getUser(user.id);
-    if (dbUser) {
-      setUser(dbUserToAuthUser(dbUser));
-    }
-  }, [user]);
+    if (!session?.user) return;
+    const profile = await fetchProfile(session.user.id);
+    if (profile) setUser(profile);
+  }, [session]);
 
   return (
     <AuthContext.Provider value={{
       user,
+      session,
       isLoggedIn: !!user,
       isLoading,
       login,

@@ -75,15 +75,22 @@ export const CESIUM_HTML = `
       Camera Height: <span id="cameraHeight">---</span> m
   </div>
 
-  <script type="module">
-    // --- S2 IMPORT ---
-    import { s2 } from 'https://esm.sh/s2js';
-    window.s2 = s2;
-
+  <script>
     // --- CESIUM TOKEN ---
     Cesium.Ion.defaultAccessToken = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJqdGkiOiI3MjNhYjIzZi0wMWU5LTQzOTEtODY3Ni1kY2JkNTEyMmE2NTgiLCJpZCI6Mzc2MDQ4LCJpYXQiOjE3Njc4MzYyNTR9.K6HpEEiCNNlC8AzsTe3zuuGtcg9AJKEAnt8mA2MIoMg';
 
     async function initMoon() {
+      // --- S2 IMPORT (dynamic import — iOS/Android 모두 호환) ---
+      try {
+        var s2Module = await import('https://esm.sh/s2js');
+        window.s2 = s2Module.s2;
+        console.log('[Init] s2js loaded successfully');
+      } catch(e) {
+        console.error('[Init] s2js import failed:', e);
+        window.s2 = null;
+      }
+      var s2 = window.s2;
+
       const moonEllipsoid = Cesium.Ellipsoid.MOON;
       const moonRadius = moonEllipsoid.maximumRadius;
 

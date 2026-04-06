@@ -145,14 +145,6 @@ export const CESIUM_INIT = `
             }
         } catch(e) { console.warn('[Perf] benchmark failed:', e); }
         console.log('[Perf] Device tier:', _deviceTier);
-        // ── 디버그 오버레이 ──
-        try {
-            var _dbgDiv = document.createElement('div');
-            _dbgDiv.id = '_perfDebug';
-            _dbgDiv.style.cssText = 'position:fixed;top:44px;left:8px;z-index:99999;padding:4px 8px;border-radius:6px;background:rgba(0,0,0,0.6);color:#0f0;font:bold 11px monospace;pointer-events:none;';
-            _dbgDiv.textContent = 'TIER: ' + _deviceTier.toUpperCase();
-            document.body.appendChild(_dbgDiv);
-        } catch(e) {}
         if (_deviceTier === 'low') {
             moonTileset.maximumScreenSpaceError = 96;
             moonTileset.maximumMemoryUsage = 48;
@@ -196,12 +188,11 @@ export const CESIUM_INIT = `
         // 각크기 = 실제지름 / 실제거리 (rad), 빌보드 크기 = D * 각크기
         var D = 5e8; // 배치 거리 (500,000km)
 
-        // 🌍 지구 — 3D 타원체 (달에서 본 실제 각크기)
-        // 실제: 지름 12,742km / 거리 384,400km = 0.0332 rad ≈ 1.9°
-        var earthAngular = 12742 / 384400; // 0.0332 rad
-        var earthSize = D * earthAngular; // ~16,600,000m (지름)
-        var earthRadius = earthSize / 2;  // ~8,300,000m (반지름)
-        var earthPos = new Cesium.Cartesian3(D * 0.8, D * 0.3, D * 0.15);
+        // 🌍 지구 — Moon Body-Fixed 좌표 (달 고정 프레임)
+        // 위성 궤적도 동일한 body-fixed 좌표로 변환됨 → 좌표계 일치
+        // 2026-04-03 기준 body-fixed: (394065, 21561, -39143) km, 거리 ~396,591 km
+        var earthPos = new Cesium.Cartesian3(3.941e8, 2.156e7, -3.914e7); // meters
+        var earthRadius = 6371000; // 실제 지구 반지름 6,371 km
 
         // 지구 자전축: 23.4° 기울기 (Y축 기준 회전)
         var earthTilt = Cesium.Quaternion.fromAxisAngle(
@@ -227,14 +218,6 @@ export const CESIUM_INIT = `
                 material: earthMaterial,
                 slicePartitions: 64,
                 stackPartitions: 64
-            },
-            label: {
-                text: 'Earth',
-                font: '11px sans-serif',
-                fillColor: Cesium.Color.fromCssColorString('#6CB4EE'),
-                pixelOffset: new Cesium.Cartesian2(0, 40),
-                showBackground: false,
-                style: Cesium.LabelStyle.FILL
             }
         });
         window.earthEntity = earthEntity;
@@ -269,14 +252,6 @@ export const CESIUM_INIT = `
                 width: sunSize * 3, // 글로우 포함 3배
                 height: sunSize * 3,
                 sizeInMeters: true
-            },
-            label: {
-                text: 'Sun',
-                font: '10px sans-serif',
-                fillColor: new Cesium.Color(1.0, 0.95, 0.6, 1.0),
-                pixelOffset: new Cesium.Cartesian2(0, 28),
-                showBackground: false,
-                style: Cesium.LabelStyle.FILL
             }
         });
 
@@ -289,17 +264,7 @@ export const CESIUM_INIT = `
             pixelSize: 3,
             color: new Cesium.Color(1.0, 1.0, 0.92, 1.0)
         });
-        viewer.entities.add({
-            position: venusPos,
-            label: {
-                text: 'Venus',
-                font: '9px sans-serif',
-                fillColor: new Cesium.Color(1.0, 1.0, 0.85, 0.7),
-                pixelOffset: new Cesium.Cartesian2(0, 10),
-                showBackground: false,
-                style: Cesium.LabelStyle.FILL
-            }
-        });
+
 
         // 🔴 화성 (Mars) — 최대 각크기 ~25 arcsec = 0.007°
         // 약간 붉은빛을 띄는 작은 점
@@ -309,17 +274,7 @@ export const CESIUM_INIT = `
             pixelSize: 2,
             color: new Cesium.Color(1.0, 0.55, 0.35, 1.0)
         });
-        viewer.entities.add({
-            position: marsPos,
-            label: {
-                text: 'Mars',
-                font: '9px sans-serif',
-                fillColor: new Cesium.Color(1.0, 0.55, 0.35, 0.7),
-                pixelOffset: new Cesium.Cartesian2(0, 10),
-                showBackground: false,
-                style: Cesium.LabelStyle.FILL
-            }
-        });
+
 
         // ─── 배경 별 필드 ───
         var starField = viewer.scene.primitives.add(new Cesium.PointPrimitiveCollection());
